@@ -45,6 +45,12 @@ internal class EngineStateMachine(
     /** 정지가 끝나는 대로 다시 띄워야 하는가 — 내려가는 중에 start 가 온 경우. */
     private var startAfterStop = false
 
+    /**
+     * 내부 재시작(세션 번호 교체) 중인가 — 이때는 [onClosed] 가 isRunning·isPaused 를 그대로 둔 채
+     * 곧바로 다시 연다. 호스트가 켠 측위·일시정지 상태가 재시작 한 번에 뒤집히면 안 된다.
+     */
+    private var restarting = false
+
     internal fun start() {
         if (isRunning) return
         if (phase == Phase.STOPPING) {
@@ -63,6 +69,7 @@ internal class EngineStateMachine(
     internal fun stop() {
         // 예약된 start 가 있으면 먼저 지운다 — 끄겠다는 최신 의사가 이긴다.
         startAfterStop = false
+        restarting = false
         if (phase == Phase.IDLE || phase == Phase.STOPPING) {
             isRunning = false
             isPaused = false
@@ -82,7 +89,24 @@ internal class EngineStateMachine(
         phase = Phase.TRACKING
     }
 
+    /**
+     * 세션만 닫았다 다시 연다 — isRunning·isPaused 는 유지한다(가동 중이 아니면 아무것도 안 함).
+     * 닫힘이 끝나면([onClosed]) STARTING 으로 다시 연다.
+     */
+    internal fun restart() {
+        if (!isRunning || phase == Phase.IDLE || phase == Phase.STOPPING) return
+        restarting = true
+        phase = Phase.STOPPING
+        closeSession()
+    }
+
     internal fun onClosed() {
+        if (restarting) {
+            restarting = false
+            phase = Phase.STARTING
+            openSession()
+            return
+        }
         phase = Phase.IDLE
         isRunning = false
         // 내려가는 동안 들어와 있던 start 를 이제 이어받는다 — phase 가 IDLE 이 됐으니

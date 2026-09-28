@@ -234,4 +234,47 @@ class EngineStateMachineTest {
         val sm = Recorder().machine()
         assertFalse(sm.acceptsPosition())
     }
+
+    // MARK: - restart (세션 번호 교체)
+
+    @Test fun restartKeepsRunningAndPauseAndReopensOnClosed() {
+        val r = Recorder()
+        val sm = r.machine()
+        sm.start(); sm.onOpened(); sm.pause()
+
+        sm.restart()
+        assertEquals(Phase.STOPPING, sm.phase)
+        assertTrue(sm.isRunning)
+        assertTrue(sm.isPaused)
+        assertEquals(1, r.closes.size)
+
+        sm.onClosed()
+        assertEquals(Phase.STARTING, sm.phase)
+        assertTrue(sm.isRunning)
+        assertTrue(sm.isPaused)
+        assertEquals(2, r.opens.size)
+    }
+
+    @Test fun restartIsIgnoredWhenNotRunning() {
+        val r = Recorder()
+        val sm = r.machine()
+        sm.restart()
+        assertEquals(Phase.IDLE, sm.phase)
+        assertTrue(r.closes.isEmpty())
+    }
+
+    @Test fun stopDuringRestartWins() {
+        val r = Recorder()
+        val sm = r.machine()
+        sm.start(); sm.onOpened()
+        sm.restart()
+
+        sm.stop()
+        sm.onClosed()
+
+        assertEquals(Phase.IDLE, sm.phase)
+        assertFalse(sm.isRunning)
+        assertEquals(1, r.opens.size)
+        assertEquals(1, r.closes.size)
+    }
 }

@@ -73,7 +73,15 @@ public class UwbPositioningProvider internal constructor(
     /** 층별 UWB 세션(networkIdentifier) — apply(config) 로 주입. 없으면 start 를 거부한다. */
     private var sessionId: Int? = null
 
-    private var latestPosition: Coordinates? = null
+    /**
+     * 이번 세션에서 좌표가 한 번이라도 나왔는가 — 수신 점검(hasFix) 기준.
+     * 일시정지와 무관하다: 멈춘 동안에도 세션은 좌표를 내고 있고, 그걸 "좌표 없음"으로
+     * 보고하면 E4002 오탐이 된다.
+     */
+    private var producedFix = false
+
+    /** STOPPING 감시 — onClosed 가 끝내 안 오면 여기서 닫힘으로 친다. */
+    private var stopWatchdog: Job? = null
 
     /** 이번 세션에서 소비한 좌표 수(진단·종료 로그용). */
     private var fixCount = 0
@@ -95,7 +103,7 @@ public class UwbPositioningProvider internal constructor(
     override val isPaused: Boolean get() = machine.isPaused
 
     override val positioningDiagnostic: PositioningDiagnostic?
-        get() = tracker.diagnostic(hasFix = latestPosition != null)
+        get() = tracker.diagnostic(hasFix = producedFix)
 
     init {
         zoneEngine.onEvent = { handleZoneEvent(it) }
@@ -125,9 +133,9 @@ public class UwbPositioningProvider internal constructor(
         if (newSessionId != null && newSessionId != sessionId) {
             sessionId = newSessionId
             if (machine.isRunning) {
+                // 가동·일시정지 상태를 유지한 채 세션만 갈아 끼운다(onClosed 뒤 새 번호로 연다).
                 reopening = true
-                machine.stop()   // → closeSession, STOPPING
-                machine.start()  // → startAfterStop 예약, onClosed 뒤 새 번호로 연다
+                machine.restart()
             }
         }
         zoneEngine.apply(config.zones)
@@ -152,14 +160,13 @@ public class UwbPositioningProvider internal constructor(
         machine.stop()
         diagnosticJob?.cancel()
         diagnosticJob = null
-        latestPosition = null
+        producedFix = false
         if (wasRunning) log(LogLevel.INFO, SdkLocalized.t("uwb.positioningOff", fixCount))
     }
 
     /** 좌표 소비만 멈춘다 — 세션은 계속 돈다(앵커를 다시 찾지 않도록). */
     override fun pause() {
         machine.pause()
-        if (machine.isPaused) latestPosition = null // 마지막 점을 살아 있는 것처럼 두지 않는다
     }
 
     /** 일시정지 해제 — 멈춘 동안 버린 이벤트 때문에 판정기가 옛 상태를 물지 않도록 reset. */
@@ -179,7 +186,7 @@ public class UwbPositioningProvider internal constructor(
         }
         generation += 1
         fixCount = 0
-        latestPosition = null
+        producedFix = false
         tracker.clearSeen()
         zoneEngine.reset()
         try {
@@ -196,7 +203,25 @@ public class UwbPositioningProvider internal constructor(
     private fun closeSession() {
         diagnosticJob?.cancel()
         diagnosticJob = null
+        armStopWatchdog()
         engine.close()
+    }
+
+    /**
+     * 닫기 요청 뒤 [STOP_TIMEOUT_MS] 안에 onClosed 가 안 오면 닫힌 것으로 친다. 이게 없으면
+     * STOPPING 에 영원히 머물고 이후 start 는 예약만 되어 조용히 측위가 안 켜진다
+     * (iOS 0.1.22~0.1.23 과 같은 부류). 세대를 올려 옛 세션의 늦은 콜백은 버린다.
+     */
+    private fun armStopWatchdog() {
+        stopWatchdog?.cancel()
+        stopWatchdog = scope.launch {
+            delay(STOP_TIMEOUT_MS)
+            stopWatchdog = null
+            if (machine.phase != Phase.STOPPING) return@launch
+            generation += 1
+            log(LogLevel.WARN, SdkLocalized.t("uwb.stopped") + " (timeout ${STOP_TIMEOUT_MS}ms)")
+            finishClosed()
+        }
     }
 
     /**
@@ -235,9 +260,11 @@ public class UwbPositioningProvider internal constructor(
 
     private fun handleOpenFailed(reason: Int) {
         if (machine.phase == Phase.IDLE) return
+        val requested = machine.phase == Phase.STOPPING
         val code = RangingErrorMapping.code(reason, security = false)
-        log(LogLevel.ERROR, errorLine(reason, code))
-        code?.let { report(it, "openFailed reason=$reason") }
+        log(if (requested) LogLevel.LOG else LogLevel.ERROR, errorLine(reason, code))
+        // 사용자가(또는 우리가) 끈 세션은 어떤 사유로 닫혀도 오류 코드가 아니다.
+        if (!requested) code?.let { report(it, "openFailed reason=$reason") }
         finishClosed()
     }
 
@@ -251,15 +278,17 @@ public class UwbPositioningProvider internal constructor(
             log(LogLevel.WARN, SdkLocalized.t("uwb.stoppedSelf"))
             log(LogLevel.ERROR, errorLine(reason, code))
         }
-        code?.let { report(it, "closed reason=$reason") }
+        if (!requested) code?.let { report(it, "closed reason=$reason") }
         finishClosed()
     }
 
     /** 세션이 내려갔다 — 정리 후 상태 기계에 알리고, 예약된 start 가 있었으면 이어받는다. */
     private fun finishClosed() {
+        stopWatchdog?.cancel()
+        stopWatchdog = null
         diagnosticJob?.cancel()
         diagnosticJob = null
-        latestPosition = null
+        producedFix = false
         val enter = !reopening
         reopening = false
         machine.onClosed()
@@ -270,10 +299,10 @@ public class UwbPositioningProvider internal constructor(
         if (!machine.isRunning) return
         // phase 는 엔진 상태 — 일시정지와 무관하게 첫 좌표에서 추적으로 넘어간다.
         if (machine.phase == Phase.STARTING || machine.phase == Phase.SEARCHING) machine.onFirstFix()
+        producedFix = true
         // 일시정지 중에도 세션은 좌표를 계속 준다. 소비하는 자리에서 버린다.
         if (!machine.acceptsPosition()) return
         val coordinates = Coordinates(x, y, z)
-        latestPosition = coordinates
         fixCount += 1
         val now = clock()
         delegate?.onPosition(this, coordinates, floorIdOrNull(), now)
@@ -314,7 +343,7 @@ public class UwbPositioningProvider internal constructor(
         diagnosticJob = scope.launch {
             delay(DIAGNOSTIC_DELAY_MS)
             if (!machine.isRunning) return@launch
-            val d = tracker.diagnostic(hasFix = latestPosition != null)
+            val d = tracker.diagnostic(hasFix = producedFix)
             val canPosition = d.hasFix || d.matchedCount >= 3
             log(
                 if (canPosition) LogLevel.INFO else LogLevel.ERROR,
@@ -351,8 +380,11 @@ public class UwbPositioningProvider internal constructor(
         onLog?.invoke(level, msg)
     }
 
-    private companion object {
-        const val DIAGNOSTIC_DELAY_MS = 5_000L
+    internal companion object {
+        const val DIAGNOSTIC_DELAY_MS: Long = 5_000L
+
+        /** 닫기 요청 뒤 onClosed 를 기다리는 최대 시간. */
+        const val STOP_TIMEOUT_MS: Long = 3_000L
     }
 }
 

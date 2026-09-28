@@ -496,4 +496,114 @@ class UwbProviderLogicTest {
         configured()
         assertArrayEquals(doubleArrayOf(5.0, 0.0, 2.0), engine.appliedAnchors[0][0x0002], 0.0)
     }
+
+    // MARK: - Fix round 1
+
+    /** 일시정지 중 세션 번호가 바뀌어도 일시정지·가동 상태가 유지된다(조용한 재개 금지). */
+    @Test fun sessionIdChangeWhilePausedKeepsPauseAndRunning() {
+        startOpened()
+        provider.pause()
+
+        provider.apply(PositioningConfig(sessionId = 9))
+        assertTrue(provider.isRunning)
+        assertTrue(provider.isPaused)
+
+        engine.listener!!.onClosed(RangingErrorMapping.REASON_LOCAL_REQUEST)
+        flush()
+        assertEquals(listOf(7, 9), engine.opens)
+        assertTrue(provider.isRunning)
+        assertTrue(provider.isPaused)
+
+        engine.listener!!.onOpened()
+        flush()
+        fix(5.0, 5.0, 0)
+        zoneEngine.onEvent!!.invoke(ZoneEvent.Enter(zoneA, 0))
+        assertTrue(delegate.positions.isEmpty())
+        assertTrue(delegate.zones.isEmpty())
+        assertTrue(zoneEvents.isEmpty())
+
+        provider.resume()
+        assertFalse(provider.isPaused)
+        fix(5.0, 5.0, 1_000)
+        assertEquals(1, delegate.positions.size)
+    }
+
+    @Test fun sessionIdChangeKeepsRunningDuringReopenWindow() {
+        startOpened()
+        provider.apply(PositioningConfig(sessionId = 9))
+        assertTrue("재오픈 중에도 가동 중으로 보여야 한다", provider.isRunning)
+    }
+
+    /** onClosed 가 끝내 안 와도 STOPPING 에 고착되지 않는다. */
+    @Test fun stopWatchdogUnblocksQueuedStart() {
+        startOpened()
+        val old = engine.listener!!
+        provider.stop()
+        provider.start()
+        assertEquals(listOf(7), engine.opens)
+
+        scheduler.advanceTimeBy(UwbPositioningProvider.STOP_TIMEOUT_MS + 1)
+        scheduler.runCurrent()
+
+        assertEquals(listOf(7, 7), engine.opens)
+        assertTrue(provider.isRunning)
+        assertTrue(logs.any { it.first == LogLevel.WARN })
+
+        // 옛 세대의 늦은 onClosed 는 새 세션을 건드리지 않는다.
+        old.onClosed(RangingErrorMapping.REASON_LOCAL_REQUEST)
+        flush()
+        assertTrue(provider.isRunning)
+        assertEquals(Phase.STARTING, provider.phase)
+    }
+
+    @Test fun stopWatchdogIsCancelledByTimelyClose() {
+        startOpened()
+        provider.stop()
+        engine.listener!!.onClosed(RangingErrorMapping.REASON_LOCAL_REQUEST)
+        flush()
+        provider.start()
+        val opens = engine.opens.size
+
+        scheduler.advanceTimeBy(UwbPositioningProvider.STOP_TIMEOUT_MS + 1)
+        scheduler.runCurrent()
+
+        assertEquals(opens, engine.opens.size)
+        assertTrue(provider.isRunning)
+    }
+
+    /** 사용자가 끈 것은 어떤 사유로 닫혀도 오류 코드가 아니다. */
+    @Test fun requestedStopNeverReportsErrorCode() {
+        startOpened()
+        provider.stop()
+        engine.listener!!.onClosed(RangingErrorMapping.REASON_UNKNOWN)
+        flush()
+        assertTrue(delegate.reports.isEmpty())
+        assertEquals(Phase.IDLE, provider.phase)
+    }
+
+    @Test fun openFailedAfterStopDuringStartingReportsNothing() {
+        configured()
+        provider.start()
+        provider.stop()
+        engine.listener!!.onOpenFailed(RangingErrorMapping.REASON_UNSUPPORTED)
+        flush()
+        assertTrue(delegate.reports.isEmpty())
+        assertEquals(Phase.IDLE, provider.phase)
+    }
+
+    /** 수신 점검의 hasFix 는 일시정지로 지워지지 않는다. */
+    @Test fun pauseDoesNotClearDiagnosticFix() {
+        startOpened()
+        fix(1.0, 1.0, 0)
+        provider.pause()
+        assertTrue(provider.positioningDiagnostic!!.hasFix)
+    }
+
+    @Test fun fixWhilePausedCountsForDiagnostic() {
+        startOpened()
+        provider.pause()
+        fix(1.0, 1.0, 0)
+        assertTrue(provider.positioningDiagnostic!!.hasFix)
+        assertTrue(delegate.positions.isEmpty())
+    }
 }
