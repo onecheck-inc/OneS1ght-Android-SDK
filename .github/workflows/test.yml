@@ -1,0 +1,38 @@
+# PR 검사 — 대상 브랜치를 가리지 않는다 (main · release/* 모두).
+# 테스트에 더해 "지금 버전으로 내보낼 수 있는 상태인가" 를 같이 본다: 버전 세 곳 일치 ·
+# 마이그레이션 마지막 칸 · CHANGELOG 항목. 이걸 여기서 잡아야 머지 뒤 릴리스 워크플로가 안 죽는다.
+#
+# 수동 실행 전용 — GitHub Actions 무료 한도(월 2,000분) 보호를 위해 자동 트리거를 껐다.
+# 되살리려면 on: 에 pull_request: (또는 push:) 를 추가한다.
+name: test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "platforms;android-37.0"
+      - name: Nexus 계정 설정 (있으면 — 엔진 어댑터 컴파일용)
+        if: ${{ secrets.GEOPLAN_NEXUS_URL != '' }}
+        env:
+          GEOPLAN_NEXUS_URL: ${{ secrets.GEOPLAN_NEXUS_URL }}
+          GEOPLAN_NEXUS_USER: ${{ secrets.GEOPLAN_NEXUS_USER }}
+          GEOPLAN_NEXUS_PASSWORD: ${{ secrets.GEOPLAN_NEXUS_PASSWORD }}
+        run: |
+          mkdir -p ~/.gradle
+          {
+            echo "geoplanNexusUrl=$GEOPLAN_NEXUS_URL"
+            echo "geoplanNexusUser=$GEOPLAN_NEXUS_USER"
+            echo "geoplanNexusPassword=$GEOPLAN_NEXUS_PASSWORD"
+          } >> ~/.gradle/gradle.properties
+      - run: ./gradlew :onesight:testDebugUnitTest
+      - name: 릴리스 가능 상태 검사
+        run: SKIP_TESTS=1 Scripts/check-release.sh
