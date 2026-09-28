@@ -101,6 +101,8 @@ internal class UwbRangingEngine(private val context: Context) : RangingEngine {
             if (xyz != null && xyz.size >= 3) listener.onPosition(xyz[0], xyz[1], xyz[2])
         }
 
+        /** open 이 메인에서 쓰고, onClosed/onOpenFailed(executor)가 놓는다. */
+        @Volatile
         private var session: RangingSession? = null
 
         /** 세션이 이미 내려갔는가(onOpenFailed/onClosed 수신) — executor 가 쓰고 메인이 읽는다. */
@@ -157,6 +159,7 @@ internal class UwbRangingEngine(private val context: Context) : RangingEngine {
             } catch (e: RuntimeException) {
                 // 이미 내려간 세션 등 — onClosed 가 안 올 수 있으니 직접 1회 준다.
                 finished = true
+                releaseSession()
                 executor.execute { listener.onClosed(RangingErrorMapping.REASON_LOCAL_REQUEST) }
             }
         }
@@ -165,12 +168,21 @@ internal class UwbRangingEngine(private val context: Context) : RangingEngine {
             executor.execute { synchronized(lock) { positioner.applyAnchorCoordinates(anchors) } }
         }
 
+        /** onClosed/onOpenFailed — 내려간 세션의 시스템 자원(RangingSession)까지 놓는다. */
         private fun finish() {
             finished = true
+            releaseSession()
             synchronized(lock) {
                 runCatching { accumulator.reset() }
                 runCatching { positioner.reset() }
             }
+        }
+
+        /** stop 으로 끝나도 RangingSession 은 close 해야 풀린다 — 안 하면 세션이 시스템에 남는다. */
+        private fun releaseSession() {
+            val s = session ?: return
+            session = null
+            runCatching { s.close() }
         }
     }
 }

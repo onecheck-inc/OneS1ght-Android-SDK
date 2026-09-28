@@ -37,13 +37,13 @@ import kotlinx.coroutines.launch
  * 다른 스레드에서 콜백을 돌리면 그 전제가 깨진다(사양: "코어 상태는 주입된
  * CoroutineDispatcher 한 곳에서만 바꾼다").
  */
-public fun interface DwellScheduler {
-    public fun schedule(delayMs: Long, action: () -> Unit): Cancellable
+internal fun interface DwellScheduler {
+    fun schedule(delayMs: Long, action: () -> Unit): Cancellable
 }
 
 /** [DwellScheduler.schedule] 이 돌려주는 취소 핸들. */
-public fun interface Cancellable {
-    public fun cancel()
+internal fun interface Cancellable {
+    fun cancel()
 }
 
 /**
@@ -74,10 +74,10 @@ internal class CoroutineDwellScheduler(private val scope: CoroutineScope) : Dwel
  *
  * 포팅 원본: ZoneEngine.swift + UwbAreaJudge.swift.
  */
-public class ZoneEngine @JvmOverloads constructor(
+internal class ZoneEngine @JvmOverloads constructor(
     private val scheduler: DwellScheduler,
-    public val sampleIntervalMs: Long = 1_000,
-    public val confirmCount: Int = 3,
+    val sampleIntervalMs: Long = 1_000,
+    val confirmCount: Int = 3,
 ) {
 
     /**
@@ -89,11 +89,11 @@ public class ZoneEngine @JvmOverloads constructor(
     /** 진단 로그 훅. */
     internal var onLog: ((LogLevel, String) -> Unit)? = null
 
-    public var zones: List<Zone> = emptyList()
+    var zones: List<Zone> = emptyList()
         private set
 
     /** 현재 확정된 활성 존 id. `null` 이면 OUT 상태(진입 후보 카운트 중이거나 아무 존도 아님). */
-    public var activeZoneId: String? = null
+    var activeZoneId: String? = null
         private set
 
     private var lastJudgedAtMs: Long? = null
@@ -113,7 +113,7 @@ public class ZoneEngine @JvmOverloads constructor(
      * 남으면 이탈 이벤트가 영영 안 나온다. 존이 있으면 판정 파라미터 무력화 WARN 을 남긴다
      * (최초 1회).
      */
-    public fun apply(zones: List<Zone>) {
+    fun apply(zones: List<Zone>) {
         this.zones = zones
         reset()
         warnParamsIgnoredIfNeeded()
@@ -124,7 +124,7 @@ public class ZoneEngine @JvmOverloads constructor(
      * 그 사이 들어온 좌표는 버린다. [confirmCount] 번 연속 같은 판정이어야 IN/OUT 확정,
      * 중간에 반대 판정이 하나 나오면 그 방향 카운터가 리셋된다.
      */
-    public fun ingest(p: Position, nowMs: Long) {
+    fun ingest(p: Position, nowMs: Long) {
         val last = lastJudgedAtMs
         if (last != null && nowMs - last < sampleIntervalMs) return
         lastJudgedAtMs = nowMs
@@ -167,7 +167,7 @@ public class ZoneEngine @JvmOverloads constructor(
     }
 
     /** streak·후보·활성 존을 비우고 대기 중인 dwell 을 취소한다. 존 목록은 유지한다. */
-    public fun reset() {
+    fun reset() {
         lastJudgedAtMs = null
         candidateZoneId = null
         inStreak = 0

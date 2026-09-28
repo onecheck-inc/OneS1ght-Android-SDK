@@ -15,6 +15,7 @@ package co.onecheck.ones1ght.android
 //  포팅 원본: FloorSession.swift.
 //
 
+import androidx.annotation.MainThread
 import co.onecheck.ones1ght.android.model.Floor
 import co.onecheck.ones1ght.android.model.ZoneEvent
 import co.onecheck.ones1ght.android.positioning.PositioningProvider
@@ -119,11 +120,13 @@ public class FloorSession internal constructor() {
      * 둔 채 좌표만 버리므로 `resume()` 이 즉시 이어진다. 쌓인 좌표는 그대로 둔다.
      * 메인 스레드에서 부른다.
      */
+    @MainThread
     public fun pause() {
         OneS1ght.coordinatorRef?.activeProvider?.pause()
     }
 
     /** 일시정지 해제. 메인 스레드에서 부른다. */
+    @MainThread
     public fun resume() {
         OneS1ght.coordinatorRef?.activeProvider?.resume()
     }
