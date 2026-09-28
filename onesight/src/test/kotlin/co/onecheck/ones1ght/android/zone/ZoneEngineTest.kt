@@ -124,6 +124,69 @@ class ZoneEngineTest {
         assertTrue(ev.none { it is ZoneEvent.Dwell })
     }
 
+    // 활성 존(a) 이탈이 확정되는 바로 그 샘플이 인접한 다른 존(b) 진입 후보의 첫 표(1/3)도
+    // 겸한다 — "이탈 직후 같은 샘플로 새 존 진입 카운트를 시작한다"(spec §6). 그래서 이탈
+    // 확정 뒤 b 로 확정되기까지 3개가 아니라 딱 2개 샘플만 더 필요하다.
+    @Test
+    fun exitImmediatelyStartsEntryIntoAdjacentZoneOnSameSample() {
+        val b =
+            Zone(
+                "zb",
+                "B",
+                listOf(Position(10.0, 0.0), Position(20.0, 0.0), Position(20.0, 10.0), Position(10.0, 10.0)),
+            )
+        val ev = mutableListOf<ZoneEvent>()
+        val e = engine().apply { onEvent = { ev += it }; apply(listOf(a, b)) }
+
+        e.ingest(inside, 0)
+        e.ingest(inside, 1000)
+        e.ingest(inside, 2000) // a IN 확정
+        assertEquals("za", e.activeZoneId)
+
+        val inB = Position(15.0, 5.0) // a 밖, b 안
+        e.ingest(inB, 3000) // a 기준 outStreak 1 — b 진입 후보는 아직 안 움직임
+        e.ingest(inB, 4000) // outStreak 2
+        e.ingest(inB, 5000) // outStreak 3 → a OUT 확정 + 같은 샘플로 b 진입 후보 1 시작
+
+        assertEquals(listOf("in-za-2", "out-za-5"), ev.map { it.id })
+        assertNull(e.activeZoneId)
+
+        e.ingest(inB, 6000) // b 진입 후보 2
+        assertNull(e.activeZoneId)
+        e.ingest(inB, 7000) // b 진입 후보 3 → IN(b) 확정 — 딱 2개 샘플만 더 필요했다
+
+        assertEquals("zb", e.activeZoneId)
+        assertEquals(listOf("in-za-2", "out-za-5", "in-zb-7"), ev.map { it.id })
+    }
+
+    @Test
+    fun applyCancelsPendingDwell() {
+        val ev = mutableListOf<ZoneEvent>()
+        val e = engine().apply { onEvent = { ev += it }; apply(listOf(a)) }
+        e.ingest(inside, 0)
+        e.ingest(inside, 1000)
+        e.ingest(inside, 2000) // IN 확정, dwell 예약됨
+
+        e.apply(listOf(a)) // 재적용 — 대기 중인 dwell 도 취소돼야 한다
+
+        fake.advance(60_000)
+        assertTrue(ev.none { it is ZoneEvent.Dwell })
+    }
+
+    @Test
+    fun resetCancelsPendingDwell() {
+        val ev = mutableListOf<ZoneEvent>()
+        val e = engine().apply { onEvent = { ev += it }; apply(listOf(a)) }
+        e.ingest(inside, 0)
+        e.ingest(inside, 1000)
+        e.ingest(inside, 2000) // IN 확정, dwell 예약됨
+
+        e.reset()
+
+        fake.advance(60_000)
+        assertTrue(ev.none { it is ZoneEvent.Dwell })
+    }
+
     @Test
     fun applyResets() {
         val ev = mutableListOf<ZoneEvent>()

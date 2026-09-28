@@ -24,14 +24,18 @@ import co.onecheck.ones1ght.android.model.ZoneEvent
 import co.onecheck.ones1ght.android.runtime.LogLevel
 import co.onecheck.ones1ght.android.runtime.SdkLocalized
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
  * 체류(DWELL) 1회 발화를 위한 지연 스케줄러 계약. 테스트가 실제 시간을 흘리지 않고 시계를
  * 직접 제어할 수 있도록 [ZoneEngine] 과 분리해 뒀다.
+ *
+ * ⚠️ [schedule] 이 돌려준 콜백([action])은 [ZoneEngine.ingest]/[ZoneEngine.apply]/
+ * [ZoneEngine.reset] 을 부르는 스레드와 **같은 스레드(디스패처)** 에서 실행돼야 한다 —
+ * `activeZoneId` 등 코어 상태는 동기화 없이 단일 디스패처 한 곳에서만 바뀐다는 전제이므로,
+ * 다른 스레드에서 콜백을 돌리면 그 전제가 깨진다(사양: "코어 상태는 주입된
+ * CoroutineDispatcher 한 곳에서만 바꾼다").
  */
 public fun interface DwellScheduler {
     public fun schedule(delayMs: Long, action: () -> Unit): Cancellable
@@ -42,7 +46,13 @@ public fun interface Cancellable {
     public fun cancel()
 }
 
-/** 운영용 [DwellScheduler] — 주입된 [scope] 위에서 코루틴 `delay` 로 지연 발화한다. */
+/**
+ * 운영용 [DwellScheduler] — 주입된 [scope] 위에서 코루틴 `delay` 로 지연 발화한다.
+ *
+ * ⚠️ [scope] 는 [ZoneEngine] 의 호출자와 같은 디스패처(운영: `Dispatchers.Main.immediate`)를
+ * 써야 한다 — 스레드 풀(`Dispatchers.Default` 등)을 넘기면 [DwellScheduler] 콜백이
+ * `ingest`/`apply`/`reset` 과 다른 스레드에서 `activeZoneId` 를 동기화 없이 읽게 된다.
+ */
 internal class CoroutineDwellScheduler(private val scope: CoroutineScope) : DwellScheduler {
     override fun schedule(delayMs: Long, action: () -> Unit): Cancellable {
         val job = scope.launch {
@@ -56,13 +66,18 @@ internal class CoroutineDwellScheduler(private val scope: CoroutineScope) : Dwel
 /**
  * 좌표 스트림을 Zone 이벤트(IN/OUT/DWELL)로 바꾸는 판정 엔진.
  *
+ * ⚠️ 스레드 한정: [ingest]/[apply]/[reset] 호출과 [scheduler] 가 [DwellScheduler.schedule]
+ * 콜백을 실행하는 스레드는 **하나(같은 디스패처)** 여야 한다 — `zones`·`activeZoneId` 등
+ * 코어 상태를 동기화 없이 건드리기 때문이다. [scheduler] 에 스레드 풀 기반 스코프를 주는
+ * 기본값은 두지 않는다 — 호출자가 명시적으로 단일 디스패처 스코프를 주입해야 한다
+ * (예: `CoroutineDwellScheduler(scope)` 에 `Dispatchers.Main.immediate` 기반 스코프).
+ *
  * 포팅 원본: ZoneEngine.swift + UwbAreaJudge.swift.
  */
 public class ZoneEngine @JvmOverloads constructor(
+    private val scheduler: DwellScheduler,
     public val sampleIntervalMs: Long = 1_000,
     public val confirmCount: Int = 3,
-    private val scheduler: DwellScheduler =
-        CoroutineDwellScheduler(CoroutineScope(SupervisorJob() + Dispatchers.Default)),
 ) {
 
     /**
