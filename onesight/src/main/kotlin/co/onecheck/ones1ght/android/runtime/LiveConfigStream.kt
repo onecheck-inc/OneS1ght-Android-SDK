@@ -26,8 +26,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.currentCoroutineContext
-import kotlin.coroutines.EmptyCoroutineContext
 import okhttp3.Call
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -93,30 +91,28 @@ internal class LiveConfigStream(
 
     // MARK: - 수신
 
-    /** 한 번 붙어서 끊길 때까지 읽는다. 반환값 = 실제로 붙었는가(백오프 초기화 판단용). */
+    /**
+     * 한 번 붙어서 끊길 때까지 읽는다. 반환값 = 실제로 붙었는가(백오프 초기화 판단용).
+     *
+     * ⚠️ 블로킹 소켓 호출(`call.execute()`/`readUtf8Line()`)만 [Dispatchers.IO] 로 넘긴다 —
+     * [onConnected]/[ingest](= [lastSeq] 갱신 + [onChange] 호출)는 이 함수가 원래 돌던
+     * 컨텍스트([scope] 의 디스패처)에서 실행돼야 한다. 전체를 `withContext(IO)` 로 감싸면
+     * 그 안의 콜백까지 IO 스레드에서 불려 나가 바인딩 제약("공개 콜백·코어 상태는 주입된
+     * 디스패처 한 곳에서만")을 어긴다.
+     */
     private suspend fun consume(buildingId: String?, floorId: String?): Boolean {
         val call = streamHttp.newCall(buildRequest(buildingId, floorId))
         currentCall = call
-        // 읽기는 IO 스레드에서 막히며 돈다. 그 안에서 콜백(onChange·log)을 바로 부르면 고객
-        // 콜백(onConfigChanged·onDebugLog)이 IO 스레드에서 불리고 lastSeq 가 두 스레드에서
-        // 바뀐다 — 받은 것은 전부 [scope] 로 넘겨 거기서 처리한다(도착 순서 그대로).
-        // 스트림 작업(job)의 자식으로 띄워 stop() 뒤에는 남은 것이 전달되지 않게 한다.
-        val streamJob = currentCoroutineContext()[Job]
-        val post: (() -> Unit) -> Unit = { block ->
-            scope.launch(streamJob ?: EmptyCoroutineContext) { block() }
-        }
         return try {
-            withContext(Dispatchers.IO) {
-                call.execute().use { response ->
-                    if (!response.isSuccessful) {
-                        val code = response.code
-                        post { log(LogLevel.WARN, "live: 연결 거절 $code") }
-                        false
-                    } else {
-                        post { onConnected() }
-                        response.body?.source()?.let { readFrames(it, post) }
-                        true
-                    }
+            val response = withContext(Dispatchers.IO) { call.execute() }
+            response.use {
+                if (!response.isSuccessful) {
+                    log(LogLevel.WARN, "live: 연결 거절 ${response.code}")
+                    false
+                } else {
+                    onConnected()
+                    response.body?.source()?.let { source -> readFrames(source) }
+                    true
                 }
             }
         } catch (e: IOException) {
@@ -124,7 +120,10 @@ internal class LiveConfigStream(
             log(LogLevel.WARN, "live: 끊김 $e")
             false
         } finally {
-            currentCall = null
+            // ⚠️ 다음 세대(다음 start())가 이미 자기 call 로 currentCall 을 갈아치웠을 수
+            // 있다 — 무조건 null 로 밀면 그 살아있는 call 참조를 지워서 stop() 이 더는
+            // 그 연결을 취소하지 못하게 된다. 내가 심은 call 이 아직 그대로일 때만 지운다.
+            if (currentCall === call) currentCall = null
         }
     }
 
@@ -139,12 +138,17 @@ internal class LiveConfigStream(
             .build()
     }
 
-    /** EOF 까지 줄 단위로 읽어 파서에 먹인다 — 완성된 프레임마다 [ingest]. */
-    private fun readFrames(source: BufferedSource, post: (() -> Unit) -> Unit) {
+    /**
+     * EOF 까지 줄 단위로 읽어 파서에 먹인다 — 완성된 프레임마다 [ingest].
+     *
+     * `readUtf8Line()` 만 [Dispatchers.IO] 로 넘긴다 — [ingest] 는 호출부([scope] 디스패처)로
+     * 돌아와서 돈다(위 [consume] 의 주석 참고).
+     */
+    private suspend fun readFrames(source: BufferedSource) {
         val parser = SseFrameParser()
         while (true) {
-            val line = source.readUtf8Line() ?: return
-            parser.feedLine(line)?.let { frame -> post { ingest(frame) } }
+            val line = withContext(Dispatchers.IO) { source.readUtf8Line() } ?: return
+            parser.feedLine(line)?.let { ingest(it) }
         }
     }
 
