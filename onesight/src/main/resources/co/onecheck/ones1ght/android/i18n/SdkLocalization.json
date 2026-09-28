@@ -1,0 +1,542 @@
+{
+  "provider.ready": {
+    "ko": "측위 엔진 v%@ 준비됨",
+    "ja": "測位エンジン v%@ 準備完了",
+    "en": "positioning engine v%@ ready"
+  },
+  "provider.noSession": {
+    "ko": "세션 ID 미주입 — apply(config:) 후 시작하세요",
+    "ja": "セッションID未注入 — apply(config:) 後に開始してください",
+    "en": "Session ID not injected — call apply(config:) before start"
+  },
+  "provider.zoneReady": {
+    "ko": "ZoneEngine 준비됨 (존 0개 — 지도는 파트너 API zone 사용)",
+    "ja": "ZoneEngine 準備完了 (ゾーン0件 — 地図はパートナーAPIのゾーンを使用)",
+    "en": "ZoneEngine ready (0 zones — map uses partner API zones)"
+  },
+  "provider.anchorsApply": {
+    "ko": "로케이터 %d개 주입",
+    "ja": "ロケータ %d台を適用",
+    "en": "Injected %d locators"
+  },
+  "provider.sessionApply": {
+    "ko": "세션 ID 주입: networkId %d",
+    "ja": "セッションID注入: networkId %d",
+    "en": "Session ID injected: networkId %d"
+  },
+  "provider.configApply": {
+    "ko": "config 주입: floor %@…",
+    "ja": "config 注入: floor %@…",
+    "en": "Config injected: floor %@…"
+  },
+  "provider.trackingStart": {
+    "ko": "트래킹 시작 (networkId: %d)",
+    "ja": "トラッキング開始 (networkId: %d)",
+    "en": "Tracking started (networkId: %d)"
+  },
+  "provider.position": {
+    "ko": "좌표 (%.2f, %.2f, %.2f)",
+    "ja": "座標 (%.2f, %.2f, %.2f)",
+    "en": "Position (%.2f, %.2f, %.2f)"
+  },
+  "provider.waiting": {
+    "ko": "NISession.run() — 앵커 신호 대기 중…",
+    "ja": "NISession.run() — アンカーの信号を待機中…",
+    "en": "NISession.run() — waiting for anchor signals…"
+  },
+  "provider.diag": {
+    "ko": "통신 진단: %@",
+    "ja": "通信診断: %@",
+    "en": "Diagnostic: %@"
+  },
+  "provider.trackingStop": {
+    "ko": "종료 — measurement %d건",
+    "ja": "終了 — measurement %d件",
+    "en": "Stopped — %d measurements"
+  },
+  "provider.suspended": {
+    "ko": "세션 일시중단",
+    "ja": "セッション一時停止",
+    "en": "Session suspended"
+  },
+  "provider.resumed": {
+    "ko": "세션 재개",
+    "ja": "セッション再開",
+    "en": "Session resumed"
+  },
+  "provider.invalid": {
+    "ko": "세션 무효화: %@",
+    "ja": "セッション無効化: %@",
+    "en": "Session invalidated: %@"
+  },
+  "provider.judgeInside": {
+    "ko": "안:%@",
+    "ja": "内:%@",
+    "en": "in:%@"
+  },
+  "provider.judgeOutside": {
+    "ko": "밖",
+    "ja": "外",
+    "en": "out"
+  },
+  "diag.summary": {
+    "ko": "등록 %d·수신 %d·유효 %d%@ → %@",
+    "ja": "登録 %d·受信 %d·有効 %d%@ → %@",
+    "en": "Registered %d·Received %d·Valid %d%@ → %@"
+  },
+  "diag.missing": {
+    "ko": " · 미수신 %@",
+    "ja": " · 未受信 %@",
+    "en": " · missing %@"
+  },
+  "diag.ok": {
+    "ko": "측위 정상 (좌표 산출 중)",
+    "ja": "測位正常 (座標算出中)",
+    "en": "Positioning OK (computing coordinates)"
+  },
+  "diag.pending": {
+    "ko": "앵커 충분 — 좌표 수렴 대기",
+    "ja": "アンカー十分 — 座標収束待ち",
+    "en": "Anchors sufficient — awaiting fix"
+  },
+  "diag.fail": {
+    "ko": "측위 불가 — 유효앵커 %d/3",
+    "ja": "測位不可 — 有効アンカー %d/3",
+    "en": "Positioning unavailable — valid anchors %d/3"
+  },
+  "coord.verifyPass": {
+    "ko": "verify 통과 (tenant: %@)",
+    "ja": "verify 通過 (tenant: %@)",
+    "en": "verify passed (tenant: %@)"
+  },
+  "coord.keyUnavailable": {
+    "ko": "측위 키를 받지 못했습니다 — 콘솔에 설정돼 있지 않거나 조회에 실패했습니다. 건물·층·존 조회는 빈 값으로 떨어집니다",
+    "ja": "測位キーを取得できませんでした — コンソールに設定されていないか、取得に失敗しました。建物・階・ゾーンの取得は空値になります",
+    "en": "Could not obtain the positioning key — it is not configured in the console, or the lookup failed. Buildings/floors/zones will come back empty"
+  },
+  "coord.consent": {
+    "ko": "consent 기록됨",
+    "ja": "consent 記録済み",
+    "en": "consent recorded"
+  },
+  "coord.startIgnored": {
+    "ko": "이미 측위 중이라 시작 요청을 넘깁니다",
+    "ja": "すでに測位中のため開始要求をスキップします",
+    "en": "Already positioning \u2014 start request ignored"
+  },
+  "coord.stopFlush": {
+    "ko": "종료 — 잔여 %d건 flush 시도",
+    "ja": "終了 — 残り %d件を flush",
+    "en": "Stopping — flushing %d pending"
+  },
+  "coord.pendingLost": {
+    "ko": "미전송 %d건 남음 (인메모리 — 앱 종료 시 유실)",
+    "ja": "未送信 %d件が残存 (インメモリ — アプリ終了時に消失)",
+    "en": "%d unsent (in-memory — lost on app exit)"
+  },
+  "coord.logsSent": {
+    "ko": "좌표 %d건 전송 → 서버 accepted %d",
+    "ja": "座標 %d件を送信 → サーバー accepted %d",
+    "en": "Sent %d coordinates → server accepted %d"
+  },
+  "coord.logsFail": {
+    "ko": "좌표 %d건 전송 실패 → 버퍼 유지·재시도 예정",
+    "ja": "座標 %d件の送信失敗 → バッファ保持·再試行予定",
+    "en": "Failed to send %d coordinates → buffer kept, will retry"
+  },
+  "coord.floorLoaded": {
+    "ko": "층 설정 로드: 로케이터 %d대 · 구역 %d개 (floor %@…)",
+    "en": "Floor config loaded: %d locators · %d zones (floor %@…)",
+    "ja": "階設定をロード: ロケーター %d台 · エリア %d件 (floor %@…)"
+  },
+  "coord.floorEmpty": {
+    "ko": "층에 존 없음(404) — 정상 분기",
+    "ja": "階にゾーンなし(404) — 正常分岐",
+    "en": "No zones on floor (404) — normal branch"
+  },
+  "coord.zoneSent": {
+    "ko": "zone %@ 전송 (triggers %d개)",
+    "ja": "zone %@ 送信 (triggers %d件)",
+    "en": "zone %@ sent (%d triggers)"
+  },
+  "coord.zoneRetryOK": {
+    "ko": "zone %@ 재시도 성공",
+    "ja": "zone %@ 再試行成功",
+    "en": "zone %@ retry succeeded"
+  },
+  "coord.zoneDropNet": {
+    "ko": "zone %@ 전송 실패 (network) — 드랍",
+    "ja": "zone %@ 送信失敗 (network) — ドロップ",
+    "en": "zone %@ send failed (network) — dropped"
+  },
+  "coord.zoneDropErr": {
+    "ko": "zone %@ 전송 실패 — 드랍",
+    "ja": "zone %@ 送信失敗 — ドロップ",
+    "en": "zone %@ send failed — dropped"
+  },
+  "coord.zonesApply": {
+    "ko": "🗺 존 %d개 주입 — 판정 시작",
+    "ja": "🗺 ゾーン %d件を適用 — 判定開始",
+    "en": "🗺 Applied %d zones — judgment started"
+  },
+  "zone.refreshSkipped": {
+    "ko": "⚠️ 존 재조회 건너뜀 — 선택된 층이 없음",
+    "ja": "⚠️ ゾーン再取得をスキップ — 階が選択されていません",
+    "en": "⚠️ Zone refresh skipped — no floor selected"
+  },
+  "zone.refreshEmpty": {
+    "ko": "🔄 존 재조회 — 등록된 존 없음",
+    "ja": "🔄 ゾーン再取得 — 登録されたゾーンなし",
+    "en": "🔄 Zone refresh — no zones registered"
+  },
+  "zone.refreshOk": {
+    "ko": "🔄 존 재조회 — %d개: %@",
+    "ja": "🔄 ゾーン再取得 — %d件: %@",
+    "en": "🔄 Zone refresh — %d zone(s): %@"
+  },
+  "zone.refreshFail": {
+    "ko": "⚠️ 존 재조회 실패 — 기존 %d개 유지: %@",
+    "ja": "⚠️ ゾーン再取得に失敗 — 既存 %d件を維持: %@",
+    "en": "⚠️ Zone refresh failed — keeping existing %d zone(s): %@"
+  },
+  "zone.defaultsApplied": {
+    "ko": "ℹ️ [%@] 미설정 항목에 기본값 적용 — %@",
+    "ja": "ℹ️ [%@] 未設定項目にデフォルト値を適用 — %@",
+    "en": "ℹ️ [%@] Defaults applied to unset fields — %@"
+  },
+  "zone.count": {
+    "ko": "적립 [%@] %d/%d",
+    "ja": "カウント [%@] %d/%d",
+    "en": "Count [%@] %d/%d"
+  },
+  "zone.countConfirmed": {
+    "ko": "적립 [%@] %d/%d ✓ → 존 진입 대기",
+    "ja": "カウント [%@] %d/%d ✓ → ゾーン進入待ち",
+    "en": "Count [%@] %d/%d ✓ → awaiting zone IN"
+  },
+  "zone.countReset": {
+    "ko": "↩︎ [%@] 적립 리셋 (%d개 소실) — %@",
+    "ja": "↩︎ [%@] カウントをリセット (%d件を破棄) — %@",
+    "en": "↩︎ [%@] Count reset (%d discarded) — %@"
+  },
+  "gs.idle": {
+    "ko": "대기",
+    "ja": "待機",
+    "en": "Idle"
+  },
+  "gs.loading": {
+    "ko": "도면 로딩 중…",
+    "ja": "フロアマップ読み込み中…",
+    "en": "Loading floor plan…"
+  },
+  "gs.done": {
+    "ko": "완료 (앵커 %d개 · 존 %d개)",
+    "ja": "完了 (アンカー %d台 · ゾーン %d件)",
+    "en": "Done (%d anchors · %d zones)"
+  },
+  "provider.anchorScan": {
+    "ko": "📡 앵커 0x%012llX  RSSI %.1f  %@",
+    "ja": "📡 アンカー 0x%012llX  RSSI %.1f  %@",
+    "en": "📡 Anchor 0x%012llX  RSSI %.1f  %@"
+  },
+  "provider.anchorMatched": {
+    "ko": "✓매칭",
+    "ja": "✓一致",
+    "en": "✓matched"
+  },
+  "provider.anchorUnmatched": {
+    "ko": "✗미매칭",
+    "ja": "✗不一致",
+    "en": "✗unmatched"
+  },
+  "zone.paramDump": {
+    "ko": "존 판정 → %@ 진입거리 %.2f · 확정 %d회/%d초 · 이탈유예 %d초",
+    "ja": "ゾーン判定 → %@ 進入距離 %.2f · 確定 %d回/%d秒 · 離脱猶予 %d秒",
+    "en": "Zone judging → %@ inDist %.2f · confirm %d×/%ds · outPeriod %ds"
+  },
+  "zone.intervalTooShort": {
+    "ko": "⚠️ [%@] 집계간격 %d초 ≤ 좌표 주기 %.2f초 — 카운트가 매번 리셋되어 IN 발화 불가",
+    "ja": "⚠️ [%@] 集計間隔 %d秒 ≤ 座標周期 %.2f秒 — カウントが毎回リセットされ IN が発火しません",
+    "en": "⚠️ [%@] Interval %ds ≤ coordinate period %.2fs — count resets every time, IN can never fire"
+  },
+  "zone.confirmEstimate": {
+    "ko": "ℹ️ [%@] 진입확정 %d회 → 존 안 약 %.1f초 연속 체류 시 IN (좌표 %.2f초 주기)",
+    "ja": "ℹ️ [%@] 進入確定 %d回 → ゾーン内に約 %.1f秒 連続滞在で IN (座標 %.2f秒周期)",
+    "en": "ℹ️ [%@] Confirm %d× → IN after ~%.1fs continuous stay inside (%.2fs coordinate period)"
+  },
+  "zone.defaultInDist": {
+    "ko": "진입거리 %@m",
+    "ja": "進入距離 %@m",
+    "en": "inDist %@m"
+  },
+  "zone.defaultInCount": {
+    "ko": "진입확정 %d회",
+    "ja": "進入確定 %d回",
+    "en": "confirm %d×"
+  },
+  "zone.defaultInterval": {
+    "ko": "집계간격 %d초",
+    "ja": "集計間隔 %d秒",
+    "en": "interval %ds"
+  },
+  "zone.defaultOutPeriod": {
+    "ko": "이탈유예 %d초",
+    "ja": "離脱猶予 %d秒",
+    "en": "outPeriod %ds"
+  },
+  "zone.defaultPriority": {
+    "ko": "우선순위 %d",
+    "ja": "優先度 %d",
+    "en": "priority %d"
+  },
+  "zone.resetGap": {
+    "ko": "공백 %.2f초 > 집계간격 %d초",
+    "ja": "空白 %.2f秒 > 集計間隔 %d秒",
+    "en": "gap %.2fs > interval %ds"
+  },
+  "zone.resetMove": {
+    "ko": "이동 %.2fm > 진입거리 %.2fm",
+    "ja": "移動 %.2fm > 進入距離 %.2fm",
+    "en": "moved %.2fm > inDist %.2fm"
+  },
+  "coord.noFloorLoaded": {
+    "ko": "층이 아직 정해지지 않았습니다 — 층이 잡히기 전까지는 좌표가 나오지 않습니다",
+    "ja": "階がまだ確定していません — 階が確定するまで座標は出ません",
+    "en": "No floor yet — positions will not be produced until a floor is determined."
+  },
+  "provider.permissionDenied": {
+    "ko": "⛔️ 측위 권한이 거부되어 중단합니다 — 설정 앱에서 허용해야 재개할 수 있습니다",
+    "ja": "⛔️ 測位権限が拒否されたため停止します — 設定アプリで許可すると再開できます",
+    "en": "⛔️ Positioning permission denied — enable it in Settings to resume."
+  },
+  "coord.rateApplied": {
+    "ko": "좌표 전송 주기 %d회/초 적용 (서버 설정)",
+    "ja": "座標送信レート %d回/秒 を適用（サーバー設定）",
+    "en": "Position upload rate set to %d/s (server setting)"
+  },
+  "zone.noZones": {
+    "ko": "⚠️ 이 층에 등록된 구역이 없어 판정을 돌리지 않습니다 — 콘솔에서 구역을 만들어 주세요",
+    "ja": "⚠️ この階に登録されたエリアがないため判定を行いません — コンソールでエリアを作成してください",
+    "en": "⚠️ No zones on this floor, so judging is off — create a zone in the console"
+  },
+  "zone.startFailed": {
+    "ko": "⚠️ 구역 %d개를 넣었는데 판정 엔진이 시작되지 않았습니다 — 좌표를 버립니다",
+    "ja": "⚠️ エリアを %d 件投入しましたが判定エンジンが開始されていません — 座標を破棄します",
+    "en": "⚠️ %d zones were injected but the judging engine did not start — dropping coordinates"
+  },
+  "uwb.ready": {
+    "ko": "측위 엔진 %@ 준비됨 · DL-TDoA %@",
+    "ja": "測位エンジン %@ 準備完了 · DL-TDoA %@",
+    "en": "positioning engine %@ ready · DL-TDoA %@"
+  },
+  "uwb.supported": {
+    "ko": "지원",
+    "ja": "対応",
+    "en": "supported"
+  },
+  "uwb.unsupported": {
+    "ko": "미지원",
+    "ja": "非対応",
+    "en": "unsupported"
+  },
+  "uwb.noLicense": {
+    "ko": "⚠️ 측위 라이선스 키가 없습니다 — 콘솔의 측위 키 설정을 확인하세요",
+    "ja": "⚠️ 測位ライセンスキーがありません — コンソールの測位キー設定を確認してください",
+    "en": "⚠️ No positioning engine license key — check the positioning key in the console"
+  },
+  "uwb.starting": {
+    "ko": "▶︎ 측위 엔진 시작 (라이선스 %@… · 서버 검증 최대 10초)",
+    "ja": "▶︎ 測位エンジン開始 (ライセンス %@… · サーバー検証 最大10秒)",
+    "en": "▶︎ Starting the positioning engine (license %@… · server check up to 10s)"
+  },
+  "uwb.started": {
+    "ko": "라이선스 통과 — 층 탐색(BLE) 시작",
+    "ja": "ライセンス通過 — フロア探索(BLE)開始",
+    "en": "License accepted — floor discovery (BLE) started"
+  },
+  "uwb.paused": {
+    "ko": "⏸ 측위 일시정지 — 엔진은 계속 돕니다(층 유지)",
+    "ja": "⏸ 測位を一時停止 — エンジンは動作継続(フロア維持)",
+    "en": "⏸ Positioning paused — the engine keeps running (floor kept)"
+  },
+  "uwb.resumed": {
+    "ko": "▶︎ 측위 재개",
+    "ja": "▶︎ 測位を再開",
+    "en": "▶︎ Positioning resumed"
+  },
+  "uwb.stopped": {
+    "ko": "측위 엔진 정지됨",
+    "ja": "測位エンジン停止",
+    "en": "positioning engine stopped"
+  },
+  "uwb.stoppedSelf": {
+    "ko": "⚠️ 측위 엔진이 스스로 정지했습니다 (자동 재개 없음)",
+    "ja": "⚠️ 測位エンジンが自ら停止しました (自動再開なし)",
+    "en": "⚠️ positioning engine stopped on its own (no auto-resume)"
+  },
+  "uwb.trackingStart": {
+    "ko": "층 %lld 추적 시작 — UWB 측위",
+    "ja": "フロア %lld 追跡開始 — UWB測位",
+    "en": "Tracking floor %lld — UWB positioning started"
+  },
+  "uwb.trackingStop": {
+    "ko": "층 %lld 이탈 — 다시 탐색",
+    "ja": "フロア %lld から離脱 — 再探索",
+    "en": "Left floor %lld — searching again"
+  },
+  "uwb.positioningOn": {
+    "ko": "▶︎ 측위 시작 — 좌표 수집·존 판정 가동 (층 %@)",
+    "ja": "▶︎ 測位開始 — 座標収集・エリア判定 稼働 (フロア %@)",
+    "en": "▶︎ Positioning on — collecting coordinates, zone events live (floor %@)"
+  },
+  "uwb.positioningOff": {
+    "ko": "■ 측위 종료 (좌표 %d건)",
+    "ja": "■ 測位終了 (座標 %d件)",
+    "en": "■ Positioning off (%d fixes)"
+  },
+  "uwb.stopRequested": {
+    "ko": "■ 측위 엔진 정지 요청 (좌표 %d건)",
+    "ja": "■ 測位エンジン停止要求 (座標 %d件)",
+    "en": "■ Positioning engine stop requested (%d fixes)"
+  },
+  "uwb.area": {
+    "ko": "영역 %@ \"%@\" · 층 %lld (엔진 판정)",
+    "ja": "エリア %@ \"%@\" · フロア %lld （エンジン判定）",
+    "en": "Area %@ \"%@\" · floor %lld (judged by the positioning engine)"
+  },
+  "uwb.areaUnmapped": {
+    "ko": "⚠️ 측위 엔진 영역 \"%@\" 가 콘솔 구역 %d개 어디에도 없습니다 — 이벤트를 보내지 않습니다 (이름을 맞추세요)",
+    "ja": "⚠️ 測位エンジンのエリア \"%@\" がコンソールのエリア %d件 に見つかりません — イベントを送信しません (名称を一致させてください)",
+    "en": "⚠️ Positioning engine area \"%@\" matches none of %d console zones — event dropped (align the names)"
+  },
+  "uwb.areaUnknown": {
+    "ko": "⚠️ 알 수 없는 영역 상태 \"%@\" (영역 \"%@\") — 무시합니다",
+    "ja": "⚠️ 不明なエリア状態 \"%@\" (エリア \"%@\") — 無視します",
+    "en": "⚠️ Unknown area status \"%@\" (area \"%@\") — ignored"
+  },
+  "uwb.zonesApply": {
+    "ko": "콘솔 구역 %d개 주입 (로케이터 %d대는 진단용 — 측위 엔진은 자기 서버 앵커를 쓴다)",
+    "ja": "コンソールのエリア %d件 を投入 (ロケーター %d台 は診断用 — 測位エンジンは自社サーバーのアンカーを使用)",
+    "en": "Applied %d console zones (%d locators are diagnostics only — the positioning engine uses its own anchors)"
+  },
+  "uwb.fullAccuracy": {
+    "ko": "정밀 위치가 아닙니다 — 임시 정밀 승격을 요청합니다",
+    "ja": "正確な位置情報ではありません — 一時的な精度向上を要求します",
+    "en": "Not full accuracy — requesting temporary full accuracy"
+  },
+  "uwb.diag": {
+    "ko": "측위 엔진 %@ · 층 %@ · 좌표 %d건 · 콘솔 로케이터 %d대",
+    "ja": "エンジン %@ · フロア %@ · 座標 %d件 · コンソール ロケーター %d台",
+    "en": "Engine %@ · floor %@ · %d fixes · %d console locators"
+  },
+  "uwb.error": {
+    "ko": "오류 %d: %@ — %@",
+    "ja": "エラー %d: %@ — %@",
+    "en": "Error %d: %@ — %@"
+  },
+  "uwb.errUnknown": {
+    "ko": "알 수 없는 코드",
+    "ja": "不明なコード",
+    "en": "unknown code"
+  },
+  "uwb.err1": {
+    "ko": "라이선스 미등록",
+    "ja": "ライセンス未登録",
+    "en": "license not set"
+  },
+  "uwb.err2": {
+    "ko": "이미 측위 중",
+    "ja": "すでに測位中",
+    "en": "already positioning"
+  },
+  "uwb.err3": {
+    "ko": "Bluetooth 사용 불가",
+    "ja": "Bluetooth 使用不可",
+    "en": "Bluetooth unavailable"
+  },
+  "uwb.err4": {
+    "ko": "해당 층 앵커 정보 없음 (재시도됨)",
+    "ja": "該当フロアのアンカー情報なし (再試行)",
+    "en": "no anchors for this floor (retried)"
+  },
+  "uwb.err5": {
+    "ko": "DL-TDoA 세션 오류",
+    "ja": "DL-TDoA セッションエラー",
+    "en": "DL-TDoA session error"
+  },
+  "uwb.err6": {
+    "ko": "영역 판정 오류",
+    "ja": "エリア判定エラー",
+    "en": "area judging error"
+  },
+  "uwb.err7": {
+    "ko": "위치 사용 불가 (권한·정밀·서비스)",
+    "ja": "位置情報 使用不可 (権限・精度・サービス)",
+    "en": "location unavailable (permission/accuracy/service)"
+  },
+  "uwb.err8": {
+    "ko": "정지 중 start()",
+    "ja": "停止中の start()",
+    "en": "start() while stopping"
+  },
+  "uwb.err9": {
+    "ko": "NSBluetoothAlwaysUsageDescription 누락",
+    "ja": "NSBluetoothAlwaysUsageDescription 欠落",
+    "en": "NSBluetoothAlwaysUsageDescription missing"
+  },
+  "uwb.err10": {
+    "ko": "서버가 라이선스 거부",
+    "ja": "サーバーがライセンスを拒否",
+    "en": "license rejected by server"
+  },
+  "uwb.err11": {
+    "ko": "라이선스 서버 연결 실패",
+    "ja": "ライセンスサーバー接続失敗",
+    "en": "license server unreachable"
+  },
+  "uwb.err12": {
+    "ko": "기기 DL-TDoA 미지원",
+    "ja": "端末が DL-TDoA 非対応",
+    "en": "device does not support DL-TDoA"
+  },
+  "uwb.paramsIgnored": {
+    "ko": "⚠️ 콘솔 존 판정 파라미터는 이 경로에서 쓰이지 않습니다 (엔진이 자체 지오펜스로 판정) — 해당 존 %d개",
+    "ja": "⚠️ コンソールのゾーン判定パラメータはこの経路では使われません（エンジンが自前のジオフェンスで判定）— 該当ゾーン %d件",
+    "en": "⚠️ Console zone judging parameters are unused on this path (the engine judges with its own geofences) — %d zone(s) affected"
+  },
+  "uwb.locationAsk": {
+    "ko": "위치 권한을 요청합니다 — 측위에 필수입니다",
+    "ja": "位置情報の許可を求めます — 測位に必須です",
+    "en": "Requesting location permission — required for positioning"
+  },
+  "uwb.locationDenied": {
+    "ko": "❌ 위치 권한이 없어 측위를 시작하지 못했습니다. 설정 앱에서 허용해야 합니다",
+    "ja": "❌ 位置情報の許可がないため測位を開始できません。設定アプリで許可してください",
+    "en": "❌ Cannot start positioning without location permission. Allow it in Settings"
+  },
+  "coord.floorZones": {
+    "ko": "층 구역 설정 로드: %d개 (floor %@…)",
+    "en": "Floor zone config loaded: %d (floor %@…)",
+    "ja": "階エリア設定をロード: %d件 (floor %@…)"
+  },
+  "zone.geofenceReload": {
+    "ko": "구역이 바뀌었습니다(%d개) — 판정 엔진이 구역을 다시 읽습니다",
+    "en": "Zones changed (%d) — reloading geofences in the positioning engine",
+    "ja": "エリアが変わりました(%d件) — 判定エンジンがエリアを読み直します"
+  },
+  "uwb.geofenceReload": {
+    "ko": "구역 재적재 — 엔진을 다시 시작합니다(잠시 좌표가 끊깁니다)",
+    "en": "Reloading zones — restarting the engine (positions pause briefly)",
+    "ja": "エリア再読み込み — エンジンを再起動します(座標が一時的に途切れます)"
+  },
+  "uwb.areaPaused": {
+    "ko": "일시정지 중 — 영역 %@ %@ 을 넘깁니다",
+    "en": "Paused - skipping area %@ %@",
+    "ja": "一時停止中 - エリア %@ %@ をスキップ"
+  },
+  "uwb.startQueued": {
+    "ko": "엔진이 아직 내려가는 중 — 정지가 끝나면 이어서 시작합니다",
+    "en": "Engine still stopping - will start once it finishes",
+    "ja": "エンジンが停止中 - 停止完了後に開始します"
+  }
+}
