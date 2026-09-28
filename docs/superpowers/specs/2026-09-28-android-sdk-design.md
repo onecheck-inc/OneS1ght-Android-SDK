@@ -59,6 +59,22 @@ iOS 가 쓰는 `gpi-ihub` 는 엔진 하나가 다음을 모두 한다.
 
 패키지는 `co.onecheck.ones1ght.android`다(iOS 의 SDK 식별자 `co.onecheck.ones1ght.sdk` 에서 끝만 바꿨다). 모든 공개 콜백은 **메인 스레드**에서 호출한다. iOS 의 `async` 함수는 `suspend fun` 으로 옮긴다.
 
+### 3.0 Java · Kotlin 동시 지원
+
+고객 앱이 Java 일 수도, Kotlin 일 수도 있으므로 공개 API 는 **양쪽에서 자연스럽게** 불려야 한다.
+
+- **비동기 함수**: Kotlin 용 `suspend fun foo(...)` 와 Java 용 `fun foo(..., callback: Callback<T>)` 를 **같은 이름으로 두 벌** 제공한다.
+  - `interface Callback<T> { fun onSuccess(result: T); fun onError(error: Throwable) }` 형태이고, 콜백은 메인 스레드에서 호출한다.
+  - 반환값이 없으면 `Callback<Void?>` 를 쓴다(Java 에서 `Unit.INSTANCE` 를 다루지 않게).
+  - Java 판은 SDK 내부 스코프(`SupervisorJob + Dispatchers.Main`)에서 suspend 판을 실행한다.
+- **이벤트 콜백**: 함수 타입(`(Zone) -> Unit`) 대신 **`fun interface`** 로 둔다. 예: `ZoneListener`, `PositionListener`, `TriggersListener`, `ConfigChangeListener`, `DwellListener`, `DebugLogListener`.
+  - Kotlin 에서는 SAM 변환(`session.onZoneEnter = ZoneListener { z -> ... }`)으로, Java 에서는 `session.setOnZoneEnter(z -> ...)` 로 쓴다.
+- **정적 멤버**: `object OneS1ght` 의 멤버에 `@JvmStatic` 을 붙인다. 이렇게 하면 Java 에서 `OneS1ght.buildings(cb)` 로 부를 수 있다. 상수에는 `const`/`@JvmField` 를 쓴다.
+- **기본 인자**: `@JvmOverloads` 를 붙인다(예: `initialize`, `setFloorMap`).
+- **오류**: `SdkError`/`ApiError` 는 `Exception` 하위 클래스라 Java 에서 `instanceof` 로 구분할 수 있다. Java 판에서는 이 예외를 `onError` 로 전달한다.
+- **모델**: `data class` 로 두고, Java 에서는 getter 로 읽는다. 컬렉션은 읽기 전용 `List`/`Map` 이다.
+- **검증**: `src/test/java/.../JavaInteropTest.java` 가 Java 로 initialize → identify → buildings → setFloorMap → floorSession().begin → 콜백 설정 → end 를 컴파일하고 실행한다.
+
 ### 3.1 안드로이드라서 달라지는 곳 (전부)
 
 | iOS | Android | 이유 |
