@@ -9,7 +9,7 @@
 #    (b) Java   — javac --release 8. Callback 판을 부른다.
 #    둘 다 classes.jar + android.jar(compileOnly) + api 의존만 클래스패스에 둔다.
 #    initialize → identify → buildings → floors → setFloorMap → floorSession().begin → 리스너 → end,
-#    그리고 기본 구현 멤버를 오버라이드하지 않은 PositioningProvider 구현으로 begin(provider).
+#    permissions(activity), 그리고 기본 구현 멤버를 오버라이드하지 않은 PositioningProvider 구현으로 begin(provider).
 # 3. 하나라도 실패하면 0 이 아닌 값으로 끝난다.
 #
 # kotlinc 는 GitHub 릴리스 zip 을 받아 캐시에 푼다(전역 설치 없음, sha256 대조):
@@ -97,10 +97,12 @@ cat > "$WORK/kotlin/src/KotlinConsumer.kt" <<'KT'
 package consumer
 
 import android.content.Context
+import androidx.activity.ComponentActivity
 import co.onecheck.ones1ght.android.ConfigChangeListener
 import co.onecheck.ones1ght.android.DebugLogListener
 import co.onecheck.ones1ght.android.DwellListener
 import co.onecheck.ones1ght.android.OneS1ght
+import co.onecheck.ones1ght.android.PermissionStatus
 import co.onecheck.ones1ght.android.PositionListener
 import co.onecheck.ones1ght.android.SdkError
 import co.onecheck.ones1ght.android.TriggersListener
@@ -116,6 +118,10 @@ class KotlinProvider : PositioningProvider {
     override fun start() {}
     override fun stop() {}
 }
+
+/** 권한 요청 — suspend 판(androidx.activity 의 ComponentActivity 를 받는다: api 의존이 고객 클래스패스에 있는지). */
+suspend fun kotlinPermissions(activity: ComponentActivity): Boolean =
+    OneS1ght.permissions(activity) == PermissionStatus.AUTHORIZED
 
 /** Kotlin 앱이 쓰는 모양 그대로 — suspend 판 + fun interface SAM 변환. */
 suspend fun kotlinFlow(context: Context): String {
@@ -166,9 +172,11 @@ cat > "$WORK/java/src/consumer/JavaConsumer.java" <<'JAVA'
 package consumer;
 
 import android.content.Context;
+import androidx.activity.ComponentActivity;
 import co.onecheck.ones1ght.android.Callback;
 import co.onecheck.ones1ght.android.FloorSession;
 import co.onecheck.ones1ght.android.OneS1ght;
+import co.onecheck.ones1ght.android.PermissionStatus;
 import co.onecheck.ones1ght.android.SdkError;
 import co.onecheck.ones1ght.android.model.Building;
 import co.onecheck.ones1ght.android.model.Floor;
@@ -187,6 +195,14 @@ public final class JavaConsumer {
         @Override public void setDelegate(PositioningProviderDelegate value) { delegate = value; }
         @Override public void start() {}
         @Override public void stop() {}
+    }
+
+    /** 권한 요청 — Callback 판. */
+    public static void javaPermissions(ComponentActivity activity) {
+        OneS1ght.permissions(activity, new Callback<PermissionStatus>() {
+            @Override public void onSuccess(PermissionStatus status) { System.out.println(status == PermissionStatus.AUTHORIZED); }
+            @Override public void onError(Throwable e) {}
+        });
     }
 
     public static void javaFlow(final Context context) {
