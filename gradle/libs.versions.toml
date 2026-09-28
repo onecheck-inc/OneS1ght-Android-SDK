@@ -17,12 +17,11 @@ androidxLifecycleProcess = "2.8.7"     # stdlib 1.x 대 (2.11.0 은 2.1.20)
 # 하한 선언일 뿐이라 고객 앱이 더 새 activity 를 쓰면 그쪽으로 올라간다.
 androidxActivity = "1.9.3"             # core 1.13 · stdlib 1.8 대 (1.13 은 core 1.18 → stdlib 2.1.20)
 
-# gpa-dltdoa:2.1.0 의 전이 의존 — Geoplan Nexus 계정이 없어 실제 POM 을 읽지 못했다.
-# Maven Central 최신 안정판으로 채운 추정치다. 계정이 생기면 반드시 실제 POM 과
-# 대조해서 맞게 고칠 것(어긋나면 엔진이 링크 단계에서 NoSuchMethodError 등으로 깨질 수 있다).
-commonsMath3 = "3.6.1" # must match gpa-dltdoa 2.1.0 POM — verify when creds exist
-jtsCore = "1.20.0" # must match gpa-dltdoa 2.1.0 POM — verify when creds exist
-slf4jApi = "2.0.20" # must match gpa-dltdoa 2.1.0 POM — verify when creds exist
+# 측위 엔진(gpa-dltdoa 2.1.0)의 전이 의존. 엔진 POM 에 적힌 버전과 같아야 한다
+# (어긋나면 링크 단계에서 NoSuchMethodError 등으로 깨질 수 있다).
+commonsMath3 = "3.6.1" # must match the engine POM
+jtsCore = "1.20.0" # must match the engine POM
+slf4jApi = "2.0.20" # must match the engine POM
 
 [libraries]
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerializationJson" }
