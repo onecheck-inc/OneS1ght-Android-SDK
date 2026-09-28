@@ -2,13 +2,20 @@
 # compileSdk 37 을 지원하는 최신 안정판(rc/alpha 제외). AGP 9 이상은 내장 Kotlin 지원을 쓴다.
 agp = "9.4.1"
 kotlin = "2.2.21"
-kotlinxCoroutines = "1.10.2"
-kotlinxSerializationJson = "1.9.0"
-okhttp = "4.12.0"
+# ⚠️ 아래 런타임 의존은 "최신" 이 아니라 "kotlin-stdlib 2.0 이하를 요구하는 판" 에 묶어 둔다 — 고객 앱 Kotlin 1.9+ 호환.
+#    이유: AGP 는 고객 앱의 컴파일 클래스패스 버전을 런타임 버전에 맞추므로, implementation 의존이라도
+#    kotlin-stdlib 2.1+ 를 끌어오면 고객 앱에 stdlib 2.1+ 가 올라가 Kotlin 1.9 컴파일러가 읽지 못한다
+#    (2.2 면 Kotlin 2.0 도 못 읽는다). 이전 값: coroutines 1.10.2 · serialization 1.9.0 · lifecycle 2.11.0 ·
+#    activity 1.13.0 → stdlib 2.2.0 이 끌려와 Kotlin 2.0.21 소비자가 컴파일러 예외로 죽었다.
+#    올릴 때는 Scripts/consumer-compat-check.sh 가 통과하는지 먼저 본다.
+kotlinxCoroutines = "1.9.0"            # stdlib 2.0.0 을 요구 (1.10.2 는 2.1.0)
+kotlinxSerializationJson = "1.7.3"     # stdlib 2.0 대 (1.9.0 은 2.2.0)
+okhttp = "4.12.0"                      # stdlib 1.9.10 — 공개 API 에는 안 나온다(JavaApiSurfaceTest)
 junit = "4.13.2"
-androidxLifecycleProcess = "2.11.0"
-# permissions(activity) — ActivityResultRegistry · RequestMultiplePermissions
-androidxActivity = "1.13.0"
+androidxLifecycleProcess = "2.8.7"     # stdlib 1.x 대 (2.11.0 은 2.1.20)
+# permissions(activity) — ActivityResultRegistry · RequestMultiplePermissions. 공개 API(api 의존).
+# 하한 선언일 뿐이라 고객 앱이 더 새 activity 를 쓰면 그쪽으로 올라간다.
+androidxActivity = "1.9.3"             # core 1.13 · stdlib 1.8 대 (1.13 은 core 1.18 → stdlib 2.1.20)
 
 # gpa-dltdoa:2.1.0 의 전이 의존 — Geoplan Nexus 계정이 없어 실제 POM 을 읽지 못했다.
 # Maven Central 최신 안정판으로 채운 추정치다. 계정이 생기면 반드시 실제 POM 과

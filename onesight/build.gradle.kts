@@ -1,4 +1,7 @@
 import org.gradle.api.artifacts.Configuration
+import org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode
+import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+import org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType
 
 plugins {
     alias(libs.plugins.android.library)
@@ -45,6 +48,22 @@ android {
 
 kotlin {
     explicitApi()
+
+    // 고객 앱 Kotlin 호환 — 오래된 Kotlin 컴파일러(1.9·2.0)로 빌드하는 앱도 이 AAR 을 읽을 수 있게
+    // 언어·API 수준을 2.0 으로 낮춘다(메타데이터 2.0.0 으로 기록 → Kotlin 1.9+ 가 읽음). 컴파일러 자체는
+    // AGP 내장 Kotlin(libs.versions.toml 의 kotlin) 그대로다. apiVersion 2.0 이라 표준 라이브러리도
+    // 2.0 에 있는 것만 쓸 수 있다(2.1+ API 를 쓰면 컴파일 오류).
+    compilerOptions {
+        languageVersion.set(KotlinVersion.KOTLIN_2_0)
+        apiVersion.set(KotlinVersion.KOTLIN_2_0)
+        // 인터페이스 기본 구현을 JVM default 메서드로 내보낸다(+ 옛 Kotlin 구현체용 DefaultImpls 도 함께).
+        // Kotlin 2.2 는 언어 수준 2.2 일 때만 이게 기본값이라, 2.0 으로 낮추면 명시해야 한다 — 빠지면
+        // Java 로 PositioningProvider 를 구현할 때 pause()·resume() 등을 전부 오버라이드해야 한다
+        // (JavaPositioningProviderCompatTest 가 잡는다).
+        jvmDefault.set(JvmDefaultMode.ENABLE)
+    }
+    // 자동으로 붙는 kotlin-stdlib 의존 버전(POM·.module 에 실리는 값). 고객이 더 새 stdlib 를 쓰면 그쪽으로 올라간다.
+    coreLibrariesVersion = "2.0.21"
 }
 
 // ---------------------------------------------------------------------------
@@ -165,4 +184,36 @@ dependencies {
     testImplementation(libs.kotlin.metadata.jvm)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
+}
+
+// ---------------------------------------------------------------------------
+// 고객 컴파일 클래스패스 내보내기 — Scripts/consumer-compat-check.sh 전용.
+//
+// 고객 앱이 이 SDK 를 컴파일할 때 보는 것 = SDK 의 api 의존과 그 전이 api 의존뿐이다(implementation 은
+// 안 보인다). 그 집합을 안드로이드 컴파일(java-api) 기준으로 풀어 build/consumer-compat/api-deps 에 복사한다.
+// 스크립트가 여기 있는 .aar/.jar 만으로 Kotlin·Java 소비자 코드를 컴파일해 본다.
+// ---------------------------------------------------------------------------
+val consumerApiClasspath: Configuration = configurations.create("consumerApiClasspath") {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    extendsFrom(configurations["api"])
+    attributes {
+        attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage.JAVA_API))
+        attribute(Category.CATEGORY_ATTRIBUTE, objects.named(Category.LIBRARY))
+        attribute(TargetJvmEnvironment.TARGET_JVM_ENVIRONMENT_ATTRIBUTE, objects.named(TargetJvmEnvironment.ANDROID))
+        attribute(KotlinPlatformType.attribute, KotlinPlatformType.androidJvm)
+    }
+}
+
+// 안드로이드 앱 빌드(AGP)는 컴파일 클래스패스 버전을 런타임 클래스패스 버전에 맞춘다 — 그래서 고객이 컴파일 때
+// 실제로 보는 버전은 "api 선언 버전" 이 아니라 "implementation 까지 합쳐 올라간 버전" 이다(예: kotlin-stdlib).
+// 같은 효과를 내려고 런타임 클래스패스와 일치하게 푼다.
+afterEvaluate {
+    consumerApiClasspath.shouldResolveConsistentlyWith(configurations["debugRuntimeClasspath"])
+}
+
+tasks.register<Sync>("exportConsumerApiClasspath") {
+    description = "고객 컴파일 클래스패스(api 의존)를 build/consumer-compat/api-deps 로 복사한다."
+    from(consumerApiClasspath)
+    into(layout.buildDirectory.dir("consumer-compat/api-deps"))
 }
