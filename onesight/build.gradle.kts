@@ -157,6 +157,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
     implementation(libs.androidx.lifecycle.process)
+    // 공개 API permissions(activity: ComponentActivity) 가 노출하므로 api 로 싣는다.
+    api(libs.androidx.activity)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

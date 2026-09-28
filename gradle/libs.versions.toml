@@ -7,6 +7,8 @@ kotlinxSerializationJson = "1.9.0"
 okhttp = "4.12.0"
 junit = "4.13.2"
 androidxLifecycleProcess = "2.11.0"
+# permissions(activity) — ActivityResultRegistry · RequestMultiplePermissions
+androidxActivity = "1.13.0"
 
 # gpa-dltdoa:2.1.0 의 전이 의존 — Geoplan Nexus 계정이 없어 실제 POM 을 읽지 못했다.
 # Maven Central 최신 안정판으로 채운 추정치다. 계정이 생기면 반드시 실제 POM 과
@@ -24,6 +26,7 @@ okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version.ref = "okhttp" }
 junit = { module = "junit:junit", version.ref = "junit" }
 androidx-lifecycle-process = { module = "androidx.lifecycle:lifecycle-process", version.ref = "androidxLifecycleProcess" }
+androidx-activity = { module = "androidx.activity:activity", version.ref = "androidxActivity" }
 geoplan-engine-commons-math3 = { module = "org.apache.commons:commons-math3", version.ref = "commonsMath3" }
 geoplan-engine-jts-core = { module = "org.locationtech.jts:jts-core", version.ref = "jtsCore" }
 geoplan-engine-slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4jApi" }

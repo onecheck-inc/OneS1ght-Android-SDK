@@ -26,6 +26,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 import okhttp3.Call
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -95,15 +97,24 @@ internal class LiveConfigStream(
     private suspend fun consume(buildingId: String?, floorId: String?): Boolean {
         val call = streamHttp.newCall(buildRequest(buildingId, floorId))
         currentCall = call
+        // 읽기는 IO 스레드에서 막히며 돈다. 그 안에서 콜백(onChange·log)을 바로 부르면 고객
+        // 콜백(onConfigChanged·onDebugLog)이 IO 스레드에서 불리고 lastSeq 가 두 스레드에서
+        // 바뀐다 — 받은 것은 전부 [scope] 로 넘겨 거기서 처리한다(도착 순서 그대로).
+        // 스트림 작업(job)의 자식으로 띄워 stop() 뒤에는 남은 것이 전달되지 않게 한다.
+        val streamJob = currentCoroutineContext()[Job]
+        val post: (() -> Unit) -> Unit = { block ->
+            scope.launch(streamJob ?: EmptyCoroutineContext) { block() }
+        }
         return try {
             withContext(Dispatchers.IO) {
                 call.execute().use { response ->
                     if (!response.isSuccessful) {
-                        log(LogLevel.WARN, "live: 연결 거절 ${response.code}")
+                        val code = response.code
+                        post { log(LogLevel.WARN, "live: 연결 거절 $code") }
                         false
                     } else {
-                        onConnected()
-                        response.body?.source()?.let(::readFrames)
+                        post { onConnected() }
+                        response.body?.source()?.let { readFrames(it, post) }
                         true
                     }
                 }
@@ -129,11 +140,11 @@ internal class LiveConfigStream(
     }
 
     /** EOF 까지 줄 단위로 읽어 파서에 먹인다 — 완성된 프레임마다 [ingest]. */
-    private fun readFrames(source: BufferedSource) {
+    private fun readFrames(source: BufferedSource, post: (() -> Unit) -> Unit) {
         val parser = SseFrameParser()
         while (true) {
             val line = source.readUtf8Line() ?: return
-            parser.feedLine(line)?.let { ingest(it) }
+            parser.feedLine(line)?.let { frame -> post { ingest(frame) } }
         }
     }
 

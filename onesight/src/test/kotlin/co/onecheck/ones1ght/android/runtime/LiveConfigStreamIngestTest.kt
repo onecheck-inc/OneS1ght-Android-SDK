@@ -32,7 +32,9 @@ class LiveConfigStreamIngestTest {
 
     @get:Rule val server = MockWebServer()
 
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    // 운영의 코어 디스패처(Main)처럼 한 줄로 도는 디스패처 — 스트림은 받은 것을 이 스코프로 넘기므로
+    // 여러 스레드 디스패처면 도착 순서가 흔들린다.
+    private val scope = CoroutineScope(Dispatchers.IO.limitedParallelism(1) + SupervisorJob())
 
     @After
     fun tearDown() {
