@@ -12,7 +12,6 @@ package co.onecheck.ones1ght.android.positioning
 //    결과를 기다려도 교착이 없다.
 //
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
 import android.ranging.RangingCapabilities
@@ -38,7 +37,7 @@ internal class AndroidDeviceCapability(
     override suspend fun supportsDlTdoa(): Boolean {
         cached?.let { return it }
         if (Build.VERSION.SDK_INT < MIN_RANGING_SDK) return false
-        val context = contextProvider() ?: currentApplication() ?: return false
+        val context = contextProvider() ?: return false // initialize 전 — 모름(기억하지 않는다)
         val answer = withTimeoutOrNull(TIMEOUT_MS) { queryDlTdoa(context) } ?: return false
         cached = answer
         return answer
@@ -67,18 +66,6 @@ internal class AndroidDeviceCapability(
             }
         }
     }
-
-    /**
-     * initialize·permissions 전에 deviceAvailability 를 물었을 때의 대비 — 프로세스의 Application.
-     * 숨은 API 라 실패하면 null(모름) 로 떨어진다.
-     */
-    @SuppressLint("PrivateApi", "DiscouragedPrivateApi")
-    private fun currentApplication(): Context? =
-        try {
-            Class.forName("android.app.ActivityThread").getMethod("currentApplication").invoke(null) as? Context
-        } catch (e: Exception) {
-            null
-        }
 
     private companion object {
         const val MIN_RANGING_SDK = 37

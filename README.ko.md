@@ -95,8 +95,10 @@ when (OneS1ght.deviceAvailability) {
 }
 ```
 
-throw 하지 않고 `initialize` 전에도 호출할 수 있어, 네트워크를 타기 전에 안내 UI를
-분기할 수 있습니다.
+throw 하지 않고 네트워크도 타지 않습니다. **`initialize` 다음에** 읽으세요 — 칩 확인에
+`initialize`(또는 `permissions(activity)`)가 넘겨주는 앱 Context 가 필요합니다. 그 전에
+Android 17 이상에서 읽으면 판단할 수 없어 `DEVICE_NOT_SUPPORTED` 를 돌려줍니다
+(`onDebugLog` 에 WARN 이 남습니다).
 
 ---
 

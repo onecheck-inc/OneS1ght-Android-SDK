@@ -146,9 +146,7 @@ public class FloorSession internal constructor() {
 
     /**
      * 가동 공통 경로 — 주입 provider 도 같은 대우를 받는다.
-     *
-     * TODO(Task 12): iOS 는 여기서 내장 provider 에 측위 엔진 라이선스(coordinator.positioningLicense)
-     *  를 넣는다. 안드로이드 내장 provider 에는 아직 그 자리가 없다 — 생기면 이 한 곳에서 넣는다.
+     * (iOS 는 여기서 엔진 라이선스를 넣지만 안드로이드 엔진에는 라이선스가 없다 — Ruling 9.)
      */
     private suspend fun start(provider: PositioningProvider) {
         val coordinator = OneS1ght.coordinatorRef ?: throw SdkError.NotInitialized()

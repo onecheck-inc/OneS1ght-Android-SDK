@@ -402,6 +402,33 @@ class OneS1ghtTest {
         assertEquals(listOf("app bug"), uncaught.map { it.message })
     }
 
+    // MARK: - 기기 판정 (Ruling 10)
+
+    /**
+     * Context 를 받기 전에는 칩을 물을 수 없다 — 거짓 AVAILABLE 대신 DEVICE_NOT_SUPPORTED 와
+     * WARN 한 번. OS 미달은 Context 없이도 정직하게 답한다. initialize 이후에는 실제 판정.
+     */
+    @Test fun availabilityBeforeContextIsNotSupportedWithOneWarn() {
+        OneS1ght.appContext = null
+        val warns = mutableListOf<String>()
+        OneS1ght.onDebugLog = DebugLogListener { level, msg -> if (level == LogLevel.WARN) warns += msg }
+
+        assertEquals(DeviceAvailability.DEVICE_NOT_SUPPORTED, OneS1ght.deviceAvailability)
+        assertEquals(DeviceAvailability.DEVICE_NOT_SUPPORTED, OneS1ght.deviceAvailability)
+        assertFalse(OneS1ght.isDeviceAvailable)
+        assertEquals("칩을 묻지 않는다", 0, h.capability.queries)
+        assertEquals(listOf("deviceAvailability read before initialize()"), warns)
+        assertEquals(PermissionStatus.UNSUPPORTED, h.await { OneS1ght.permissionsWith { PermissionStatus.AUTHORIZED } })
+
+        h.capability.sdkInt = 36
+        assertEquals(DeviceAvailability.OS_VERSION_TOO_LOW, OneS1ght.deviceAvailability)
+        h.capability.sdkInt = 37
+
+        initialize()
+        assertEquals(DeviceAvailability.AVAILABLE, OneS1ght.deviceAvailability)
+        assertTrue(h.capability.queries > 0)
+    }
+
     // MARK: - 권한
 
     @Test fun permissionsUnsupportedDeviceSkipsRequest() {

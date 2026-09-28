@@ -95,8 +95,10 @@ when (OneS1ght.deviceAvailability) {
 }
 ```
 
-This never throws and works before `initialize`, so you can branch your UI before
-touching the network.
+This never throws and makes no network call. Read it **after `initialize`** — the chip
+check needs the app context that `initialize` (or `permissions(activity)`) hands over.
+Read before that on Android 17+, it cannot tell and answers `DEVICE_NOT_SUPPORTED`
+(with a WARN in `onDebugLog`).
 
 ---
 

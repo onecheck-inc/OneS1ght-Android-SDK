@@ -95,8 +95,10 @@ when (OneS1ght.deviceAvailability) {
 }
 ```
 
-throw せず `initialize` の前でも呼べるため、ネットワークにアクセスする前に案内 UI を
-分岐できます。
+throw せず、ネットワークにもアクセスしません。**`initialize` の後に**読んでください —
+チップの確認には `initialize`(または `permissions(activity)`)が渡すアプリの Context が
+必要です。それより前に Android 17 以上で読むと判定できず `DEVICE_NOT_SUPPORTED` を
+返します(`onDebugLog` に WARN が残ります)。
 
 ---
 

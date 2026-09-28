@@ -51,6 +51,7 @@ import co.onecheck.ones1ght.android.runtime.AndroidAppLifecycle
 import co.onecheck.ones1ght.android.runtime.AndroidKeyValueStore
 import co.onecheck.ones1ght.android.runtime.AppLifecycle
 import co.onecheck.ones1ght.android.runtime.KeyValueStore
+import co.onecheck.ones1ght.android.runtime.LogLevel
 import co.onecheck.ones1ght.android.runtime.SdkLocalized
 import co.onecheck.ones1ght.android.runtime.SessionCoordinator
 import kotlinx.coroutines.CoroutineDispatcher
@@ -114,19 +115,38 @@ public object OneS1ght {
         get() = coordinator?.isPrepared ?: false
 
     /**
-     * 이 기기에서 측위가 가능한가 + 불가 사유. initialize 전에도 부를 수 있다(던지지 않는다).
-     * 네트워크를 타지 않는다. OS 버전을 먼저 본다 — 구 OS 에 칩 미지원을 잘못 알리지 않기 위해서다.
+     * 이 기기에서 측위가 가능한가 + 불가 사유. 던지지 않고 네트워크를 타지 않는다.
+     * OS 버전을 먼저 본다 — 구 OS 에 칩 미지원을 잘못 알리지 않기 위해서다.
      *
-     * 칩 조회는 처음 한 번만 시스템에 묻고(최대 5초) 그 뒤로는 기억한 값을 준다.
+     * **initialize() 다음에 읽는다.** 칩 조회에는 앱 Context 가 필요한데, SDK 가 그것을 받는 곳은
+     * initialize(또는 permissions(activity)) 뿐이다. 그 전에 읽으면 API 37 미만은 그대로
+     * [DeviceAvailability.OS_VERSION_TOO_LOW], 그 이상은 판단할 수 없어
+     * [DeviceAvailability.DEVICE_NOT_SUPPORTED] 이고 onDebugLog 에 WARN 이 한 번 남는다.
+     *
+     * 칩 조회는 처음 한 번만 시스템에 묻고(최대 5초 — 그동안 부른 스레드가 기다린다) 답을 받으면
+     * 기억한다.
      */
     @JvmStatic
     public val deviceAvailability: DeviceAvailability
         get() {
             val capability = deviceCapability
             if (capability.sdkInt < MIN_POSITIONING_SDK) return DeviceAvailability.OS_VERSION_TOO_LOW
+            if (appContext == null) return unknownBeforeInitialize()
             val supported = runBlocking { capability.supportsDlTdoa() }
             return if (supported) DeviceAvailability.AVAILABLE else DeviceAvailability.DEVICE_NOT_SUPPORTED
         }
+
+    @Volatile
+    private var warnedEarlyAvailability = false
+
+    /** Context 를 받기 전 — 칩을 물을 수 없다. 거짓 AVAILABLE 은 내지 않는다(Ruling 10). */
+    private fun unknownBeforeInitialize(): DeviceAvailability {
+        if (!warnedEarlyAvailability) {
+            warnedEarlyAvailability = true
+            onDebugLog?.onLog(LogLevel.WARN, "deviceAvailability read before initialize()")
+        }
+        return DeviceAvailability.DEVICE_NOT_SUPPORTED
+    }
 
     /** 이 기기에서 측위가 가능한가 (요약형). 사유가 필요하면 [deviceAvailability]. */
     @JvmStatic
@@ -137,6 +157,7 @@ public object OneS1ght {
     internal suspend fun availability(): DeviceAvailability {
         val capability = deviceCapability
         if (capability.sdkInt < MIN_POSITIONING_SDK) return DeviceAvailability.OS_VERSION_TOO_LOW
+        if (appContext == null) return unknownBeforeInitialize()
         return if (capability.supportsDlTdoa()) DeviceAvailability.AVAILABLE else DeviceAvailability.DEVICE_NOT_SUPPORTED
     }
 
@@ -568,6 +589,7 @@ public object OneS1ght {
         platformFactory = defaultPlatformFactory
         builtInProviderFactory = defaultBuiltInProviderFactory
         appContext = null
+        warnedEarlyAvailability = false
         currentBuildingId = null
         profileId = null
     }

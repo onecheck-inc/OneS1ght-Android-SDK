@@ -167,7 +167,7 @@
       "title": "기기 지원 분기 (선택)",
       "order": 11,
       "language": "kotlin",
-      "code": "// 네트워크를 타지 않고 즉시 답한다 — initialize 전에도 부를 수 있다.\nwhen (OneS1ght.deviceAvailability) {\n    DeviceAvailability.AVAILABLE            -> { }\n    DeviceAvailability.OS_VERSION_TOO_LOW   -> showNotice(\"Android 17 이상이 필요합니다\")\n    DeviceAvailability.DEVICE_NOT_SUPPORTED -> hidePositioningFeatures()\n}"
+      "code": "// 네트워크를 타지 않는다. initialize 다음에 읽는다 — 그 전(Android 17+)에는 판단할 수 없어 DEVICE_NOT_SUPPORTED 다.\nwhen (OneS1ght.deviceAvailability) {\n    DeviceAvailability.AVAILABLE            -> { }\n    DeviceAvailability.OS_VERSION_TOO_LOW   -> showNotice(\"Android 17 이상이 필요합니다\")\n    DeviceAvailability.DEVICE_NOT_SUPPORTED -> hidePositioningFeatures()\n}"
     },
     {
       "id": "debugLog",

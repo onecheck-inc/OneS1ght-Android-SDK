@@ -159,6 +159,9 @@ internal class JavaInteropHarness private constructor() {
         server.start()
         OneS1ght.dispatcher = dispatcher
         OneS1ght.deviceCapability = capability
+        // 앱 Context 를 이미 아는 상태(= initialize·permissions 이후)로 시작한다. "그 전" 동작은
+        // 그 테스트가 직접 null 로 되돌려 본다.
+        OneS1ght.appContext = context
         OneS1ght.platformFactory = { InMemoryKeyValueStore() to null }
         OneS1ght.builtInProviderFactory = {
             builtInCreated += 1
