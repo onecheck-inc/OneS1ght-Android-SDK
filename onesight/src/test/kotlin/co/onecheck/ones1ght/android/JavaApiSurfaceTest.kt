@@ -10,10 +10,7 @@ import java.lang.reflect.WildcardType
 import java.util.jar.JarFile
 import kotlin.metadata.ClassKind
 import kotlin.metadata.Visibility
-import kotlin.metadata.jvm.JvmMethodSignature
 import kotlin.metadata.jvm.KotlinClassMetadata
-import kotlin.metadata.jvm.getterSignature
-import kotlin.metadata.jvm.setterSignature
 import kotlin.metadata.jvm.signature
 import kotlin.metadata.kind
 import kotlin.metadata.visibility
@@ -24,15 +21,19 @@ import org.junit.Test
 /**
  * 공개 API 가 Java 에서 "Kotlin 티 없이" 불리는지 — 컴파일된 클래스를 리플렉션으로 훑는다(사양서 §3.0).
  *
- * 공개(public/protected) 멤버가 아래 중 하나라도 어기면 실패한다.
- *  (a) kotlin.coroutines.Continuation 을 받는데(= suspend) 같은 이름의 Callback 판이 없다
- *  (b) 매개변수·반환 타입에 kotlin.jvm.functions.FunctionN(람다 타입)이 나온다
+ * 검사 대상 클래스는 Kotlin 기준 공개 클래스(바깥 클래스까지 공개)와 파일 파사드(XxxKt)다. 그 안의 멤버는
+ * **Java 가 보는 것** 기준이다 — JVM public/protected 이고 synthetic 이 아니며 이름이 망글링('$')되지 않은 것.
+ * Kotlin internal 생성자·최상위 internal 함수는 JVM 에선 public 이라 여기 걸린다(private 생성자 + @JvmSynthetic 팩토리로 숨긴다).
+ *
+ *  (a) Kotlin 공개 suspend 오버로드마다, 같은 이름·같은 매개변수 + 끝에 Callback 인 공개 메서드가 있어야 한다
+ *  (b) 매개변수·반환·생성자 타입에 kotlin.jvm.functions.FunctionN(람다 타입)이 나온다
  *  (c) kotlin.Unit 을 반환하거나, 매개변수 타입 인자로 Unit 을 받는다(Callback<Unit> 등 — Java 에서 Unit.INSTANCE 를 다루게 된다)
  *  (d) object 의 멤버가 static 이 아니다(OneS1ght.INSTANCE.foo() 가 아니라 OneS1ght.foo() 여야 한다),
  *      companion 멤버는 바깥 클래스에 static 판이 있어야 한다
+ *  (e) 시그니처에 api 가 아닌 의존의 타입이 나온다([API_TYPE_PREFIXES])
  *
- * "공개" 판정은 JVM 수식어가 아니라 Kotlin 메타데이터 기준이다 — internal 클래스·생성자는 JVM 에선
- * public 으로 나오기 때문이다.
+ * internal 클래스 자체는 대상이 아니다 — Kotlin internal 클래스는 고객 API 가 아니고, 이걸 막으려면 내부 전부를
+ * 다시 짜야 한다(JVM 에서 보이는 건 맞다).
  *
  * 허용 목록([ALLOWED]) 에는 반드시 왜 괜찮은지 주석을 단다.
  */
@@ -55,36 +56,17 @@ class JavaApiSurfaceTest {
      */
     @Test fun publicSignaturesOnlyUseApiDependencies() {
         val leaks = sortedSetOf<String>()
-        for (cls in publicClasses()) {
-            val meta = kotlinMeta(cls)
-            val visible = publicMemberSignatures(meta)
-            val types = mutableListOf<Type>()
-            cls.genericSuperclass?.let { types += it }
-            types += cls.genericInterfaces
-            cls.declaredMethods.filter { m ->
-                (Modifier.isPublic(m.modifiers) || Modifier.isProtected(m.modifiers)) && !m.isBridge &&
-                    '$' !in m.name && (visible == null || jvmSig(m) !in visible.hidden)
-            }.forEach { m -> types += m.genericParameterTypes; types += m.genericReturnType }
-            cls.declaredConstructors.filter { c ->
-                (Modifier.isPublic(c.modifiers) || Modifier.isProtected(c.modifiers)) && !c.isSynthetic &&
-                    (visible == null || jvmSig(c) in visible.methods)
-            }.forEach { c -> types += c.genericParameterTypes }
-            cls.declaredFields.filter { Modifier.isPublic(it.modifiers) || Modifier.isProtected(it.modifiers) }
-                .forEach { types += it.genericType }
-            for (t in types) {
-                mentions(t) { c ->
-                    if (!c.isPrimitive && !c.isArray && API_TYPE_PREFIXES.none { c.name.startsWith(it) }) leaks += "${cls.name} → ${c.name}"
-                    false
-                }
-            }
-        }
+        for (cls in publicClasses()) leaks += dependencyLeaksOf(cls)
         assertEquals("공개 시그니처에 api 가 아닌 의존의 타입이 나온다:\n" + leaks.joinToString("\n"), emptySet<String>(), leaks)
     }
 
     /** 규칙이 실제로 잡는지 — 일부러 어긴 가짜 클래스를 검사기에 넣어본다. */
     @Test fun guardCatchesViolations() {
         val found = violationsOf(Bad::class.java).map { it.key.substringAfter('#') }.toSet()
-        assertTrue(found.toString(), "fetch(Continuation)" in found)            // (a)
+        assertTrue(found.toString(), "fetch(Continuation)" in found)            // (a) Callback 판 없음
+        assertTrue(found.toString(), "setFloorMap(String,String,Continuation)" in found) // (a) 매개변수가 맞는 Callback 판 없음
+        assertTrue(found.toString(), "setFloorMap(String,Continuation)" !in found)       // (a) 1개짜리는 짝이 있다
+        assertTrue(found.toString(), "<init>(Function0)" in found)              // (b) internal 생성자도 Java 엔 보인다
         assertTrue(found.toString(), "onEvent(Function1)" in found)             // (b)
         assertTrue(found.toString(), "make()" in found)                          // (c) 반환 Unit
         assertTrue(found.toString(), "take(Callback)" in found)                  // (c) Callback<Unit>
@@ -92,6 +74,11 @@ class JavaApiSurfaceTest {
         assertTrue(objFound.toString(), "ping()" in objFound)                   // (d)
         val okFound = violationsOf(Good::class.java)
         assertTrue(okFound.toString(), okFound.isEmpty())
+        // (e) internal 이어도 JVM 에서 public 인 생성자·멤버의 타입, 그리고 api 가 아닌 androidx 패키지를 잡는다
+        val leaks = dependencyLeaksOf(Bad::class.java).map { it.substringAfter(" → ") }.toSet()
+        assertTrue(leaks.toString(), "kotlinx.coroutines.CoroutineScope" in leaks)
+        assertTrue(leaks.toString(), "androidx.lifecycle.LifecycleOwner" in leaks)
+        assertTrue(dependencyLeaksOf(Good::class.java).toString(), dependencyLeaksOf(Good::class.java).isEmpty())
     }
 
     // --- 검사기 -----------------------------------------------------------------------------
@@ -100,26 +87,28 @@ class JavaApiSurfaceTest {
 
     private fun violationsOf(cls: Class<*>): List<Violation> {
         val meta = kotlinMeta(cls)
-        val visible = publicMemberSignatures(meta)
         val out = mutableListOf<Violation>()
-        // Java 에 보이는 공개 멤버. 메타데이터에 internal/private 로 적힌 것은 빼고,
-        // 메타데이터에 없는 것(@JvmOverloads 판·@JvmStatic 판 등)은 넣는다.
-        val declared = cls.declaredMethods.filter { m ->
-            (Modifier.isPublic(m.modifiers) || Modifier.isProtected(m.modifiers)) &&
-                !m.isBridge && '$' !in m.name &&
-                (visible == null || jvmSig(m) !in visible.hidden)
+        // (a) 대상: Kotlin 에서 공개인 suspend(메타데이터 기준) — @JvmSynthetic 로 Java 에서 숨긴 것도 포함한다
+        //     (Java 에 같은 기능이 있어야 하므로). 메타데이터가 없으면(Java 클래스) Java 에 보이는 것.
+        val kotlinPublic = kotlinPublicFunctionSignatures(meta)
+        val suspends = cls.declaredMethods.filter { m ->
+            (Modifier.isPublic(m.modifiers) || Modifier.isProtected(m.modifiers)) && !m.isBridge && '$' !in m.name &&
+                m.parameterTypes.lastOrNull()?.name == "kotlin.coroutines.Continuation" &&
+                (if (kotlinPublic != null) jvmSig(m) in kotlinPublic else !m.isSynthetic)
         }
-        // @JvmSynthetic(Java 에서 안 보임)은 (b)~(d) 대상이 아니다. (a) 는 Java 에 같은 기능이 있는지를 보므로 포함한다.
-        val methods = declared.filterNot { it.isSynthetic }
+        // (b)~(d) 대상: Java 에 보이는 것 전부(Kotlin internal 생성자처럼 JVM 에선 public 인 것 포함).
+        val methods = javaVisibleMethods(cls)
         fun key(m: Method) = "${cls.name}#${m.name}(${m.parameterTypes.joinToString(",") { it.simpleName }})"
 
-        // (a)
-        for (m in declared) {
-            if (m.parameterTypes.lastOrNull()?.name != "kotlin.coroutines.Continuation") continue
+        // (a) 오버로드마다: suspend 매개변수(Continuation 뺀 것) + 끝에 Callback 인 같은 이름의 공개 메서드가 있어야 한다.
+        for (m in suspends) {
+            val want = m.parameterTypes.dropLast(1) + Callback::class.java
             val hasCallbackTwin = methods.any { o ->
-                o.name == m.name && Modifier.isPublic(o.modifiers) && o.parameterTypes.any { it == Callback::class.java }
+                o.name == m.name && Modifier.isPublic(o.modifiers) && o.parameterTypes.toList() == want
             }
-            if (!hasCallbackTwin) out += Violation(key(m), "suspend 인데 같은 이름의 Callback 판이 없다")
+            if (!hasCallbackTwin) {
+                out += Violation(key(m), "suspend 인데 같은 매개변수 + Callback 인 ${m.name}(${want.joinToString(",") { it.simpleName }}) 이 없다")
+            }
         }
         for (m in methods) {
             // (b)
@@ -134,10 +123,7 @@ class JavaApiSurfaceTest {
             }
         }
         // (b) 생성자
-        for (c in cls.declaredConstructors) {
-            if (!Modifier.isPublic(c.modifiers) && !Modifier.isProtected(c.modifiers)) continue
-            if (c.isSynthetic) continue
-            if (visible != null && jvmSig(c) !in visible.methods) continue
+        for (c in javaVisibleConstructors(cls)) {
             if (c.genericParameterTypes.any { mentions(it) { t -> t.name.startsWith("kotlin.jvm.functions.") } }) {
                 out += Violation("${cls.name}#<init>(${c.parameterTypes.joinToString(",") { it.simpleName }})", "생성자에 람다 타입")
             }
@@ -164,42 +150,55 @@ class JavaApiSurfaceTest {
         return out
     }
 
-    private class MemberSigs(val methods: Set<String>, val hidden: Set<String>)
-
-    /** 메타데이터에 적힌 멤버 중 public/protected 인 것의 JVM 시그니처(그 외는 hidden). 메타데이터 없으면 null. */
-    private fun publicMemberSignatures(meta: KotlinClassMetadata?): MemberSigs? {
-        val shown = mutableSetOf<String>()
-        val hidden = mutableSetOf<String>()
-        fun add(sig: JvmMethodSignature?, vis: Visibility) {
-            if (sig == null) return
-            (if (vis == Visibility.PUBLIC || vis == Visibility.PROTECTED) shown else hidden) += sig.toString()
-        }
-        when (meta) {
-            is KotlinClassMetadata.Class -> {
-                val k = meta.kmClass
-                k.functions.forEach { add(it.signature, it.visibility) }
-                k.constructors.forEach { add(it.signature, it.visibility) }
-                k.properties.forEach { p ->
-                    add(p.getterSignature, p.getter.visibility)
-                    p.setter?.let { s -> add(p.setterSignature, s.visibility) }
-                }
-            }
-            is KotlinClassMetadata.FileFacade -> {
-                val k = meta.kmPackage
-                k.functions.forEach { add(it.signature, it.visibility) }
-                k.properties.forEach { p ->
-                    add(p.getterSignature, p.getter.visibility)
-                    p.setter?.let { s -> add(p.setterSignature, s.visibility) }
-                }
-            }
-            is KotlinClassMetadata.MultiFileClassPart -> {
-                val k = meta.kmPackage
-                k.functions.forEach { add(it.signature, it.visibility) }
-            }
+    /** 메타데이터상 public/protected 함수의 JVM 시그니처("name(desc)ret"). 메타데이터가 없으면 null. */
+    private fun kotlinPublicFunctionSignatures(meta: KotlinClassMetadata?): Set<String>? {
+        val fns = when (meta) {
+            is KotlinClassMetadata.Class -> meta.kmClass.functions
+            is KotlinClassMetadata.FileFacade -> meta.kmPackage.functions
+            is KotlinClassMetadata.MultiFileClassPart -> meta.kmPackage.functions
             null -> return null
-            else -> Unit
+            else -> return emptySet()
         }
-        return MemberSigs(shown, hidden)
+        return fns.filter { it.visibility == Visibility.PUBLIC || it.visibility == Visibility.PROTECTED }
+            .mapNotNull { it.signature?.toString() }.toSet()
+    }
+
+    private fun jvmSig(m: Method) = m.name + "(" + m.parameterTypes.joinToString("") { desc(it) } + ")" + desc(m.returnType)
+
+    private fun desc(c: Class<*>): String = when {
+        c.isArray -> "[" + desc(c.componentType)
+        c == Void.TYPE -> "V"; c == java.lang.Boolean.TYPE -> "Z"; c == java.lang.Byte.TYPE -> "B"
+        c == Character.TYPE -> "C"; c == java.lang.Short.TYPE -> "S"; c == Integer.TYPE -> "I"
+        c == java.lang.Long.TYPE -> "J"; c == java.lang.Float.TYPE -> "F"; c == java.lang.Double.TYPE -> "D"
+        else -> "L" + c.name.replace('.', '/') + ";"
+    }
+
+    /** Java 에서 보이는 메서드 — JVM public/protected 이고 synthetic·bridge 가 아니며 이름이 망글링('$')되지 않은 것. */
+    private fun javaVisibleMethods(cls: Class<*>): List<Method> = cls.declaredMethods.filter { m ->
+        (Modifier.isPublic(m.modifiers) || Modifier.isProtected(m.modifiers)) && !m.isSynthetic && !m.isBridge && '$' !in m.name
+    }
+
+    private fun javaVisibleConstructors(cls: Class<*>) = cls.declaredConstructors.filter { c ->
+        (Modifier.isPublic(c.modifiers) || Modifier.isProtected(c.modifiers)) && !c.isSynthetic
+    }
+
+    /** (e) Java 에 보이는 시그니처(상위 타입·메서드·생성자·필드)에서 api 가 아닌 의존의 타입을 모은다. */
+    private fun dependencyLeaksOf(cls: Class<*>): List<String> {
+        val types = mutableListOf<Type>()
+        cls.genericSuperclass?.let { types += it }
+        types += cls.genericInterfaces
+        javaVisibleMethods(cls).forEach { m -> types += m.genericParameterTypes; types += m.genericReturnType }
+        javaVisibleConstructors(cls).forEach { c -> types += c.genericParameterTypes }
+        cls.declaredFields.filter { (Modifier.isPublic(it.modifiers) || Modifier.isProtected(it.modifiers)) && !it.isSynthetic }
+            .forEach { types += it.genericType }
+        val leaks = sortedSetOf<String>()
+        for (t in types) {
+            mentions(t) { c ->
+                if (!c.isPrimitive && !c.isArray && API_TYPE_PREFIXES.none { c.name.startsWith(it) }) leaks += "${cls.name} → ${c.name}"
+                false
+            }
+        }
+        return leaks.toList()
     }
 
     private val KotlinClassMetadata?.kind: ClassKind?
@@ -253,17 +252,6 @@ class JavaApiSurfaceTest {
         return cls.declaringClass?.let { isVisible(it) } ?: true
     }
 
-    private fun jvmSig(m: Method) = m.name + "(" + m.parameterTypes.joinToString("") { desc(it) } + ")" + desc(m.returnType)
-    private fun jvmSig(c: java.lang.reflect.Constructor<*>) = "<init>(" + c.parameterTypes.joinToString("") { desc(it) } + ")V"
-
-    private fun desc(c: Class<*>): String = when {
-        c.isArray -> "[" + desc(c.componentType)
-        c == Void.TYPE -> "V"; c == java.lang.Boolean.TYPE -> "Z"; c == java.lang.Byte.TYPE -> "B"
-        c == Character.TYPE -> "C"; c == java.lang.Short.TYPE -> "S"; c == Integer.TYPE -> "I"
-        c == java.lang.Long.TYPE -> "J"; c == java.lang.Float.TYPE -> "F"; c == java.lang.Double.TYPE -> "D"
-        else -> "L" + c.name.replace('.', '/') + ";"
-    }
-
     private fun rawOf(t: Type): Class<*>? = when (t) {
         is Class<*> -> t
         is ParameterizedType -> t.rawType as? Class<*>
@@ -281,8 +269,13 @@ class JavaApiSurfaceTest {
     // --- 검사기 자체 테스트용 가짜 API --------------------------------------------------------
 
     @Suppress("unused", "UNUSED_PARAMETER")
-    class Bad {
+    class Bad internal constructor(f: () -> Unit) {
+        constructor() : this({})
+        internal constructor(scope: kotlinx.coroutines.CoroutineScope, owner: androidx.lifecycle.LifecycleOwner) : this()
         suspend fun fetch(): String = ""
+        suspend fun setFloorMap(floor: String?) {}
+        suspend fun setFloorMap(floor: String?, buildingId: String?) {}
+        fun setFloorMap(floor: String?, cb: Callback<Void?>) {}
         fun onEvent(f: (String) -> Unit) {}
         fun take(cb: Callback<Unit>) {}
         fun make(): Unit? = null
@@ -308,9 +301,15 @@ class JavaApiSurfaceTest {
         /** 빌드 도구가 만드는 클래스 — 고객 API 가 아니다. */
         val GENERATED = setOf("BuildConfig", "R")
 
-        /** 공개 시그니처에 나와도 되는 타입 — JDK·Android·Kotlin 표준·우리 SDK·api 의존(androidx.activity 와 그 전이 api). */
+        /**
+         * 공개 시그니처에 나와도 되는 타입 — JDK·Android 프레임워크·Kotlin 표준(api: kotlin-stdlib)·우리 SDK, 그리고
+         * build.gradle.kts 에서 `api` 로 싣는 의존의 패키지만. androidx 는 통째로 허용하지 않는다 — 지금 api 는
+         * androidx.activity 하나다(ComponentActivity 의 상위 타입이 끌고 오는 core·lifecycle 은 activity 의 api 로
+         * 고객에게 따라가지만, 우리 시그니처에 직접 쓰면 여기서 막고 api 로 올릴지 먼저 정한다).
+         */
         val API_TYPE_PREFIXES = listOf(
-            "java.", "javax.", "android.", "androidx.", "kotlin.", "org.jetbrains.annotations.",
+            "java.", "javax.", "android.", "kotlin.", "org.jetbrains.annotations.",
+            "androidx.activity.",
             "co.onecheck.ones1ght.android.",
         )
 

@@ -9,6 +9,7 @@ import kotlinx.serialization.json.Json
  * - `ignoreUnknownKeys = true`: 서버가 모르는 필드를 늘려도 디코딩이 깨지지 않는다.
  * - `encodeDefaults = true`: 기본값이 있는 필드도(null 이 아니면) 항상 인코딩한다.
  */
+@get:JvmSynthetic // 최상위 internal 프로퍼티의 getter 는 Java 에 보인다
 internal val SdkJson: Json = Json {
     explicitNulls = false
     ignoreUnknownKeys = true

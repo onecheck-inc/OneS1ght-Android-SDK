@@ -195,7 +195,7 @@ class OneS1ghtTest {
     /** 내장 provider 의 구역 이벤트가 FloorSession 리스너로 나뉘어 간다(Ruling 1). */
     @Test fun builtInZoneEventsReachSessionListeners() {
         val engine = NoopRangingEngine()
-        val hub = UwbPositioningProvider(
+        val hub = UwbPositioningProvider.create(
             engine,
             ZoneEngine(CoroutineDwellScheduler(CoroutineScope(SupervisorJob() + h.dispatcher))),
             h.dispatcher,

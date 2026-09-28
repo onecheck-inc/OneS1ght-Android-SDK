@@ -49,6 +49,7 @@ internal object LenientStringMapSerializer : KSerializer<Map<String, String>> {
  * [element] 가 JSON 객체이면 각 값을 문자열로 접어 돌려준다(문자열·불리언·숫자만 — null·
  * 중첩 객체·배열은 건너뛴다). 객체가 아니면 빈 맵을 돌려준다(그래도 호출부는 계속돼야 한다).
  */
+@JvmSynthetic // 최상위 internal 함수는 이름이 망글링되지 않아 Java 에 보인다
 internal fun parseLenientStringMap(element: JsonElement): Map<String, String> {
     val obj = element as? JsonObject ?: return emptyMap()
     val out = LinkedHashMap<String, String>()

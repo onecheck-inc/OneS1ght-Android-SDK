@@ -64,21 +64,13 @@ public enum class ZoneEventStatus(public val wire: String) {
  */
 // @Serializable 은 공개 클래스에 달지 않고 쓰는 자리(ResZoneEvent.triggers)에 단다 — Coordinates 와 같은 이유.
 public data class Trigger @JvmOverloads constructor(
-    @SerialName("trigger_id") public val triggerId: String,
+    /** 와이어 이름 trigger_id — 직렬화는 [TriggerSerializer] 가 직접 한다. */
+    public val triggerId: String,
     /** signage | coupon | tracking | merch | generic */
     public val type: String,
     public val payload: Map<String, String>? = null,
 )
 
-/**
- * [Trigger] 전용 커스텀 시리얼라이저 — [payload] 의 null 처리를 [ResVerifySerializer] 의
- * [ResVerify.remoteConfig] 와 똑같이 다룬다: 키가 아예 없으면 null, 있으면(JSON `null` 이든
- * 객체든 그 무엇이든) [parseLenientStringMap] 규칙으로 접는다(절대 throw 하지 않는다).
- *
- * 코틀린이 `Map<String,String>?` 프로퍼티에 `@Serializable(LenientStringMapSerializer::class)`
- * 를 자동으로 nullable 래핑하면 JSON `null` 이 시리얼라이저 호출 없이 곧장 Kotlin null 로
- * 빠져나가 iOS 동작(명시적 null → 빈 맵)과 어긋난다 — 그래서 클래스 전체를 직접 받는다.
- */
 /** [Coordinates] 직렬화 — {"x":..,"y":..,"z":..}. 공개 클래스 대신 쓰는 자리에서 지정한다. */
 internal object CoordinatesSerializer : KSerializer<Coordinates> {
     override val descriptor: SerialDescriptor = buildClassSerialDescriptor("Coordinates") {
@@ -116,6 +108,15 @@ internal object CoordinatesSerializer : KSerializer<Coordinates> {
     }
 }
 
+/**
+ * [Trigger] 전용 커스텀 시리얼라이저 — [payload] 의 null 처리를 [ResVerifySerializer] 의
+ * [ResVerify.remoteConfig] 와 똑같이 다룬다: 키가 아예 없으면 null, 있으면(JSON `null` 이든
+ * 객체든 그 무엇이든) [parseLenientStringMap] 규칙으로 접는다(절대 throw 하지 않는다).
+ *
+ * 코틀린이 `Map<String,String>?` 프로퍼티에 `@Serializable(LenientStringMapSerializer::class)`
+ * 를 자동으로 nullable 래핑하면 JSON `null` 이 시리얼라이저 호출 없이 곧장 Kotlin null 로
+ * 빠져나가 iOS 동작(명시적 null → 빈 맵)과 어긋난다 — 그래서 클래스 전체를 직접 받는다.
+ */
 internal object TriggerSerializer : KSerializer<Trigger> {
     override val descriptor: SerialDescriptor = buildClassSerialDescriptor("Trigger") {
         element<String>("trigger_id")
