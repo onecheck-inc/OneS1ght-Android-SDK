@@ -67,6 +67,9 @@ internal class LiveConfigStream(
 
     // MARK: - 수명주기
 
+    /** start() 됐고 아직 stop() 되지 않았는가 — 새는 연결을 세는 진단·테스트용. */
+    val isStarted: Boolean get() = job != null
+
     fun start(buildingId: String?, floorId: String?) {
         stop()
         lastSeq = null

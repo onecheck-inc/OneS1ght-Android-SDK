@@ -85,6 +85,39 @@ class RestartAfterStopTest {
         assertTrue("코어까지 다시 떠야 좌표가 나온다", p.isRunning)
     }
 
+    /**
+     * 정지가 flush 에 매달린 사이 앱이 전경으로 돌아와도 측위를 다시 켜지 않는다 — 켜면 정지가
+     * 끝난 뒤 isRunning=false 인데 provider 만 도는 유령 세션이 남는다. 배경 전환도 마찬가지로
+     * 진행 중인 정지에 끼어들지 않는다.
+     */
+    @Test fun lifecycleEventsDuringStopDoNotRevivePositioning() = runTest {
+        val lifecycle = FakeAppLifecycle()
+        val c = makeCoordinator(server, lifecycle = lifecycle, flushThreshold = 1_000)
+        c.prepare()
+        c.identify("p")
+        c.start(p)
+        p.simulatePosition(Coordinates(1.0, 2.0, 0.0), "F", BASE_MS)
+        val onForeground = lifecycle.onForeground!!
+        val onBackground = lifecycle.onBackground!!
+
+        val stopJob = launch { c.stop() }
+        runCurrent()
+        assertTrue("정지가 flush 에 매달려 있어야 재현된다", c.isRunning)
+        assertFalse(p.isRunning)
+
+        onBackground()
+        runCurrent()
+        onForeground()
+        runCurrent()
+        assertFalse("진행 중인 정지 사이에 provider 가 다시 켜졌다", p.isRunning)
+
+        stopJob.join()
+        advanceUntilIdle()
+        assertFalse(c.isRunning)
+        assertFalse("정지가 끝났는데 provider 가 돌고 있다", p.isRunning)
+        assertEquals("잔여 좌표는 정지가 한 번만 올린다", 1, routes.count("/positioning/logs"))
+    }
+
     /** 정지가 끝난 뒤의 start 는 당연히 뜬다(회귀 대조군). */
     @Test fun startAfterStopCompletesRuns() = runTest {
         val c = prepared()

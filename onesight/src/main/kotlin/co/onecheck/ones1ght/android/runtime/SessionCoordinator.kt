@@ -721,31 +721,59 @@ internal class SessionCoordinator(
         }
     }
 
+    /**
+     * 측위가 돌고 있고 내려가는 중도 아닌가 — 생명주기 처리가 provider 를 건드려도 되는 조건.
+     * 정지가 flush 에 매달린 사이(isRunning 은 아직 true)에 provider 를 다시 켜면, 정지가 끝난 뒤
+     * isRunning=false 인데 provider 만 도는 유령 세션이 남는다.
+     */
+    private val runningAndNotStopping: Boolean get() = isRunning && stopInFlight == null
+
+    /** observe() 호출 안에서 동기로 들어오는 통지(ProcessLifecycleOwner 의 catch-up)를 거르는 표시. */
+    private var attachingObserver = false
+
     private fun observeAppLifecycleIfNeeded() {
         val lifecycle = lifecycle ?: return
         if (observingLifecycle) return
         observingLifecycle = true
-        lifecycle.observe(
-            // 백그라운드: UWB 는 어차피 정지(포그라운드 전용) → 측위 정지 + 잔여 flush
-            onBackground = {
-                scope.launch {
-                    if (isRunning) { // 측위는 세션이 돌 때만
-                        provider?.stop()
-                        flushPositions()
+        attachingObserver = true
+        try {
+            lifecycle.observe(
+                // 백그라운드: UWB 는 어차피 정지(포그라운드 전용) → 측위 정지 + 잔여 flush
+                onBackground = {
+                    if (!attachingObserver) {
+                        scope.launch {
+                            if (runningAndNotStopping) { // 측위는 세션이 돌 때만, 정지 중이면 그 정지에 맡긴다
+                                provider?.stop()
+                                flushPositions()
+                            }
+                            live?.stop() // 스트림은 언제나 끊는다
+                        }
                     }
-                    live?.stop() // 스트림은 언제나 끊는다
-                }
-            },
-            // 포그라운드 복귀: 측위 재개 + 실시간 수신 재연결. 재연결 자체가 ResyncNeeded 를
-            // 올린다 — 배경에 있던 동안의 변경을 고객사가 따라잡는 유일한 경로다.
-            onForeground = {
-                scope.launch {
-                    if (isRunning) provider?.start()
-                    live = null // 배경에서 끊긴 것 — 새로 붙인다
-                    ensureLiveStream()
-                }
-            },
-        )
+                },
+                // 포그라운드 복귀: 측위 재개 + 실시간 수신 재연결. 재연결 자체가 ResyncNeeded 를
+                // 올린다 — 배경에 있던 동안의 변경을 고객사가 따라잡는 유일한 경로다.
+                // ⚠️ 붙이는 순간의 catch-up 통지는 버린다 — 부른 쪽(start·setFloorMap)이 이미
+                // 스트림을 붙였다. 받아들이면 연결이 하나 더 열리고 ResyncNeeded 가 두 번 간다.
+                onForeground = {
+                    if (!attachingObserver) {
+                        scope.launch { onForegroundResumed() }
+                    }
+                },
+            )
+        } finally {
+            attachingObserver = false
+        }
+    }
+
+    private fun onForegroundResumed() {
+        val active = runningAndNotStopping
+        if (active) provider?.start()
+        // 정지 중이면 스트림을 둘지 말지는 그 정지(performStop)가 정한다.
+        if (!streamWanted(floorSet = floorState != null, running = active)) return
+        // 배경에서 끊긴 것 — 앞 연결을 확실히 닫고 새로 붙인다(중복 통지로 연결이 새지 않게).
+        live?.stop()
+        live = null
+        ensureLiveStream()
     }
 
     private fun removeLifecycleObservers() {

@@ -185,6 +185,79 @@ class SessionCoordinatorLiveTest {
         assertEquals("복귀하면 새로 붙인다(ResyncNeeded 는 스트림이 올린다)", 2, spy.created.size)
     }
 
+    /**
+     * 실기기 ProcessLifecycleOwner 는 이미 STARTED 인 프로세스에 관찰자를 붙이면 ON_START 를
+     * addObserver 안에서 곧바로 다시 준다(catch-up). 그걸 흉내 낸다.
+     */
+    private class CatchUpLifecycle : AppLifecycle {
+        var observing = false
+        var onForeground: (() -> Unit)? = null
+
+        override fun observe(onBackground: () -> Unit, onForeground: () -> Unit) {
+            observing = true
+            this.onForeground = onForeground
+            onForeground() // 붙이는 순간 전경 통지가 동기로 들어온다
+        }
+
+        override fun stopObserving() {
+            observing = false
+            onForeground = null
+        }
+    }
+
+    private fun StreamSpy.active(): Int = created.count { it.isStarted }
+
+    /** 관찰자를 붙일 때의 catch-up 전경 통지가 스트림을 하나 더 열면 안 된다(ResyncNeeded 도 한 번). */
+    @Test fun catchUpForegroundOnObserveOpensOnlyOneStream() = runTest {
+        val spy = StreamSpy()
+        val c = makeCoordinator(server, lifecycle = CatchUpLifecycle(), liveFactory = spy.factory())
+        c.prepare()
+        c.identify("pf")
+
+        c.start(MockPositioningProvider())
+        runCurrent()
+
+        assertEquals("스트림은 하나만 만든다(=연결 시 ResyncNeeded 1회)", 1, spy.created.size)
+        assertEquals(1, spy.active())
+    }
+
+    /** 층 없이 begin/end 를 되풀이해도 열린 스트림이 쌓이지 않는다. */
+    @Test fun repeatedStartStopWithoutFloorDoesNotAccumulateStreams() = runTest {
+        val spy = StreamSpy()
+        val c = makeCoordinator(server, lifecycle = CatchUpLifecycle(), liveFactory = spy.factory())
+        c.prepare()
+        c.identify("pf")
+        val p = MockPositioningProvider()
+
+        repeat(3) {
+            c.start(p)
+            runCurrent()
+            c.stop()
+            runCurrent()
+            assertEquals("end 뒤에 열린 스트림이 남았다", 0, spy.active())
+        }
+        c.start(p)
+        runCurrent()
+        assertEquals(1, spy.active())
+    }
+
+    /** 배경 없이 전경 통지가 거듭 와도 앞 스트림을 닫고 갈아 끼운다(열린 연결은 늘 하나). */
+    @Test fun foregroundReplacesStreamWithoutLeaking() = runTest {
+        val spy = StreamSpy()
+        val lifecycle = FakeAppLifecycle()
+        val c = makeCoordinator(server, lifecycle = lifecycle, liveFactory = spy.factory())
+        c.prepare()
+        c.setFloorMap(Floor("F1", "F1"), "B")
+
+        lifecycle.foreground()
+        runCurrent()
+        lifecycle.foreground()
+        runCurrent()
+
+        assertEquals(3, spy.created.size)
+        assertEquals("열린 스트림은 하나여야 한다", 1, spy.active())
+    }
+
     // 스트림은 코디네이터가 넘긴 스코프 위에서 onChange 를 부른다 — 그대로 전달한다(재전환 없음).
     @Test fun streamChangeIsDeliveredAsIs() = runTest {
         val spy = StreamSpy()

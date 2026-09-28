@@ -33,19 +33,38 @@ internal class AndroidKeyValueStore(context: Context) : KeyValueStore {
     }
 }
 
-/** [ProcessLifecycleOwner] 의 ON_STOP/ON_START 를 [AppLifecycle] 로 옮긴다. */
+/**
+ * [ProcessLifecycleOwner] 의 ON_STOP/ON_START 를 [AppLifecycle] 로 옮긴다.
+ *
+ * ⚠️ 이미 STARTED 인 프로세스에 관찰자를 붙이면 addObserver 가 그 안에서 ON_CREATE·ON_START 를
+ * 곧바로 다시 준다(catch-up). 그건 "전경으로 돌아왔다"가 아니라 "지금 전경이다"라는 뜻이라
+ * 넘기지 않는다 — 넘기면 코디네이터가 방금 붙인 스트림을 하나 더 연다.
+ */
 internal class AndroidAppLifecycle : AppLifecycle {
 
     private var observer: DefaultLifecycleObserver? = null
 
+    /** addObserver 호출 중인가 — 그동안 동기로 들어오는 catch-up 통지를 버린다. */
+    private var adding = false
+
     override fun observe(onBackground: () -> Unit, onForeground: () -> Unit) {
         stopObserving()
         val newObserver = object : DefaultLifecycleObserver {
-            override fun onStop(owner: LifecycleOwner) = onBackground()
-            override fun onStart(owner: LifecycleOwner) = onForeground()
+            override fun onStop(owner: LifecycleOwner) {
+                if (!adding) onBackground()
+            }
+
+            override fun onStart(owner: LifecycleOwner) {
+                if (!adding) onForeground()
+            }
         }
         observer = newObserver
-        ProcessLifecycleOwner.get().lifecycle.addObserver(newObserver)
+        adding = true
+        try {
+            ProcessLifecycleOwner.get().lifecycle.addObserver(newObserver)
+        } finally {
+            adding = false
+        }
     }
 
     override fun stopObserving() {
