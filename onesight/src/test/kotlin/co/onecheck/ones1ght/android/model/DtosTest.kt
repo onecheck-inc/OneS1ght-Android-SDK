@@ -34,7 +34,7 @@ class DtosTest {
         """.trimIndent()
         val res = SdkJson.decodeFromString<ResBuildings>(json)
         assertEquals("금정역 skv1", res.buildings.first().name)
-        assertEquals("f-uuid", res.buildings.first().floors?.first()?.floor_id)
+        assertEquals("f-uuid", res.buildings.first().floors?.first()?.floorId)
     }
 
     @Test fun decodeResFloorConfigZoneParams9() {
@@ -52,8 +52,8 @@ class DtosTest {
         val res = SdkJson.decodeFromString<ResFloorConfig>(json)
         val z = res.zones.first()
         assertEquals(listOf(12.3, 4.5), z.polygon?.first())
-        assertEquals(3.0, z.in_dist, 0.0)
-        assertTrue(z.call_inout && z.is_active)
+        assertEquals(3.0, z.inDist, 0.0)
+        assertTrue(z.callInout && z.isActive)
         assertTrue(res.anchors.isEmpty())
     }
 
@@ -70,20 +70,20 @@ class DtosTest {
 
     @Test fun decodeResPositionBulk() {
         val res = SdkJson.decodeFromString<ResPositionBulk>("""{ "accepted_count": 100 }""")
-        assertEquals(100, res.accepted_count)
+        assertEquals(100, res.acceptedCount)
     }
 
     // MARK: 요청 인코딩 — snake_case 키·상태 원문 확인
 
     @Test fun encodeReqZoneEventProducesSnakeCaseAndRawStatus() {
         val req = ReqZoneEvent(
-            profile_id = "A",
-            visitor_id = "v-20260718-001",
-            floor_id = "F",
-            zone_id = "Z",
+            profileId = "A",
+            visitorId = "v-20260718-001",
+            floorId = "F",
+            zoneId = "Z",
             status = "DWELL",
-            occurred_at = "2026-07-18T08:00:00Z",
-            platform_name = "Android",
+            occurredAt = "2026-07-18T08:00:00Z",
+            platformName = "Android",
         )
         val obj = SdkJson.parseToJsonElement(SdkJson.encodeToString(req)).jsonObject
         assertEquals("DWELL", obj["status"]?.jsonPrimitive?.content)
@@ -96,13 +96,13 @@ class DtosTest {
             platformName = "Android",
             appId = null,
             client = ClientInfo(
-                profile_id = "A",
-                device_model = null,
-                os_name = null,
-                os_version = null,
-                app_version = null,
-                sdk_version = null,
-                device_language = null,
+                profileId = "A",
+                deviceModel = null,
+                osName = null,
+                osVersion = null,
+                appVersion = null,
+                sdkVersion = null,
+                deviceLanguage = null,
                 attributes = null,
             ),
         )
@@ -152,6 +152,42 @@ class DtosTest {
         val res = SdkJson.decodeFromString<ResZoneEvent>(json)
         assertEquals(1, res.triggers.size)
         assertEquals(mapOf("k" to "1"), res.triggers.first().payload)
+    }
+
+    @Test fun triggerPayloadExplicitNullBecomesEmptyMap() {
+        // iOS LenientStringMap 은 절대 throw 하지 않는다 — 객체가 아니면(null 포함) 빈 맵.
+        val json = """
+            { "accepted": true, "event_id": "evt_2",
+              "triggers": [ { "trigger_id": "t2", "type": "generic", "payload": null } ] }
+        """.trimIndent()
+        val res = SdkJson.decodeFromString<ResZoneEvent>(json)
+        assertEquals(emptyMap<String, String>(), res.triggers.first().payload)
+    }
+
+    @Test fun triggerPayloadMissingKeyStaysNull() {
+        val json = """
+            { "accepted": true, "event_id": "evt_3",
+              "triggers": [ { "trigger_id": "t3", "type": "generic" } ] }
+        """.trimIndent()
+        val res = SdkJson.decodeFromString<ResZoneEvent>(json)
+        assertNull(res.triggers.first().payload)
+    }
+
+    @Test fun resVerifyEncodeDecodeRoundTrip() {
+        val original = ResVerify(
+            valid = true,
+            positioningEnabled = true,
+            tenantCode = "onecheck-internal",
+            positionRateHz = 4,
+            remoteConfig = mapOf("env" to "prod"),
+        )
+        val encoded = SdkJson.encodeToString(original)
+        assertEquals(
+            """{"valid":true,"positioning_enabled":true,"tenant_code":"onecheck-internal","position_rate_hz":4,"remote_config":{"env":"prod"}}""",
+            encoded,
+        )
+        val decoded = SdkJson.decodeFromString<ResVerify>(encoded)
+        assertEquals(original, decoded)
     }
 
     @Test fun iso8601HasMillisAndZ() {
