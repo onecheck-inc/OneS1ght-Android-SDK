@@ -48,6 +48,39 @@ class JavaApiSurfaceTest {
         )
     }
 
+    /**
+     * (e) 공개 시그니처(멤버 타입·상위 타입)에 나오는 외부 타입은 고객 컴파일 클래스패스에 있어야 한다 —
+     * 즉 build.gradle.kts 에서 `api` 로 싣는 것(androidx.activity 와 그 전이 api)이거나 JDK·Android·Kotlin 표준이어야 한다.
+     * kotlinx.coroutines·okhttp·kotlinx.serialization 은 implementation 이라 여기 나오면 고객이 컴파일을 못 한다.
+     */
+    @Test fun publicSignaturesOnlyUseApiDependencies() {
+        val leaks = sortedSetOf<String>()
+        for (cls in publicClasses()) {
+            val meta = kotlinMeta(cls)
+            val visible = publicMemberSignatures(meta)
+            val types = mutableListOf<Type>()
+            cls.genericSuperclass?.let { types += it }
+            types += cls.genericInterfaces
+            cls.declaredMethods.filter { m ->
+                (Modifier.isPublic(m.modifiers) || Modifier.isProtected(m.modifiers)) && !m.isBridge &&
+                    '$' !in m.name && (visible == null || jvmSig(m) !in visible.hidden)
+            }.forEach { m -> types += m.genericParameterTypes; types += m.genericReturnType }
+            cls.declaredConstructors.filter { c ->
+                (Modifier.isPublic(c.modifiers) || Modifier.isProtected(c.modifiers)) && !c.isSynthetic &&
+                    (visible == null || jvmSig(c) in visible.methods)
+            }.forEach { c -> types += c.genericParameterTypes }
+            cls.declaredFields.filter { Modifier.isPublic(it.modifiers) || Modifier.isProtected(it.modifiers) }
+                .forEach { types += it.genericType }
+            for (t in types) {
+                mentions(t) { c ->
+                    if (!c.isPrimitive && !c.isArray && API_TYPE_PREFIXES.none { c.name.startsWith(it) }) leaks += "${cls.name} → ${c.name}"
+                    false
+                }
+            }
+        }
+        assertEquals("공개 시그니처에 api 가 아닌 의존의 타입이 나온다:\n" + leaks.joinToString("\n"), emptySet<String>(), leaks)
+    }
+
     /** 규칙이 실제로 잡는지 — 일부러 어긴 가짜 클래스를 검사기에 넣어본다. */
     @Test fun guardCatchesViolations() {
         val found = violationsOf(Bad::class.java).map { it.key.substringAfter('#') }.toSet()
@@ -274,6 +307,12 @@ class JavaApiSurfaceTest {
         val ANY_METHODS = setOf("equals", "hashCode", "toString")
         /** 빌드 도구가 만드는 클래스 — 고객 API 가 아니다. */
         val GENERATED = setOf("BuildConfig", "R")
+
+        /** 공개 시그니처에 나와도 되는 타입 — JDK·Android·Kotlin 표준·우리 SDK·api 의존(androidx.activity 와 그 전이 api). */
+        val API_TYPE_PREFIXES = listOf(
+            "java.", "javax.", "android.", "androidx.", "kotlin.", "org.jetbrains.annotations.",
+            "co.onecheck.ones1ght.android.",
+        )
 
         /**
          * 허용 목록: "클래스#메서드(매개변수 단순이름들)" → 왜 괜찮은지.

@@ -63,11 +63,18 @@ private fun defaultHttp(): OkHttpClient =
  *
  * [apiKey] 는 헤더에만 실린다 — 저장·로그 금지.
  */
-public class ApiClient @JvmOverloads constructor(
+public class ApiClient internal constructor(
     public val apiKey: String,
-    public val baseUrl: String = DEFAULT_BASE_URL,
-    http: OkHttpClient = defaultHttp(),
+    public val baseUrl: String,
+    http: OkHttpClient,
 ) {
+    /**
+     * 공개 생성자에는 OkHttpClient 를 받지 않는다 — okhttp 는 implementation 의존이라 공개 시그니처에
+     * 나오면 고객 컴파일 클래스패스에 없는 타입이 된다(JavaApiSurfaceTest (e)). HTTP 클라이언트를 갈아끼우는
+     * 건 모듈 안(테스트)에서만 internal 생성자로 한다.
+     */
+    @JvmOverloads
+    public constructor(apiKey: String, baseUrl: String = DEFAULT_BASE_URL) : this(apiKey, baseUrl, defaultHttp())
 
     /**
      * 같은 모듈의 SSE(Task 6)가 재사용한다. `http.newBuilder()` 로 스트리밍용 타임아웃(예:
