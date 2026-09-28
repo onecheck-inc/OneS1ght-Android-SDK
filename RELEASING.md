@@ -52,6 +52,7 @@ git checkout -b release/0.0.2 origin/main
 SKIP_TESTS=1 Scripts/check-release.sh
 ```
 `0.0.2 내보낼 수 있음.` 이 뜨면 됩니다. ✗ 가 뜨면 그 줄이 말하는 파일을 고칩니다.
+의존성·Kotlin 설정을 바꿨다면 `Scripts/consumer-compat-check.sh` 도 돌려 Java 8 · Kotlin 1.9/2.0 앱에서 컴파일되는지 확인합니다.
 
 ### 3. 푸시
 ```bash

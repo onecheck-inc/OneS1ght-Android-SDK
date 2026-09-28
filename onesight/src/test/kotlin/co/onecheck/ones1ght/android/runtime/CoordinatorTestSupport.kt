@@ -71,10 +71,10 @@ internal fun TestScope.makeCoordinator(
 ): SessionCoordinator {
     val http = OkHttpClient.Builder().retryOnConnectionFailure(false).build()
     val base = server.url("/api/sdk/v1").toString().trimEnd('/')
-    val api = ApiClient(apiKey, base, http)
+    val api = ApiClient.create(apiKey, base, http)
     return SessionCoordinator(
         api = api,
-        identity = IdentityStore(InMemoryKeyValueStore(), today = { "20260928" }),
+        identity = IdentityStore.create(InMemoryKeyValueStore(), today = { "20260928" }),
         appId = "co.onecheck.test",
         scope = backgroundScope,
         lifecycle = lifecycle,

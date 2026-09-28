@@ -6,7 +6,9 @@ package co.onecheck.ones1ght.android
 //
 //  설계 규칙: "문은 object, 부품은 인스턴스".
 //  · 문(이 object) — 앱 전체에 하나뿐인 진입점. 멤버는 전부 @JvmStatic 이라 Java 에서도
-//    `OneS1ght.buildings(cb)` 로 부른다.
+//    `OneS1ght.buildings(cb)` 로 부른다. suspend 판은 @JvmSynthetic 으로 Java 에서 숨긴다
+//    (Java 에는 Callback 판만 보여야 `OneS1ght.INSTANCE.buildings(continuation)` 같은 게 안 뜬다).
+//    이 규칙은 JavaApiSurfaceTest 가 지킨다.
 //  · 부품(coordinator·ApiClient·엔진) — 키 교체·reset 때 갈아끼우는 인스턴스. 밖에 안 보임.
 //  하나만 존재해야 하는 이유: UWB 라디오·존 엔진·방문 ID·좌표 버퍼가 기기당 1개라
 //  세션이 여럿이면 서로 충돌한다.
@@ -210,6 +212,7 @@ public object OneS1ght {
      * `activityResultRegistry` 를 쓰므로 onCreate 이후 아무 때나 불러도 된다.
      * initialize 를 부르지 않았어도 호출할 수 있다.
      */
+    @JvmSynthetic
     public suspend fun permissions(activity: ComponentActivity): PermissionStatus {
         if (appContext == null) appContext = activity.applicationContext
         // 칩 조회 예열은 따로 띄우지 않는다 — 아래 판정(availability)이 바로 그 조회를 기다려(막지
@@ -253,7 +256,7 @@ public object OneS1ght {
      * @throws ApiError 키 무효(E1002)·네트워크(E5001) 등
      * @throws SdkError.PositioningDisabled 테넌트에서 측위가 꺼져 있다(E1003)
      */
-    @JvmOverloads
+    @JvmSynthetic
     public suspend fun initialize(
         context: Context,
         sdkKey: String,
@@ -304,6 +307,7 @@ public object OneS1ght {
     }
 
     /** 초기화 리셋 — 세션을 버린다. 이후 다른 키로 재초기화할 수 있다(런타임 키 교체용). */
+    @JvmSynthetic
     public suspend fun reset(): Unit = onCore {
         discardCoordinator()
         storedKey = null
@@ -325,6 +329,7 @@ public object OneS1ght {
      * ⚠️ 빈 목록이 "건물이 없다" 는 뜻만은 아니다 — 콘솔에서 측위 키를 받지 못했을 때도
      *    빈 목록이 온다. 구분하려면 onDebugLog 나 콘솔 로그 분석기에서 E1007 을 본다.
      */
+    @JvmSynthetic
     public suspend fun buildings(): List<Building> = onCore { requireCoordinator().buildings() }
 
     @JvmStatic
@@ -333,6 +338,7 @@ public object OneS1ght {
     }
 
     /** 건물 단건. 없으면 [ApiError.NotFound]. */
+    @JvmSynthetic
     public suspend fun building(buildingId: String): Building =
         buildings().firstOrNull { it.id == buildingId } ?: throw ApiError.NotFound(buildingId)
 
@@ -342,6 +348,7 @@ public object OneS1ght {
     }
 
     /** 층 목록 — 이름·치수는 채워지고 **도면 이미지는 비어 있다**(목록 경량화). */
+    @JvmSynthetic
     public suspend fun floors(buildingId: String): List<Floor> = onCore { requireCoordinator().floors(buildingId) }
 
     @JvmStatic
@@ -350,6 +357,7 @@ public object OneS1ght {
     }
 
     /** 층 단건 — 도면 이미지 포함 (floors() 가 캐시를 데워 두면 추가 왕복 없음). */
+    @JvmSynthetic
     public suspend fun floor(buildingId: String, floorId: String): Floor =
         onCore { requireCoordinator().floor(buildingId, floorId) }
 
@@ -359,6 +367,7 @@ public object OneS1ght {
     }
 
     /** 존 목록 (판정 파라미터 포함). */
+    @JvmSynthetic
     public suspend fun zones(buildingId: String, floorId: String): List<Zone> =
         onCore { requireCoordinator().zones(buildingId, floorId) }
 
@@ -368,6 +377,7 @@ public object OneS1ght {
     }
 
     /** 존 단건. 없으면 [ApiError.NotFound]. */
+    @JvmSynthetic
     public suspend fun zone(buildingId: String, floorId: String, zoneId: String): Zone =
         zones(buildingId, floorId).firstOrNull { it.id == zoneId } ?: throw ApiError.NotFound(zoneId)
 
@@ -377,6 +387,7 @@ public object OneS1ght {
     }
 
     /** 로케이터 + 세션ID — sessionId 는 별도 API 가 아니라 이 응답에 함께 실려 온다. */
+    @JvmSynthetic
     public suspend fun locators(buildingId: String, floorId: String): FloorLocators =
         onCore { requireCoordinator().locators(buildingId, floorId) }
 
@@ -392,7 +403,7 @@ public object OneS1ght {
      * 로케이터·sessionId·존을 받아 엔진에 주입한다 — 가동 중이면 즉시 층 전환.
      * [buildingId] 를 생략하면 직전에 지정한 건물을 쓴다.
      */
-    @JvmOverloads
+    @JvmSynthetic
     public suspend fun setFloorMap(floor: Floor?, buildingId: String? = null): Unit = onCore {
         val c = requireCoordinator()
         c.setFloorMap(floor, buildingId ?: currentBuildingId)
@@ -421,6 +432,7 @@ public object OneS1ght {
      * 현재 층의 존만 재조회 (경량 — 도면 재다운로드 없음). 받은 존은 판정 엔진에도 즉시 반영된다.
      * 초기화 전이거나 실패하면 던지지 않고 지금 가진 존(없으면 빈 목록)을 돌려준다.
      */
+    @JvmSynthetic
     public suspend fun refreshZones(): List<Zone> = onCore { coordinator?.refreshZones() ?: emptyList() }
 
     @JvmStatic
@@ -448,6 +460,7 @@ public object OneS1ght {
      * 프로필 생성 — 서버가 발급한 profileId 를 돌려준다. **앱이 보관해 재사용해야 한다.**
      * ⚠️ 나이는 정확값 대신 연령대("20s")로 넣기를 권한다.
      */
+    @JvmSynthetic
     public suspend fun createProfile(attributes: Map<String, String>): String =
         onCore { requireCoordinator().createProfile(attributes) }
 
@@ -457,6 +470,7 @@ public object OneS1ght {
     }
 
     /** 프로필 조회. */
+    @JvmSynthetic
     public suspend fun getProfile(profileId: String): Map<String, String> =
         onCore { requireCoordinator().getProfile(profileId) }
 
@@ -466,6 +480,7 @@ public object OneS1ght {
     }
 
     /** 프로필 속성 전체 교체. */
+    @JvmSynthetic
     public suspend fun putProfile(profileId: String, attributes: Map<String, String>): Unit =
         onCore { requireCoordinator().putProfile(profileId, attributes) }
 
@@ -478,6 +493,7 @@ public object OneS1ght {
     }
 
     /** 프로필 삭제. */
+    @JvmSynthetic
     public suspend fun deleteProfile(profileId: String): Unit = onCore { requireCoordinator().deleteProfile(profileId) }
 
     @JvmStatic
@@ -491,6 +507,7 @@ public object OneS1ght {
     // MARK: - 버퍼
 
     /** 쌓인 좌표를 지금 서버로 전송 (300건/60초를 기다리지 않고 앞당김). 초기화 전이면 아무 일 없음. */
+    @JvmSynthetic
     public suspend fun send(): Unit = onCore { coordinator?.flush() }
 
     @JvmStatic

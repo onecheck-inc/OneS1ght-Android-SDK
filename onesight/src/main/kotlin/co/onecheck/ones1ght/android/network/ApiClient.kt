@@ -63,11 +63,19 @@ private fun defaultHttp(): OkHttpClient =
  *
  * [apiKey] 는 헤더에만 실린다 — 저장·로그 금지.
  */
-public class ApiClient @JvmOverloads constructor(
+public class ApiClient private constructor(
     public val apiKey: String,
-    public val baseUrl: String = DEFAULT_BASE_URL,
-    http: OkHttpClient = defaultHttp(),
+    public val baseUrl: String,
+    http: OkHttpClient,
 ) {
+    /**
+     * 공개 생성자에는 OkHttpClient 를 받지 않는다 — okhttp 는 implementation 의존이라 공개 시그니처에
+     * 나오면 고객 컴파일 클래스패스에 없는 타입이 된다(JavaApiSurfaceTest (e)). HTTP 클라이언트를 갈아끼우는
+     * 건 모듈 안(테스트)에서만 [create] 로 한다 — 그 생성자를 internal 로 두면 JVM 에선 public 이라 Java 에 보여서
+     * private 으로 막았다.
+     */
+    @JvmOverloads
+    public constructor(apiKey: String, baseUrl: String = DEFAULT_BASE_URL) : this(apiKey, baseUrl, defaultHttp())
 
     /**
      * 같은 모듈의 SSE(Task 6)가 재사용한다. `http.newBuilder()` 로 스트리밍용 타임아웃(예:
@@ -77,6 +85,10 @@ public class ApiClient @JvmOverloads constructor(
 
     public companion object {
         public const val DEFAULT_BASE_URL: String = "https://console.ones1ght.com/api/sdk/v1"
+
+        /** HTTP 클라이언트를 주입하는 모듈 내부 팩토리 — @JvmSynthetic 이라 Java 에는 안 보인다. */
+        @JvmSynthetic
+        internal fun create(apiKey: String, baseUrl: String, http: OkHttpClient): ApiClient = ApiClient(apiKey, baseUrl, http)
     }
 
     // MARK: - 엔드포인트 11종
@@ -152,6 +164,7 @@ public class ApiClient @JvmOverloads constructor(
 // Task 5)도 그대로 써야 한다 — 여긴 유일한 정본이라 거기서 다시 만들지 않는다.
 
 /** `IOException` 은 [ApiError.Network] 로 바꾼다 — `enqueue` 콜백을 코루틴으로 잇는다. */
+@JvmSynthetic // 최상위 internal 함수는 이름이 망글링되지 않아 Java 에 보인다
 internal suspend fun executeHttpRequest(http: OkHttpClient, req: Request): Pair<Int, ByteArray> =
     suspendCancellableCoroutine { cont ->
         val call = http.newCall(req)
@@ -198,6 +211,7 @@ internal fun errorDetailFrom(bytes: ByteArray): String? =
  * 요청 실행 + 2xx 디코딩 + 오류 매핑을 한 번에 한다 — [ApiClient] 와 `SpaceServiceClient`
  * (공간 조회, Task 5)가 공유한다. 타임아웃은 호출부가 건넨 [http] 그대로 쓴다.
  */
+@JvmSynthetic // 최상위 internal 함수는 이름이 망글링되지 않아 Java 에 보인다
 internal suspend inline fun <reified R> performJsonRequest(http: OkHttpClient, req: Request): R {
     val (status, bytes) = executeHttpRequest(http, req)
     if (status in 200 until 300) {

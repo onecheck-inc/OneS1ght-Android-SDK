@@ -174,7 +174,7 @@ class UwbProviderLogicTest {
         engine = FakeEngine()
         zoneEngine = ZoneEngine(CoroutineDwellScheduler(scope))
         delegate = RecordingDelegate()
-        provider = UwbPositioningProvider(engine, zoneEngine, main, clock = { scheduler.currentTime })
+        provider = UwbPositioningProvider.create(engine, zoneEngine, main, clock = { scheduler.currentTime })
         provider.delegate = delegate
         provider.onZoneEvent = { zoneEvents += it }
         provider.onLog = { level, msg -> logs += level to msg }

@@ -16,6 +16,7 @@
 | 측위 동작 | **Android 17 (API 37)+** · UWB **DL-TDoA** 지원 기기 |
 | 패키지 추가 | Android 8.1 (API 27)+ — 미지원 기기에서도 앱은 정상 동작하고 SDK만 비활성 |
 | 빌드 환경 | `compileSdk` / `targetSdk` 37, JVM target 17 |
+| 언어 | Java 8+ / Kotlin 1.9+ 앱에서 사용 가능 |
 
 SDK가 실제로 동작하려면 키와 공간 설정이 먼저 준비되어야 합니다.
 

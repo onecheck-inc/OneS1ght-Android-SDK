@@ -18,10 +18,16 @@ import java.util.Date
 import java.util.Locale
 
 /** 방문 ID 발급기. [store] 는 SharedPreferences 자리(실기기: AndroidKeyValueStore). */
-public class IdentityStore @JvmOverloads constructor(
+public class IdentityStore private constructor(
     private val store: KeyValueStore,
-    private val today: () -> String = { SimpleDateFormat("yyyyMMdd", Locale.US).format(Date()) },
+    private val today: () -> String,
 ) {
+    /**
+     * 공개 생성자는 날짜 함수를 받지 않는다 — `() -> String` 은 Java 에서 kotlin.jvm.functions.Function0 로
+     * 보여 사양서 §3.0(람다 타입 대신 fun interface) 에 어긋난다. 날짜를 주입하는 생성자는 private 이고
+     * (internal 생성자는 JVM 에선 public 이라 Java 에 보인다), 모듈 안(테스트)에서는 [create] 로 만든다.
+     */
+    public constructor(store: KeyValueStore) : this(store, { SimpleDateFormat("yyyyMMdd", Locale.US).format(Date()) })
 
     /** 방문 ID 발급 — "v-YYYYMMDD-NNN". 호출할 때마다 그날 카운터 +1, 날짜 바뀌면 001부터. */
     public fun newVisitorId(): String {
@@ -37,8 +43,12 @@ public class IdentityStore @JvmOverloads constructor(
         return String.format(Locale.US, "v-%s-%03d", currentDate, seq)
     }
 
-    private companion object {
-        const val KEY_VISITOR_DATE = "onesight.visitor.date"
-        const val KEY_VISITOR_SEQ = "onesight.visitor.seq"
+    public companion object {
+        private const val KEY_VISITOR_DATE = "onesight.visitor.date"
+        private const val KEY_VISITOR_SEQ = "onesight.visitor.seq"
+
+        /** 날짜 함수를 주입하는 모듈 내부 팩토리 — @JvmSynthetic 이라 Java 에는 안 보인다. */
+        @JvmSynthetic
+        internal fun create(store: KeyValueStore, today: () -> String): IdentityStore = IdentityStore(store, today)
     }
 }

@@ -70,10 +70,12 @@ iOS 가 쓰는 `gpi-ihub` 는 엔진 하나가 다음을 모두 한다.
 - **이벤트 콜백**: 함수 타입(`(Zone) -> Unit`) 대신 **`fun interface`** 로 둔다. 예: `ZoneListener`, `PositionListener`, `TriggersListener`, `ConfigChangeListener`, `DwellListener`, `DebugLogListener`.
   - Kotlin 에서는 SAM 변환(`session.onZoneEnter = ZoneListener { z -> ... }`)으로, Java 에서는 `session.setOnZoneEnter(z -> ...)` 로 쓴다.
 - **정적 멤버**: `object OneS1ght` 의 멤버에 `@JvmStatic` 을 붙인다. 이렇게 하면 Java 에서 `OneS1ght.buildings(cb)` 로 부를 수 있다. 상수에는 `const`/`@JvmField` 를 쓴다.
-- **기본 인자**: `@JvmOverloads` 를 붙인다(예: `initialize`, `setFloorMap`).
+- **기본 인자**: Java 용 기본 인자는 **Callback 판을 오버로드로 명시**해 제공한다(예: `initialize(ctx, key, cb)` · `initialize(ctx, key, baseUrl, cb)`, `setFloorMap(floor, cb)` · `setFloorMap(floor, buildingId, cb)`). suspend 판은 `@JvmSynthetic` 이라 Java 에 안 보이므로 `@JvmOverloads` 를 붙이지 않고 Kotlin 기본 인자만 쓴다. 생성자·모델 등 suspend 가 아닌 곳은 `@JvmOverloads` 를 쓴다.
 - **오류**: `SdkError`/`ApiError` 는 `Exception` 하위 클래스라 Java 에서 `instanceof` 로 구분할 수 있다. Java 판에서는 이 예외를 `onError` 로 전달한다.
 - **모델**: `data class` 로 두고, Java 에서는 getter 로 읽는다. 컬렉션은 읽기 전용 `List`/`Map` 이다.
 - **검증**: `src/test/java/.../JavaInteropTest.java` 가 Java 로 initialize → identify → buildings → setFloorMap → floorSession().begin → 콜백 설정 → end 를 컴파일하고 실행한다.
+- **표면 가드**: `JavaApiSurfaceTest` 가 컴파일된 공개 클래스를 훑어 (a) 매개변수가 같고 끝에 Callback 이 붙은 판이 없는 suspend(오버로드마다) (b) 람다 타입(`FunctionN`) (c) `Unit` 반환·`Callback<Unit>` (d) static 아닌 object 멤버 (e) api 가 아닌 의존 타입(androidx 는 api 인 androidx.activity 만)이 공개 시그니처에 나오는 것을 막는다. (b)~(e) 는 Java 가 보는 것 기준이라 Kotlin internal 이어도 JVM 에서 public 인 생성자·최상위 함수까지 본다 — 그런 건 private 생성자 + `@JvmSynthetic internal` 팩토리로 숨긴다. suspend 판은 `@JvmSynthetic` 으로 Java 에서 숨긴다.
+- **고객 Kotlin 호환**: 언어·API 수준 2.0, `jvmDefault = ENABLE`, 자동 stdlib 의존 2.0.21. 런타임 의존도 stdlib 2.0 이하를 요구하는 판에 묶는다. `Scripts/consumer-compat-check.sh` 가 Kotlin 2.0.21·1.9.25 와 javac `--release 8` 로 실제 소비자 코드를 컴파일한다.
 
 ### 3.1 안드로이드라서 달라지는 곳 (전부)
 

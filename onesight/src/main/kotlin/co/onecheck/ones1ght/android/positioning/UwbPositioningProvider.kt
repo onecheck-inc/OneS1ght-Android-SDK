@@ -44,7 +44,9 @@ import kotlinx.coroutines.launch
  * 내장 UWB(DL-TDoA) 측위 제공자. 고객 앱이 직접 만들지 않는다 — FloorSession 이
  * [createBuiltInProvider] 로 만들어 쓴다.
  */
-public class UwbPositioningProvider internal constructor(
+// 생성자는 private — internal 이면 JVM 에선 public 이라 Java 에 CoroutineDispatcher·Function0 이 드러난다.
+// 모듈 안에서는 [create]/[createBuiltInProvider] 로 만든다.
+public class UwbPositioningProvider private constructor(
     private val engine: RangingEngine,
     private val zoneEngine: ZoneEngine,
     main: CoroutineDispatcher,
@@ -383,6 +385,15 @@ public class UwbPositioningProvider internal constructor(
     internal companion object {
         const val DIAGNOSTIC_DELAY_MS: Long = 5_000L
 
+        /** 모듈 내부 팩토리 — @JvmSynthetic 이라 Java 에는 안 보인다. */
+        @JvmSynthetic
+        fun create(
+            engine: RangingEngine,
+            zoneEngine: ZoneEngine,
+            main: CoroutineDispatcher,
+            clock: () -> Long,
+        ): UwbPositioningProvider = UwbPositioningProvider(engine, zoneEngine, main, clock)
+
         /** 닫기 요청 뒤 onClosed 를 기다리는 최대 시간. */
         const val STOP_TIMEOUT_MS: Long = 3_000L
     }
@@ -394,11 +405,12 @@ public class UwbPositioningProvider internal constructor(
  * [main] 은 코어 상태를 바꾸는 단일 디스패처(운영: `Dispatchers.Main.immediate`)여야 한다 —
  * 엔진 콜백과 DWELL 타이머가 모두 이 디스패처로 넘어온다.
  */
+@JvmSynthetic
 internal fun createBuiltInProvider(
     context: Context,
     main: CoroutineDispatcher,
     clock: () -> Long,
 ): UwbPositioningProvider {
     val zoneEngine = ZoneEngine(CoroutineDwellScheduler(CoroutineScope(SupervisorJob() + main)))
-    return UwbPositioningProvider(UwbRangingEngine(context.applicationContext), zoneEngine, main, clock)
+    return UwbPositioningProvider.create(UwbRangingEngine(context.applicationContext), zoneEngine, main, clock)
 }

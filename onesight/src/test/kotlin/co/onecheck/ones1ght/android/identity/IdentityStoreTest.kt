@@ -11,7 +11,7 @@ import org.junit.Test
 class IdentityStoreTest {
 
     @Test fun visitorIdFormatAndDailyCounter() {
-        val store = IdentityStore(InMemoryKeyValueStore(), today = { "20260718" })
+        val store = IdentityStore.create(InMemoryKeyValueStore(), today = { "20260718" })
         assertEquals("v-20260718-001", store.newVisitorId())
         assertEquals("v-20260718-002", store.newVisitorId())
         assertEquals("v-20260718-003", store.newVisitorId())
@@ -19,7 +19,7 @@ class IdentityStoreTest {
 
     @Test fun visitorIdResetsOnNewDay() {
         var current = "20260718"
-        val store = IdentityStore(InMemoryKeyValueStore(), today = { current })
+        val store = IdentityStore.create(InMemoryKeyValueStore(), today = { current })
         assertEquals("v-20260718-001", store.newVisitorId())
         assertEquals("v-20260718-002", store.newVisitorId())
 
