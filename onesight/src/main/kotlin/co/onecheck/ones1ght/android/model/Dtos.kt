@@ -19,8 +19,11 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.descriptors.buildClassSerialDescriptor
 import kotlinx.serialization.descriptors.element
+import kotlinx.serialization.encoding.CompositeDecoder
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.encoding.decodeStructure
+import kotlinx.serialization.encoding.encodeStructure
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonPrimitive
@@ -32,8 +35,13 @@ import kotlinx.serialization.json.put
 
 // MARK: - 공용
 
-/** 좌표 (미터 — 측위 엔진 원본 단위. 2D면 z=0) */
-@Serializable
+/**
+ * 좌표 (미터 — 측위 엔진 원본 단위. 2D면 z=0)
+ *
+ * 공개 모델에는 @Serializable 을 달지 않는다 — 달면 `Coordinates.Companion.serializer()` 가
+ * 공개 API 로 새어 kotlinx.serialization(implementation 의존) 타입이 고객에게 보인다.
+ * 직렬화는 내부 DTO 쪽 [CoordinatesSerializer] 가 맡는다.
+ */
 public data class Coordinates(
     public val x: Double,
     public val y: Double,
@@ -54,7 +62,7 @@ public enum class ZoneEventStatus(public val wire: String) {
  * 클래스 전체를 [TriggerSerializer] 가 직접 다뤄 [payload] 가 명시적 JSON `null` 이어도
  * (iOS `LenientStringMap` 처럼) 빈 맵으로 떨어지게 한다 — 키가 아예 없을 때만 null.
  */
-@Serializable(with = TriggerSerializer::class)
+// @Serializable 은 공개 클래스에 달지 않고 쓰는 자리(ResZoneEvent.triggers)에 단다 — Coordinates 와 같은 이유.
 public data class Trigger @JvmOverloads constructor(
     @SerialName("trigger_id") public val triggerId: String,
     /** signage | coupon | tracking | merch | generic */
@@ -71,6 +79,43 @@ public data class Trigger @JvmOverloads constructor(
  * 를 자동으로 nullable 래핑하면 JSON `null` 이 시리얼라이저 호출 없이 곧장 Kotlin null 로
  * 빠져나가 iOS 동작(명시적 null → 빈 맵)과 어긋난다 — 그래서 클래스 전체를 직접 받는다.
  */
+/** [Coordinates] 직렬화 — {"x":..,"y":..,"z":..}. 공개 클래스 대신 쓰는 자리에서 지정한다. */
+internal object CoordinatesSerializer : KSerializer<Coordinates> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("Coordinates") {
+        element<Double>("x")
+        element<Double>("y")
+        element<Double>("z")
+    }
+
+    override fun serialize(encoder: Encoder, value: Coordinates) {
+        encoder.encodeStructure(descriptor) {
+            encodeDoubleElement(descriptor, 0, value.x)
+            encodeDoubleElement(descriptor, 1, value.y)
+            encodeDoubleElement(descriptor, 2, value.z)
+        }
+    }
+
+    override fun deserialize(decoder: Decoder): Coordinates = decoder.decodeStructure(descriptor) {
+        var x: Double? = null
+        var y: Double? = null
+        var z: Double? = null
+        while (true) {
+            when (val i = decodeElementIndex(descriptor)) {
+                0 -> x = decodeDoubleElement(descriptor, 0)
+                1 -> y = decodeDoubleElement(descriptor, 1)
+                2 -> z = decodeDoubleElement(descriptor, 2)
+                CompositeDecoder.DECODE_DONE -> break
+                else -> throw SerializationException("Coordinates: 알 수 없는 인덱스 $i")
+            }
+        }
+        Coordinates(
+            x ?: throw SerializationException("Coordinates.x 없음"),
+            y ?: throw SerializationException("Coordinates.y 없음"),
+            z ?: throw SerializationException("Coordinates.z 없음"),
+        )
+    }
+}
+
 internal object TriggerSerializer : KSerializer<Trigger> {
     override val descriptor: SerialDescriptor = buildClassSerialDescriptor("Trigger") {
         element<String>("trigger_id")
@@ -152,7 +197,7 @@ internal data class ReqZoneEvent(
 @Serializable
 internal data class PositionPoint(
     @SerialName("floor_id") val floorId: String,
-    val coordinates: Coordinates,
+    @Serializable(with = CoordinatesSerializer::class) val coordinates: Coordinates,
     @SerialName("captured_at") val capturedAt: String,
 )
 
@@ -339,7 +384,7 @@ internal data class ResFloorConfig(
 internal data class ResZoneEvent(
     val accepted: Boolean,
     @SerialName("event_id") val eventId: String,
-    val triggers: List<Trigger>,
+    val triggers: List<@Serializable(with = TriggerSerializer::class) Trigger>,
 )
 
 /** POST /positioning/logs 응답. */

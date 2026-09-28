@@ -161,6 +161,8 @@ dependencies {
     api(libs.androidx.activity)
 
     testImplementation(libs.junit)
+    // JavaApiSurfaceTest — 공개 여부를 Kotlin 메타데이터로 판정(internal 이 JVM 에선 public 이라)
+    testImplementation(libs.kotlin.metadata.jvm)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
 }

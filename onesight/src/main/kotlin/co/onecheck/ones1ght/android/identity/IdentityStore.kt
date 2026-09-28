@@ -18,13 +18,13 @@ import java.util.Date
 import java.util.Locale
 
 /** 방문 ID 발급기. [store] 는 SharedPreferences 자리(실기기: AndroidKeyValueStore). */
-public class IdentityStore @JvmOverloads constructor(
+internal class IdentityStore(
     private val store: KeyValueStore,
     private val today: () -> String = { SimpleDateFormat("yyyyMMdd", Locale.US).format(Date()) },
 ) {
 
     /** 방문 ID 발급 — "v-YYYYMMDD-NNN". 호출할 때마다 그날 카운터 +1, 날짜 바뀌면 001부터. */
-    public fun newVisitorId(): String {
+    fun newVisitorId(): String {
         val currentDate = today()
 
         var seq = store.getInt(KEY_VISITOR_SEQ, 0)

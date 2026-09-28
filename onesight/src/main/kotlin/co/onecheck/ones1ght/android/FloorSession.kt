@@ -74,6 +74,7 @@ public class FloorSession internal constructor() {
      *
      * @throws SdkError.NotInitialized · SdkError.NotIdentified · SdkError.DeviceNotSupported · SdkError.OsVersionTooLow
      */
+    @JvmSynthetic
     public suspend fun begin(): Unit = OneS1ght.onCore {
         // 기기를 막는 곳은 여기 하나뿐이다 — initialize 는 기기를 보지 않는다.
         val capability = OneS1ght.deviceCapability
@@ -103,6 +104,7 @@ public class FloorSession internal constructor() {
      *
      * @throws SdkError.NotInitialized · SdkError.NotIdentified
      */
+    @JvmSynthetic
     public suspend fun begin(provider: PositioningProvider): Unit = OneS1ght.onCore { start(provider) }
 
     /** [begin] (provider 주입) 의 Java 판. */
@@ -132,6 +134,7 @@ public class FloorSession internal constructor() {
     }
 
     /** 측위 종료 + 잔여 좌표 전송. 초기화·층 설정은 유지 → begin 재호출로 재개. */
+    @JvmSynthetic
     public suspend fun end(): Unit = OneS1ght.onCore { OneS1ght.coordinatorRef?.stop() }
 
     /** [end] 의 Java 판. */
