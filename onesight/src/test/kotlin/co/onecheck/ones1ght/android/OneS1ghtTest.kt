@@ -21,6 +21,8 @@ import co.onecheck.ones1ght.android.positioning.PositioningProvider
 import co.onecheck.ones1ght.android.positioning.PositioningProviderDelegate
 import co.onecheck.ones1ght.android.positioning.RangingEngine
 import co.onecheck.ones1ght.android.positioning.UwbPositioningProvider
+import co.onecheck.ones1ght.android.runtime.FakeAppLifecycle
+import co.onecheck.ones1ght.android.runtime.InMemoryKeyValueStore
 import co.onecheck.ones1ght.android.runtime.LogLevel
 import co.onecheck.ones1ght.android.zone.CoroutineDwellScheduler
 import co.onecheck.ones1ght.android.zone.ZoneEngine
@@ -32,6 +34,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -457,7 +460,73 @@ class OneS1ghtTest {
         // 요청이 취소되면(액티비티 재생성 등) 빈 결과가 온다 — 허용으로 보지 않는다.
         assertEquals(PermissionStatus.DENIED, PositioningPermission.decide(emptyMap()))
         assertEquals(PermissionStatus.DENIED, PositioningPermission.decide(mapOf(ranging to true)))
-        assertEquals(listOf("android.permission.RANGING", "android.permission.ACCESS_FINE_LOCATION"), PositioningPermission.PERMISSIONS.toList())
+        // 대략 위치만 허용(정밀 거부)은 측위가 안 된다 — 거부다.
+        val coarse = PositioningPermission.COARSE_LOCATION
+        assertEquals(PermissionStatus.DENIED, PositioningPermission.decide(mapOf(ranging to true, fine to false, coarse to true)))
+        assertEquals(
+            PermissionStatus.AUTHORIZED,
+            PositioningPermission.decide(mapOf(ranging to true, fine to true, coarse to true)),
+        )
+        // Android 12+ 는 FINE 을 COARSE 와 함께 요청해야 한다 — 요청 목록에는 셋 다 있다.
+        assertEquals(
+            listOf(
+                "android.permission.RANGING",
+                "android.permission.ACCESS_FINE_LOCATION",
+                "android.permission.ACCESS_COARSE_LOCATION",
+            ),
+            PositioningPermission.PERMISSIONS.toList(),
+        )
+    }
+
+    /** 요청하는 권한은 전부 라이브러리 매니페스트에 선언돼 있다(선언 없는 권한은 팝업 없이 거부된다). */
+    @Test fun requestedPermissionsAreDeclaredInManifest() {
+        val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
+        for (perm in PositioningPermission.PERMISSIONS) {
+            assertTrue("매니페스트에 $perm 선언이 없다", manifest.contains("android:name=\"$perm\""))
+        }
+    }
+
+    /** 동시에 두 번 불러도 서로의 등록을 덮지 않게 호출마다 다른 레지스트리 키를 쓴다. */
+    @Test fun permissionRegistryKeyIsUniquePerCall() {
+        val a = PositioningPermission.nextRegistryKey()
+        val b = PositioningPermission.nextRegistryKey()
+        assertNotEquals(a, b)
+        assertTrue(a.startsWith("onesight.permissions"))
+    }
+
+    // MARK: - 기기 판정 캐시 예열 (동기 읽기가 메인을 막지 않게)
+
+    /** initialize 가 칩 조회를 미리 띄워 두면, 뒤의 동기 읽기는 다시 묻지 않는다(=막지 않는다). */
+    @Test fun initializeWarmsChipQuerySoSyncReadDoesNotQuery() {
+        initialize()
+        h.eventually("initialize 가 칩 조회를 예열하지 않았다") { h.capability.queries == 1 }
+
+        assertEquals(DeviceAvailability.AVAILABLE, OneS1ght.deviceAvailability)
+        assertEquals(DeviceAvailability.AVAILABLE, OneS1ght.deviceAvailability)
+        assertEquals("동기 읽기가 느린 조회를 다시 탔다", 1, h.capability.queries)
+    }
+
+    // MARK: - 키 교체
+
+    /** 다른 키로 initialize 하면 앞 세션은 측위·스트림·생명주기 관찰까지 전부 내려놓는다. */
+    @Test fun keyChangeStopsAndTearsDownOldCoordinator() {
+        val lifecycles = mutableListOf<FakeAppLifecycle>()
+        OneS1ght.platformFactory = { InMemoryKeyValueStore() to FakeAppLifecycle().also { lifecycles += it } }
+        initialize("ock_a")
+        OneS1ght.identify("p1")
+        h.await { OneS1ght.floorSession().begin(h.mock) }
+        val old = OneS1ght.coordinatorRef!!
+        assertTrue(old.hasLiveStream)
+        assertTrue(lifecycles.single().isObserving)
+
+        initialize("ock_b")
+
+        assertNotSame(old, OneS1ght.coordinatorRef)
+        assertFalse(old.isRunning)
+        assertFalse(h.mock.isRunning)
+        assertFalse("앞 세션의 스트림이 남았다", old.hasLiveStream)
+        assertFalse("앞 세션의 생명주기 관찰이 남았다", lifecycles.first().isObserving)
+        assertEquals(2, lifecycles.size)
     }
 
     // MARK: - 가짜

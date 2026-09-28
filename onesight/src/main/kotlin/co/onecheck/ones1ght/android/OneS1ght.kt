@@ -54,11 +54,13 @@ import co.onecheck.ones1ght.android.runtime.KeyValueStore
 import co.onecheck.ones1ght.android.runtime.LogLevel
 import co.onecheck.ones1ght.android.runtime.SdkLocalized
 import co.onecheck.ones1ght.android.runtime.SessionCoordinator
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
@@ -123,8 +125,9 @@ public object OneS1ght {
      * [DeviceAvailability.OS_VERSION_TOO_LOW], 그 이상은 판단할 수 없어
      * [DeviceAvailability.DEVICE_NOT_SUPPORTED] 이고 onDebugLog 에 WARN 이 한 번 남는다.
      *
-     * 칩 조회는 처음 한 번만 시스템에 묻고(최대 5초 — 그동안 부른 스레드가 기다린다) 답을 받으면
-     * 기억한다.
+     * 칩 조회는 initialize() 가 미리 띄워 두고(permissions() 는 그 조회를 직접 기다려 받는다), 답(시간 초과 = 미지원 포함)은 프로세스
+     * 수명 동안 기억한다. 그래서 보통은 기다리지 않는다. 예열이 끝나기 전에 읽은 첫 한 번만 답을
+     * 기다린다(최대 5초 — 그동안 부른 스레드가 멈춘다).
      */
     @JvmStatic
     public val deviceAvailability: DeviceAvailability
@@ -132,9 +135,30 @@ public object OneS1ght {
             val capability = deviceCapability
             if (capability.sdkInt < MIN_POSITIONING_SDK) return DeviceAvailability.OS_VERSION_TOO_LOW
             if (appContext == null) return unknownBeforeInitialize()
-            val supported = runBlocking { capability.supportsDlTdoa() }
+            // 아는 답이 있으면 막지 않는다. ⚠️ 진행 중인 예열을 여기서 기다리면 안 된다 — 예열은 코어
+            // (메인) 디스패처 위에서 도는데 메인을 runBlocking 으로 막고 그걸 기다리면 교착이다.
+            val supported = capability.cachedDlTdoa ?: runBlocking { capability.supportsDlTdoa() }
             return if (supported) DeviceAvailability.AVAILABLE else DeviceAvailability.DEVICE_NOT_SUPPORTED
         }
+
+    /**
+     * 칩 조회를 미리 띄운다(기다리지 않는다) — 뒤의 동기 [deviceAvailability] 가 메인을 막지 않게.
+     * 코어 디스패처 위에서 돌며, 조회는 시스템 콜백을 기다리는 동안 스레드를 놓아 준다.
+     */
+    private fun warmDeviceCapability() {
+        val capability = deviceCapability
+        if (capability.sdkInt < MIN_POSITIONING_SDK || appContext == null) return
+        if (capability.cachedDlTdoa != null) return
+        CoroutineScope(SupervisorJob() + dispatcher).launch {
+            try {
+                capability.supportsDlTdoa()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 예열 실패는 무시한다 — 다음 판정이 다시 묻는다.
+            }
+        }
+    }
 
     @Volatile
     private var warnedEarlyAvailability = false
@@ -158,7 +182,8 @@ public object OneS1ght {
         val capability = deviceCapability
         if (capability.sdkInt < MIN_POSITIONING_SDK) return DeviceAvailability.OS_VERSION_TOO_LOW
         if (appContext == null) return unknownBeforeInitialize()
-        return if (capability.supportsDlTdoa()) DeviceAvailability.AVAILABLE else DeviceAvailability.DEVICE_NOT_SUPPORTED
+        val supported = capability.cachedDlTdoa ?: capability.supportsDlTdoa()
+        return if (supported) DeviceAvailability.AVAILABLE else DeviceAvailability.DEVICE_NOT_SUPPORTED
     }
 
     // MARK: - 콘솔 제공 값
@@ -185,6 +210,8 @@ public object OneS1ght {
      */
     public suspend fun permissions(activity: ComponentActivity): PermissionStatus {
         if (appContext == null) appContext = activity.applicationContext
+        // 칩 조회 예열은 따로 띄우지 않는다 — 아래 판정(availability)이 바로 그 조회를 기다려(막지
+        // 않고) 받고, 답은 capability 가 기억한다. 따로 띄우면 같은 조회가 두 번 나간다.
         return permissionsWith { PositioningPermission.request(activity) }
     }
 
@@ -233,6 +260,7 @@ public object OneS1ght {
         // 기기 게이트는 여기 두지 않는다 — initialize 는 "키·설정" 이고 begin() 이 "측위" 다.
         val app = context.applicationContext ?: context
         appContext = app
+        warmDeviceCapability() // 기다리지 않는다 — 뒤의 동기 deviceAvailability 가 메인을 막지 않게
 
         // ① 키가 바뀌었으면 세션 재구성 — "새 키로 initialize = 새 키로 시작".
         val stored = storedKey

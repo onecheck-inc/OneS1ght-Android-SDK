@@ -7,6 +7,8 @@ package co.onecheck.ones1ght.android.positioning
 //  android.* 를 참조하지 않고, JVM 단위테스트가 가짜 구현으로 대체할 수 있다.
 //
 
+import kotlinx.coroutines.withTimeoutOrNull
+
 /** 기기의 UWB(DL-TDoA) 지원 여부를 묻는 계약. */
 internal interface DeviceCapability {
     /** `android.os.Build.VERSION.SDK_INT` 에 대응 — 버전별 분기를 이 값 하나로 테스트한다. */
@@ -14,4 +16,40 @@ internal interface DeviceCapability {
 
     /** 이 기기가 DL-TDoA 측위 가능한가(칩 유무 등) — 비동기 조회일 수 있어 suspend. */
     suspend fun supportsDlTdoa(): Boolean
+
+    /**
+     * 이미 아는 답 — 기다리지 않는다. 아직 모르면 null.
+     * 동기 판정(deviceAvailability)이 이게 있으면 [supportsDlTdoa] 를 타지 않는다.
+     */
+    val cachedDlTdoa: Boolean?
+}
+
+/**
+ * 칩 조회 답을 프로세스 수명 동안 기억한다.
+ *
+ * · 답을 받으면 기억한다.
+ * · **시간 초과도 기억한다(미지원으로)** — 기억하지 않으면 답을 안 주는 기기에서 동기 판정이
+ *   읽을 때마다 부른 스레드(보통 메인)를 [timeoutMs] 씩 막는다.
+ * · 조회 자체가 실패하면(query 가 null) 기억하지 않는다 — 곧바로 끝나 막지 않고, 다음에 다시 물을
+ *   가치가 있다.
+ */
+internal class ChipAnswerCache(private val timeoutMs: Long) {
+
+    @Volatile
+    var known: Boolean? = null
+        private set
+
+    suspend fun get(query: suspend () -> Boolean?): Boolean {
+        known?.let { return it }
+        val outcome = withTimeoutOrNull(timeoutMs) { Answer(query()) }
+        if (outcome == null) { // 시간 초과 — 미지원으로 굳힌다
+            known = false
+            return false
+        }
+        val answer = outcome.value ?: return false // 조회 실패 — 모름(기억하지 않는다)
+        known = answer
+        return answer
+    }
+
+    private class Answer(val value: Boolean?)
 }
