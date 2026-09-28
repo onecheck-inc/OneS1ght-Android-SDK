@@ -1,5 +1,4 @@
 import org.gradle.api.artifacts.Configuration
-import org.gradle.api.tasks.Copy
 
 plugins {
     alias(libs.plugins.android.library)
@@ -12,7 +11,9 @@ android {
 
     defaultConfig {
         minSdk = 27
-        consumerProguardFiles("consumer-rules.pro")
+        // consumerProguardFiles 는 아래 gpa-dltdoa 분기(계정 있음/없음)에서 등록한다 —
+        // 계정이 있으면 consumer-rules.pro 를 그대로 쓰지 않고 엔진 proguard.txt 와
+        // 합친 파일 하나로 대체한다(둘 다 등록하면 consumer-rules.pro 내용이 두 번 실린다).
     }
 
     compileOptions {
@@ -22,6 +23,13 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // AGP 9 는 라이브러리 모듈의 defaultConfig.targetSdk 를 없앴다(그건 원래도 그 모듈
+        // 자신의 테스트에만 적용됐다) — 여기 testOptions 와 아래 lint 로 옮겨졌다.
+        targetSdk = 37
+    }
+
+    lint {
+        targetSdk = 37
     }
 
     sourceSets {
@@ -58,30 +66,43 @@ val hasGeoplanEngineCreds =
 if (hasGeoplanEngineCreds) {
     // 저장소는 settings.gradle.kts 의 dependencyResolutionManagement 에서 등록한다
     // (repositoriesMode=PREFER_SETTINGS 라 여기서 선언해도 무시된다).
+    //
+    // 아래는 전부 "설정 시점(configuration time)에도, 태스크 그래프 계산 시점에도 Nexus 를
+    // 건드리지 않는다" 는 원칙으로 짰다 — geoplanEngine Configuration 은 extractGeoplanEngineAar
+    // 의 doLast 실행 안에서만 resolve 한다(Copy 태스크의 from(zipTree(config)) 는 태스크 그래프를
+    // 짤 때 Gradle 이 소스의 buildDependencies 를 알아내려고 조기 resolve 해버려서 쓰지 않았다).
+    // 그래서 계정이 있어도 `help`·`tasks` 처럼 빌드가 필요 없는 명령은 네트워크를 타지 않고,
+    // 실제로 onesight 를 컴파일·번들링하는 태스크(예: assembleDebug)를 실행할 때만 Nexus 를
+    // 때린다 — extractGeoplanEngineAar 자체가 onesight 컴파일/번들링 태스크의 입력이라
+    // implementation(files(...).builtBy(extractEngineAar)) 로 수동 순서만 걸면 충분하다.
     val geoplanEngine: Configuration = configurations.create("geoplanEngine") {
         isCanBeConsumed = false
         isCanBeResolved = true
-        isTransitive = true
+        isTransitive = false // AAR 자체만 받는다 — 전이 의존은 아래 고정 버전으로 별도 선언
     }
 
     dependencies {
         add(geoplanEngine.name, "kr.geoplan.android.lib:gpa-dltdoa:2.1.0")
     }
 
-    val engineResolvedArtifacts = geoplanEngine.resolvedConfiguration.resolvedArtifacts
-    val engineArtifact = engineResolvedArtifacts.single {
-        it.moduleVersion.id.group == "kr.geoplan.android.lib" && it.moduleVersion.id.name == "gpa-dltdoa"
-    }
-
-    val extractEngineAar = tasks.register<Copy>("extractGeoplanEngineAar") {
-        from(zipTree(engineArtifact.file))
-        into(layout.buildDirectory.dir("geoplanEngine/extracted"))
+    val engineExtractedDir = layout.buildDirectory.dir("geoplanEngine/extracted")
+    val extractEngineAar = tasks.register("extractGeoplanEngineAar") {
+        val outputDir = engineExtractedDir
+        outputs.dir(outputDir)
+        doLast {
+            val aarFile = geoplanEngine.singleFile // 여기(실행 시점)에서만 resolve
+            copy {
+                from(zipTree(aarFile))
+                into(outputDir.get())
+            }
+        }
     }
 
     val engineClassesJar = layout.buildDirectory.file("geoplanEngine/extracted/classes.jar")
 
-    // 엔진 AAR 의 proguard.txt 가 있으면 우리 consumer-rules.pro 와 합쳐 별도 머지본으로 내보낸다
-    // (레포에 커밋된 consumer-rules.pro 원본은 건드리지 않는다).
+    // 엔진 AAR 의 proguard.txt 가 있으면 우리 consumer-rules.pro 와 합쳐 별도 머지본으로
+    // 내보낸다(레포에 커밋된 consumer-rules.pro 원본은 건드리지 않는다). 이 머지본이
+    // consumer-rules.pro 자리를 그대로 대체한다 — 둘 다 등록하면 내용이 두 번 실린다.
     val mergedConsumerRules = layout.buildDirectory.file("geoplanEngine/merged-consumer-rules.pro")
     val mergeEngineProguardRules = tasks.register("mergeGeoplanEngineProguardRules") {
         dependsOn(extractEngineAar)
@@ -102,35 +123,26 @@ if (hasGeoplanEngineCreds) {
     }
 
     android.defaultConfig.consumerProguardFile(mergedConsumerRules.get().asFile)
-
-    // 전이 의존은 엔진 POM 에 적힌 버전 그대로 implementation 한다(Maven Central 공개 좌표라
-    // 고객 빌드에 Geoplan 저장소가 노출되지 않는다).
-    val transitiveCoordinates = listOf(
-        "org.apache.commons:commons-math3",
-        "org.locationtech.jts:jts-core",
-        "org.slf4j:slf4j-api",
-    ).map { coordinate ->
-        val (group, name) = coordinate.split(":")
-        val resolvedVersion = engineResolvedArtifacts
-            .map { it.moduleVersion.id }
-            .firstOrNull { it.group == group && it.name == name }
-            ?.version
-            ?: error("engine POM 에서 $coordinate 버전을 찾지 못했다")
-        "$coordinate:$resolvedVersion"
+    tasks.named("preBuild") {
+        dependsOn(mergeEngineProguardRules)
     }
 
     dependencies {
         implementation(files(engineClassesJar).builtBy(extractEngineAar))
-        transitiveCoordinates.forEach { implementation(it) }
-    }
-
-    tasks.named("preBuild") {
-        dependsOn(mergeEngineProguardRules)
+        // 전이 의존은 엔진 POM 에 적힌 버전 그대로 implementation 해야 하지만, 계정이 없어
+        // 실제 POM 을 지금 읽을 수 없다 — gradle/libs.versions.toml 에 추정치로 고정해뒀다
+        // (주석에 "verify when creds exist"). Maven Central 공개 좌표라 고객 빌드에
+        // Geoplan 저장소가 노출되지는 않는다.
+        implementation(libs.geoplan.engine.commons.math3)
+        implementation(libs.geoplan.engine.jts.core)
+        implementation(libs.geoplan.engine.slf4j.api)
     }
 } else {
     dependencies {
         compileOnly(project(":engine-stub"))
     }
+
+    android.defaultConfig.consumerProguardFiles("consumer-rules.pro")
 
     tasks.matching { it.name == "preReleaseBuild" }.configureEach {
         doLast {
