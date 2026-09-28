@@ -143,55 +143,69 @@ public class ApiClient @JvmOverloads constructor(
             .header("Content-Type", "application/json")
             .build()
 
-    private suspend inline fun <reified R> perform(req: Request): R {
-        val (status, bytes) = execute(req)
-        if (status in 200 until 300) {
-            return try {
-                SdkJson.decodeFromString<R>(bytes.decodeToString())
-            } catch (e: SerializationException) {
-                throw ApiError.Decoding(detail = e.message)
-            }
-        }
-        val detail = errorDetail(bytes)
-        throw when (status) {
-            401 -> ApiError.InvalidKey(detail)
-            403 -> ApiError.Forbidden(detail)
-            404 -> ApiError.NotFound(detail)
-            422 -> ApiError.Unprocessable(detail)
-            else -> ApiError.Server(status = status, detail = detail)
-        }
-    }
+    private suspend inline fun <reified R> perform(req: Request): R = performJsonRequest(http, req)
+}
 
-    /** `IOException` 은 [ApiError.Network] 로 바꾼다 — `enqueue` 콜백을 코루틴으로 잇는다. */
-    private suspend fun execute(req: Request): Pair<Int, ByteArray> =
-        suspendCancellableCoroutine { cont ->
-            val call = http.newCall(req)
-            cont.invokeOnCancellation { call.cancel() }
-            call.enqueue(
-                object : Callback {
-                    override fun onFailure(call: Call, e: IOException) {
+// MARK: - 콘솔·공간 서비스 공유 헬퍼
+//
+// 상태코드→에러 매핑·IOException→Network·디코드→Decoding 은 SpaceServiceClient(공간 조회,
+// Task 5)도 그대로 써야 한다 — 여긴 유일한 정본이라 거기서 다시 만들지 않는다.
+
+/** `IOException` 은 [ApiError.Network] 로 바꾼다 — `enqueue` 콜백을 코루틴으로 잇는다. */
+internal suspend fun executeHttpRequest(http: OkHttpClient, req: Request): Pair<Int, ByteArray> =
+    suspendCancellableCoroutine { cont ->
+        val call = http.newCall(req)
+        cont.invokeOnCancellation { call.cancel() }
+        call.enqueue(
+            object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    cont.resumeWithException(ApiError.Network(e))
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    try {
+                        response.use {
+                            cont.resume(it.code to (it.body?.bytes() ?: ByteArray(0)))
+                        }
+                    } catch (e: IOException) {
+                        // 헤더는 받았지만 본문을 읽는 중 끊긴 경우도 전송 실패다.
                         cont.resumeWithException(ApiError.Network(e))
                     }
+                }
+            },
+        )
+    }
 
-                    override fun onResponse(call: Call, response: Response) {
-                        try {
-                            response.use {
-                                cont.resume(it.code to (it.body?.bytes() ?: ByteArray(0)))
-                            }
-                        } catch (e: IOException) {
-                            // 헤더는 받았지만 본문을 읽는 중 끊긴 경우도 전송 실패다.
-                            cont.resumeWithException(ApiError.Network(e))
-                        }
-                    }
-                },
-            )
-        }
+/** 상태코드 → [ApiError] 매핑(사양서 §9). 200~299 는 호출부가 직접 디코딩한다. */
+internal fun apiErrorForStatus(status: Int, detail: String?): ApiError =
+    when (status) {
+        401 -> ApiError.InvalidKey(detail)
+        403 -> ApiError.Forbidden(detail)
+        404 -> ApiError.NotFound(detail)
+        422 -> ApiError.Unprocessable(detail)
+        else -> ApiError.Server(status = status, detail = detail)
+    }
 
-    /** 에러 본문에서 detail 추출(형태가 다르면 nil — 실패해도 에러 매핑은 유지). */
-    private fun errorDetail(bytes: ByteArray): String? =
-        try {
-            SdkJson.decodeFromString<ErrorBody>(bytes.decodeToString()).detail
+/** 에러 본문 `{"detail": "..."}` 에서 detail 추출(형태가 다르면 null — 에러 매핑 자체는 유지). */
+internal fun errorDetailFrom(bytes: ByteArray): String? =
+    try {
+        SdkJson.decodeFromString<ErrorBody>(bytes.decodeToString()).detail
+    } catch (e: SerializationException) {
+        null
+    }
+
+/**
+ * 요청 실행 + 2xx 디코딩 + 오류 매핑을 한 번에 한다 — [ApiClient] 와 `SpaceServiceClient`
+ * (공간 조회, Task 5)가 공유한다. 타임아웃은 호출부가 건넨 [http] 그대로 쓴다.
+ */
+internal suspend inline fun <reified R> performJsonRequest(http: OkHttpClient, req: Request): R {
+    val (status, bytes) = executeHttpRequest(http, req)
+    if (status in 200 until 300) {
+        return try {
+            SdkJson.decodeFromString<R>(bytes.decodeToString())
         } catch (e: SerializationException) {
-            null
+            throw ApiError.Decoding(detail = e.message)
         }
+    }
+    throw apiErrorForStatus(status, errorDetailFrom(bytes))
 }
