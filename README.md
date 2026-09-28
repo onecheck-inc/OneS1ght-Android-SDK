@@ -16,6 +16,7 @@ on device. Same server contract and (with three platform-forced exceptions, see
 | Positioning | **Android 17 (API 37)+** · UWB **DL-TDoA** capable device |
 | Package | Android 8.1 (API 27)+ — the app runs normally on unsupported devices, only the SDK stays inactive |
 | Build | `compileSdk` / `targetSdk` 37, JVM target 17 |
+| Language | Works from Java 8+ / Kotlin 1.9+ apps |
 
 You also need keys and a configured space before the SDK does anything useful:
 

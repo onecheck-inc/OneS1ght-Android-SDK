@@ -74,6 +74,8 @@ iOS 가 쓰는 `gpi-ihub` 는 엔진 하나가 다음을 모두 한다.
 - **오류**: `SdkError`/`ApiError` 는 `Exception` 하위 클래스라 Java 에서 `instanceof` 로 구분할 수 있다. Java 판에서는 이 예외를 `onError` 로 전달한다.
 - **모델**: `data class` 로 두고, Java 에서는 getter 로 읽는다. 컬렉션은 읽기 전용 `List`/`Map` 이다.
 - **검증**: `src/test/java/.../JavaInteropTest.java` 가 Java 로 initialize → identify → buildings → setFloorMap → floorSession().begin → 콜백 설정 → end 를 컴파일하고 실행한다.
+- **표면 가드**: `JavaApiSurfaceTest` 가 컴파일된 공개 클래스를 훑어 (a) Callback 판 없는 suspend (b) 람다 타입(`FunctionN`) (c) `Unit` 반환·`Callback<Unit>` (d) static 아닌 object 멤버 (e) implementation 의존 타입이 공개 시그니처에 나오는 것을 막는다. suspend 판은 `@JvmSynthetic` 으로 Java 에서 숨긴다.
+- **고객 Kotlin 호환**: 언어·API 수준 2.0, `jvmDefault = ENABLE`, 자동 stdlib 의존 2.0.21. 런타임 의존도 stdlib 2.0 이하를 요구하는 판에 묶는다. `Scripts/consumer-compat-check.sh` 가 Kotlin 2.0.21·1.9.25 와 javac `--release 8` 로 실제 소비자 코드를 컴파일한다.
 
 ### 3.1 안드로이드라서 달라지는 곳 (전부)
 

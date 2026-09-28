@@ -16,6 +16,7 @@
 | 測位 | **Android 17 (API 37) 以上** ・ UWB **DL-TDoA** 対応端末 |
 | パッケージ導入 | Android 8.1 (API 27) 以上 — 非対応端末でもアプリは正常に動作し、SDK のみ無効になります |
 | ビルド環境 | `compileSdk` / `targetSdk` 37、JVM target 17 |
+| 言語 | Java 8+ / Kotlin 1.9+ のアプリで利用可能 |
 
 SDK が実際に動作するには、キーと空間設定が先に用意されている必要があります。
 
