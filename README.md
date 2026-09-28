@@ -384,8 +384,17 @@ Every failure carries a code. Include it when contacting support.
 | `E5005` | Response decoding failed |
 | `E5006` | Pending coordinates dropped |
 
-Codes `E3007`, `E3008`, `E3009` exist for the automatic BLE floor-detection path (used on
-iOS); they are reserved but not raised by the Android SDK.
+Codes `E3007` and `E3008` exist for the automatic BLE floor-detection path (on iOS, the
+engine finds and tracks the floor from locator advertisements). They are reserved but not
+raised by the Android SDK, since your app selects the floor itself through `setFloorMap` —
+there is no automatic detection step to fail.
+
+Code `E3009` exists for a different thing: mapping an engine-reported area **name** to a
+console zone. On iOS the positioning engine judges zone entry/exit against its own
+geofences and reports them by name, so the SDK has to match that name back to a console
+zone id — `E3009` fires when it can't. It is also reserved but not raised on Android,
+because zone judgement runs on-device directly against the zone geometry fetched from the
+console — there is no separate name to match.
 
 Errors are also uploaded to the Console log analyzer, where tenant administrators can see
 them without touching the app.
