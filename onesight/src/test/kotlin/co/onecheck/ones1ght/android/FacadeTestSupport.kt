@@ -67,6 +67,12 @@ internal class FacadeRoutes : Dispatcher() {
 
     @Volatile var verifyStatus: Int = 200
 
+    /**
+     * 콘솔 `/config` 가 줄 공간 서비스 키. 기본은 null(주지 않음) — 주면 공간 조회가 실제로
+     * 나가므로, 켤 때는 [JavaInteropHarness.enableSpaceService] 로 주소까지 이 서버로 돌린다.
+     */
+    @Volatile var spaceKey: String? = null
+
     override fun dispatch(request: RecordedRequest): MockResponse {
         val path = request.requestUrl?.encodedPath ?: (request.path ?: "")
         requests.add(FacadeRequest(path, request.getHeader("X-SDK-Key")))
@@ -81,13 +87,31 @@ internal class FacadeRoutes : Dispatcher() {
             // geo_sdk_key 는 주지 않는다: 주면 공간 서비스 클라이언트가 실제 호스트로 나간다.
             path.endsWith("/config") -> json(
                 """{ "google_map_key": "AIza_facade", "geo_partner_key": "gpk_facade",
-                     "geo_base_url": "https://space.facade.test" }""",
+                     "geo_base_url": "https://space.facade.test"${spaceKey?.let { ", \"geo_sdk_key\": \"$it\"" } ?: ""} }""",
+            )
+            // 공간 조회 — 도면(1x1 PNG)·앵커 1개·구역 1개. enableSpaceService 일 때만 불린다.
+            path.endsWith("/plan") -> json(
+                """{"has_plan":true,"floor_name":"F1","plan":{"image":
+                     {"data_url":"data:image/png;base64,$PNG_1X1","width_m":10.0,
+                      "img_w":100,"img_h":50,"origin_x":0.0,"origin_y":0.0}}}""",
+            )
+            path.endsWith("/anchors") -> json(
+                """{"anchors":[{"uwbMac":"AA:BB:0B:4B","x":1.0,"y":2.0,"sessionId":7,"clusterStatus":"auto_done"}]}""",
+            )
+            path.endsWith("/zones") -> json(
+                """{"zones":[{"zone_id":"z-1","name":"A","is_active":true,
+                     "polygon":[[0.0,0.0],[5.0,0.0],[5.0,4.0],[0.0,4.0]]}]}""",
             )
             else -> json("{}")
         }
     }
 
     fun count(suffix: String): Int = requests.count { it.path.endsWith(suffix) }
+
+    private companion object {
+        const val PNG_1X1 =
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+    }
 
     private fun json(body: String, code: Int = 200): MockResponse =
         MockResponse().setResponseCode(code).setHeader("Content-Type", "application/json").setBody(body)
@@ -120,6 +144,15 @@ internal class JavaInteropHarness private constructor() {
     fun baseUrl(): String = server.url("/api/sdk/v1").toString().trimEnd('/')
 
     fun mockProvider(): PositioningProvider = mock
+
+    /**
+     * 공간 조회를 켠다 — 콘솔이 공간 서비스 키를 주고, 공간 조회의 콘솔·공간 서비스 주소를 이
+     * 서버로 돌린다(기본값이면 실제 호스트로 나간다). initialize 전에 부른다.
+     */
+    fun enableSpaceService() {
+        routes.spaceKey = "gsk_facade"
+        OneS1ght.spaceEndpointsOverride = baseUrl() to server.url("/").toString()
+    }
 
     /** Java 콜백 판이 전부 끝날 때까지(콜백 전달 포함) 실시간으로 기다린다. */
     fun drain() {

@@ -35,6 +35,7 @@ package co.onecheck.ones1ght.android
 
 import android.content.Context
 import androidx.activity.ComponentActivity
+import androidx.annotation.MainThread
 import co.onecheck.ones1ght.android.model.Building
 import co.onecheck.ones1ght.android.model.Floor
 import co.onecheck.ones1ght.android.model.FloorLocators
@@ -54,6 +55,7 @@ import co.onecheck.ones1ght.android.runtime.KeyValueStore
 import co.onecheck.ones1ght.android.runtime.LogLevel
 import co.onecheck.ones1ght.android.runtime.SdkLocalized
 import co.onecheck.ones1ght.android.runtime.SessionCoordinator
+import co.onecheck.ones1ght.android.space.SpaceServiceClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -505,6 +507,7 @@ public object OneS1ght {
      *    폐기에 그 이름을 쓰면 전송으로 오해한 호출에 데이터가 조용히 사라진다.
      */
     @JvmStatic
+    @MainThread
     public fun empty() {
         coordinator?.empty()
     }
@@ -517,6 +520,7 @@ public object OneS1ght {
      * ⚠️ initialize 보다 먼저 부르면 값이 전달되지 않는다(iOS 와 같은 동작 — 두 플랫폼을 함께 고친다).
      */
     @JvmStatic
+    @MainThread
     public fun identify(profileId: String?) {
         this.profileId = profileId
         coordinator?.identify(profileId)
@@ -543,12 +547,21 @@ public object OneS1ght {
     private fun makeCoordinator(app: Context, sdkKey: String, baseUrl: String): SessionCoordinator {
         val (store, lifecycle) = platformFactory(app)
         val scope = CoroutineScope(SupervisorJob() + dispatcher)
+        val api = ApiClient(sdkKey, baseUrl)
+        val endpoints = spaceEndpointsOverride
         val c = SessionCoordinator(
-            api = ApiClient(sdkKey, baseUrl),
+            api = api,
             identity = IdentityStore(store),
             appId = app.packageName,
             scope = scope,
             lifecycle = lifecycle,
+            spaceClientFactory = { sdk, space ->
+                if (endpoints == null) {
+                    SpaceServiceClient(sdk, space, api.http)
+                } else {
+                    SpaceServiceClient(sdk, space, api.http, consoleBase = endpoints.first, spaceHost = endpoints.second)
+                }
+            },
         )
         c.onTriggers = { zoneId, triggers -> FloorSession.shared.onTriggers?.onTriggers(zoneId, triggers) }
         c.onPosition = { coord -> FloorSession.shared.onPosition?.onPosition(coord) }
@@ -607,6 +620,13 @@ public object OneS1ght {
     private val defaultBuiltInProviderFactory: (Context) -> PositioningProvider =
         { ctx -> createBuiltInProvider(ctx, dispatcher, System::currentTimeMillis) }
 
+    /**
+     * 공간 조회의 (콘솔 주소, 공간 서비스 주소). 운영은 null — 공간 조회는 기본 주소로 나간다
+     * (initialize 의 baseUrl 을 쓰지 않는다, 사양서 §4.2). 테스트가 스텁 서버로 돌린다.
+     */
+    @Volatile
+    internal var spaceEndpointsOverride: Pair<String, String>? = null
+
     /** FloorSession.begin() 이 한 번만 만드는 내장 provider. 테스트는 Mock 을 넣는다. */
     internal var builtInProviderFactory: (Context) -> PositioningProvider = defaultBuiltInProviderFactory
 
@@ -616,6 +636,7 @@ public object OneS1ght {
         deviceCapabilityOverride = null
         platformFactory = defaultPlatformFactory
         builtInProviderFactory = defaultBuiltInProviderFactory
+        spaceEndpointsOverride = null
         appContext = null
         warnedEarlyAvailability = false
         currentBuildingId = null
