@@ -2,6 +2,8 @@
 
 [English](README.md) | [한국어](README.ko.md) | **日本語**
 
+📖 ドキュメント: https://docs.ones1ght.com/ja/sdk/integration/android
+
 屋内位置インテリジェンス SDK です。アプリに組み込むと UWB（DL-TDoA）屋内測位により
 訪問・動線データを収集し、ゾーンの入場・退場・滞在イベントを端末上で直接受け取れます。
 サーバー契約は iOS SDK と同一で、公開 API も(プラットフォームの制約による 3 点の例外を

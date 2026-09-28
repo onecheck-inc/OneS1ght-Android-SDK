@@ -2,6 +2,8 @@
 
 [English](README.md) | **한국어** | [日本語](README.ja.md)
 
+📖 문서: https://docs.ones1ght.com/sdk/integration/android
+
 실내 위치 인텔리전스 SDK 입니다. 앱에 추가하면 UWB(DL-TDoA) 실내 측위로 방문·동선
 데이터를 수집하고, 구역 진입·이탈·체류 이벤트를 기기에서 직접 받을 수 있습니다.
 서버 계약은 iOS SDK 와 같고, 공개 API 도 (세 가지 플랫폼상 불가피한 차이를 빼면,

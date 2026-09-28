@@ -70,7 +70,7 @@ kotlin {
 // gpa-dltdoa 엔진 의존 전환
 //
 // ~/.gradle/gradle.properties 에 geoplanNexusUrl/User/Password 셋 다 있으면 실제
-// 엔진 AAR 을 받아 classes.jar 를 fat-aar 방식으로 싣는다(고객 빌드에는 Geoplan
+// 엔진 AAR 을 받아 classes.jar 를 fat-aar 방식으로 싣는다(고객 빌드에는 엔진
 // 저장소가 절대 나오지 않는다). 없으면 컴파일 전용 스텁(:engine-stub) 을 쓴다.
 // 어느 쪽이든 assembleRelease 는 계정 없이는 실패해야 한다 — 스텁이 실린 release
 // AAR 이 배포되는 사고를 막기 위해서다.
@@ -148,10 +148,9 @@ if (hasGeoplanEngineCreds) {
 
     dependencies {
         implementation(files(engineClassesJar).builtBy(extractEngineAar))
-        // 전이 의존은 엔진 POM 에 적힌 버전 그대로 implementation 해야 하지만, 계정이 없어
-        // 실제 POM 을 지금 읽을 수 없다 — gradle/libs.versions.toml 에 추정치로 고정해뒀다
-        // (주석에 "verify when creds exist"). Maven Central 공개 좌표라 고객 빌드에
-        // Geoplan 저장소가 노출되지는 않는다.
+        // 전이 의존은 엔진 POM 에 적힌 버전 그대로 implementation 한다
+        // (gradle/libs.versions.toml). Maven Central 공개 좌표라 고객 빌드에
+        // 엔진 저장소가 노출되지는 않는다.
         implementation(libs.geoplan.engine.commons.math3)
         implementation(libs.geoplan.engine.jts.core)
         implementation(libs.geoplan.engine.slf4j.api)
