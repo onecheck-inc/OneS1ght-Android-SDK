@@ -41,7 +41,8 @@ dependencies {
 > correct, but where to resolve them from is provisional. Ask your OneS1ght contact for
 > the current repository before wiring this into a CI build.
 
-The library's own manifest declares `RANGING`, `ACCESS_FINE_LOCATION` and `INTERNET` —
+The library's own manifest declares `RANGING`, `ACCESS_FINE_LOCATION`,
+`ACCESS_COARSE_LOCATION` and `INTERNET` —
 these are merged into your app automatically. You do not add them yourself.
 
 ---
@@ -100,11 +101,16 @@ check needs the app context that `initialize` (or `permissions(activity)`) hands
 Read before that on Android 17+, it cannot tell and answers `DEVICE_NOT_SUPPORTED`
 (with a WARN in `onDebugLog`).
 
+`initialize` starts the chip check in the background, and the answer is remembered for the
+life of the process (a chip that never answers is remembered as not supported after 5
+seconds). Reads after that return immediately; only a read that races that very first
+check waits for it, for up to 5 seconds.
+
 ---
 
 ## Step 3: Permissions
 
-Android requests both positioning permissions in one call — there is no separate
+Android requests the positioning permissions in one call — there is no separate
 "location manager" step like on iOS.
 
 ```kotlin
@@ -126,10 +132,15 @@ OneS1ght.permissions(activity, new Callback<PermissionStatus>() {
 ```
 
 `permissions(activity)` requests `RANGING` + `ACCESS_FINE_LOCATION` together through
-`ActivityResultRegistry`, so it is safe to call any time after `onCreate`.
+`ActivityResultRegistry`, so it is safe to call any time after `onCreate`. It also asks for
+`ACCESS_COARSE_LOCATION`, because Android 12+ only offers precise location when approximate
+location is requested alongside it.
+
+⚠️ Positioning needs **precise** location. If the user picks "Approximate" in the system
+prompt, the result is `DENIED`.
 
 ⚠️ If `deviceAvailability != AVAILABLE`, this returns `UNSUPPORTED` immediately with no
-system prompt. If both permissions are already granted, it returns `AUTHORIZED`
+system prompt. If `RANGING` and precise location are already granted, it returns `AUTHORIZED`
 immediately, also with no prompt. Otherwise the request times out after 30 seconds and
 resolves to `DENIED`.
 
@@ -252,6 +263,15 @@ session.begin(new Callback<Void>() {
 `floorSession()` always returns the same instance — the UWB radio, judgement engine and
 coordinate buffer are one per device, so multiple sessions would physically collide.
 
+⚠️ **Call `begin()` after the permission is granted.** Without the permission, `begin()`
+does not throw: the session starts but produces no positions, and `E2003` is logged. A
+second `begin()` while that session is still running is ignored — so after the user grants
+the permission, call `end()` first and then `begin()` again.
+
+ℹ️ `begin(provider)` (a custom or mock positioning source, for tests and demos) feeds
+positions only. `onZoneEnter` · `onZoneExit` · `onZoneDwell` come from the SDK's built-in
+positioning (`begin()`) and do not fire for a custom provider.
+
 ### Pausing is not stopping
 
 ```kotlin
@@ -309,6 +329,10 @@ Every asynchronous public function is available two ways, under the same name:
 - Java: `fun foo(..., callback: Callback<T>)` — the callback runs on the main thread.
   When there is no return value, the callback type is `Callback<Void?>` (Java sees
   `Callback<Void>`), so you never have to handle `Unit.INSTANCE`.
+
+ℹ️ If you call a Java callback variant on the main thread and the call finishes without
+waiting on anything (for example an immediate `SdkError.NotInitialized`), the callback may
+run **before the call returns**. Do not rely on code after the call running first.
 
 Event callbacks (`onZoneEnter`, `onPosition`, …) are `fun interface` types, so both a
 Kotlin lambda (`ZoneListener { zone -> … }`) and a Java lambda

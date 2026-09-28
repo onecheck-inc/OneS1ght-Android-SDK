@@ -36,7 +36,7 @@
         {
           "path": "app/src/main/AndroidManifest.xml",
           "language": "xml",
-          "code": "<!-- 라이브러리 매니페스트가 RANGING · ACCESS_FINE_LOCATION · INTERNET 권한을 자동으로 병합한다.\n     앱에서 따로 선언할 필요는 없다. -->\n<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\">\n    <application>\n        <!-- ... -->\n    </application>\n</manifest>"
+          "code": "<!-- 라이브러리 매니페스트가 RANGING · ACCESS_FINE_LOCATION · ACCESS_COARSE_LOCATION · INTERNET 권한을 자동으로 병합한다.\n     앱에서 따로 선언할 필요는 없다. -->\n<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\">\n    <application>\n        <!-- ... -->\n    </application>\n</manifest>"
         }
       ],
       "notes": [
@@ -49,7 +49,7 @@
       "title": "측위 권한 요청",
       "order": 2,
       "language": "kotlin",
-      "code": "// RANGING + ACCESS_FINE_LOCATION 을 한 번에 요청한다.\n// activityResultRegistry 를 쓰므로 onCreate 이후 아무 때나 불러도 된다.\nwhen (OneS1ght.permissions(activity)) {\n    PermissionStatus.AUTHORIZED  -> { /* 측위 시작 가능 */ }\n    PermissionStatus.DENIED      -> showSettingsGuide()      // 30초 무응답도 DENIED\n    PermissionStatus.UNSUPPORTED -> showUnsupportedNotice()\n}",
+      "code": "// RANGING + ACCESS_FINE_LOCATION(+ 함께 묻는 ACCESS_COARSE_LOCATION)을 한 번에 요청한다.\n// 대략 위치만 허용하면 DENIED 다 — 측위에는 정밀 위치가 필요하다.\n// activityResultRegistry 를 쓰므로 onCreate 이후 아무 때나 불러도 된다.\nwhen (OneS1ght.permissions(activity)) {\n    PermissionStatus.AUTHORIZED  -> { /* 측위 시작 가능 */ }\n    PermissionStatus.DENIED      -> showSettingsGuide()      // 30초 무응답도 DENIED\n    PermissionStatus.UNSUPPORTED -> showUnsupportedNotice()\n}",
       "files": [
         {
           "path": "JavaExample.java",

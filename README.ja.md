@@ -41,7 +41,8 @@ dependencies {
 > から取得するかは未定です。CI ビルドに組み込む前に、担当者へ現在のリポジトリ URL を
 > 確認してください。
 
-ライブラリ自身のマニフェストが `RANGING` ・ `ACCESS_FINE_LOCATION` ・ `INTERNET` 権限を
+ライブラリ自身のマニフェストが `RANGING` ・ `ACCESS_FINE_LOCATION` ・
+`ACCESS_COARSE_LOCATION` ・ `INTERNET` 権限を
 アプリに自動的にマージします。アプリ側で個別に宣言する必要はありません。
 
 ---
@@ -100,11 +101,15 @@ throw せず、ネットワークにもアクセスしません。**`initialize`
 必要です。それより前に Android 17 以上で読むと判定できず `DEVICE_NOT_SUPPORTED` を
 返します(`onDebugLog` に WARN が残ります)。
 
+`initialize` がチップの確認をバックグラウンドで先に始め、答えはプロセスが生きている間
+記憶します(5 秒以内に答えないチップは非対応として記憶します)。それ以降の読み取りは
+すぐに返ります。最初の確認が終わる前に読んだ場合だけ、その答えを最大 5 秒待ちます。
+
 ---
 
 ## Step 3: 権限
 
-Android は測位に必要な 2 つの権限を一度に要求します — iOS のように位置情報の権限を
+Android は測位に必要な権限を一度に要求します — iOS のように位置情報の権限を
 先に個別取得するステップはありません。
 
 ```kotlin
@@ -127,10 +132,14 @@ OneS1ght.permissions(activity, new Callback<PermissionStatus>() {
 
 `permissions(activity)` は `ActivityResultRegistry` を通じて `RANGING` +
 `ACCESS_FINE_LOCATION` をまとめて要求するため、`onCreate` 以降であればいつ呼び出しても
-安全です。
+安全です。`ACCESS_COARSE_LOCATION` も一緒に要求します — Android 12 以降は、おおよその
+位置情報を同時に要求しないと正確な位置情報を選べないためです。
+
+⚠️ 測位には**正確な**位置情報が必要です。ユーザーがシステムダイアログで「おおよそ」を
+選ぶと、結果は `DENIED` です。
 
 ⚠️ `deviceAvailability != AVAILABLE` の場合、システムダイアログなしで即座に
-`UNSUPPORTED` を返します。両方の権限が既に許可されている場合も、ダイアログなしで即座に
+`UNSUPPORTED` を返します。`RANGING` と正確な位置情報が既に許可されている場合も、ダイアログなしで即座に
 `AUTHORIZED` を返します。それ以外は 30 秒応答がないと `DENIED` として確定します。
 
 ⚠️ 一度拒否されると、システムは再度ダイアログを表示しません — アプリの設定画面へ
@@ -254,6 +263,15 @@ session.begin(new Callback<Void>() {
 `floorSession()` は常に同じインスタンスを返します — UWB 無線・判定エンジン・座標
 バッファは端末ごとに 1 つのため、セッションが複数あると物理的に競合します。
 
+⚠️ **`begin()` は権限を得てから呼んでください。** 権限なしで呼んでも `begin()` は throw
+しません — セッションは始まりますが座標は出ず、`E2003` が残ります。そのセッションが動いて
+いる間に再度呼んだ `begin()` は無視されるため、ユーザーが権限を許可した後は、まず `end()`
+を呼んでから `begin()` を呼び直してください。
+
+ℹ️ `begin(provider)`(テスト・デモ用のカスタム・Mock 測位ソース)は座標だけを供給します。
+`onZoneEnter` ・ `onZoneExit` ・ `onZoneDwell` は SDK 内蔵の測位(`begin()`)からのみ届き、
+カスタム provider では発火しません。
+
 ### 一時停止は終了ではありません
 
 ```kotlin
@@ -310,6 +328,10 @@ session.isPaused
 - Java: `fun foo(..., callback: Callback<T>)` — コールバックはメインスレッドで
   呼ばれます。戻り値がない場合は `Callback<Void?>`(Java では `Callback<Void>`)を
   使うため、`Unit.INSTANCE` を扱う必要はありません。
+
+ℹ️ Java のコールバック版をメインスレッドで呼び、その呼び出しが何も待たずに終わる場合
+(例: 即座に発生する `SdkError.NotInitialized`)、コールバックは**呼び出しが戻る前に**
+呼ばれることがあります。呼び出しの次の行が先に実行されると仮定しないでください。
 
 イベントコールバック(`onZoneEnter`、`onPosition` など)は `fun interface` のため、
 Kotlin の SAM 変換(`ZoneListener { zone -> … }`)と Java のラムダ

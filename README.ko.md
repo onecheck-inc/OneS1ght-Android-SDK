@@ -41,7 +41,8 @@ dependencies {
 > 받아올지는 정해지지 않았습니다. CI 빌드에 넣기 전에 담당자에게 현재 저장소 주소를
 > 확인하세요.
 
-라이브러리 자체 매니페스트가 `RANGING` · `ACCESS_FINE_LOCATION` · `INTERNET` 권한을
+라이브러리 자체 매니페스트가 `RANGING` · `ACCESS_FINE_LOCATION` · `ACCESS_COARSE_LOCATION` ·
+`INTERNET` 권한을
 앱에 자동으로 병합합니다. 앱에서 따로 선언할 필요가 없습니다.
 
 ---
@@ -100,11 +101,15 @@ throw 하지 않고 네트워크도 타지 않습니다. **`initialize` 다음�
 Android 17 이상에서 읽으면 판단할 수 없어 `DEVICE_NOT_SUPPORTED` 를 돌려줍니다
 (`onDebugLog` 에 WARN 이 남습니다).
 
+`initialize` 가 칩 확인을 미리 백그라운드로 시작하고, 답은 프로세스가 살아 있는 동안
+기억합니다(5초 안에 답하지 않는 칩은 미지원으로 기억합니다). 그 뒤의 읽기는 곧바로
+돌아옵니다. 맨 처음 확인이 끝나기 전에 읽은 경우에만 그 답을 최대 5초 기다립니다.
+
 ---
 
 ## Step 3: 권한
 
-안드로이드는 측위에 필요한 두 권한을 한 번에 요청합니다 — iOS 처럼 위치 권한을 앞서
+안드로이드는 측위에 필요한 권한을 한 번에 요청합니다 — iOS 처럼 위치 권한을 앞서
 따로 받는 별도 단계가 없습니다.
 
 ```kotlin
@@ -126,10 +131,15 @@ OneS1ght.permissions(activity, new Callback<PermissionStatus>() {
 ```
 
 `permissions(activity)` 는 `ActivityResultRegistry` 로 `RANGING` + `ACCESS_FINE_LOCATION`
-을 함께 요청하므로, `onCreate` 이후 아무 때나 불러도 안전합니다.
+을 함께 요청하므로, `onCreate` 이후 아무 때나 불러도 안전합니다. `ACCESS_COARSE_LOCATION`
+도 같이 요청합니다 — Android 12 이상은 대략 위치를 함께 요청해야 정밀 위치를 고를 수
+있게 해 주기 때문입니다.
+
+⚠️ 측위에는 **정밀** 위치가 필요합니다. 사용자가 시스템 팝업에서 "대략적인 위치"를
+고르면 결과는 `DENIED` 입니다.
 
 ⚠️ `deviceAvailability != AVAILABLE` 이면 시스템 팝업 없이 곧바로 `UNSUPPORTED` 를
-돌려줍니다. 이미 둘 다 허용돼 있으면 팝업 없이 `AUTHORIZED` 를 돌려줍니다. 그 외에는
+돌려줍니다. `RANGING` 과 정밀 위치가 이미 허용돼 있으면 팝업 없이 `AUTHORIZED` 를 돌려줍니다. 그 외에는
 30초 안에 응답이 없으면 `DENIED` 로 확정됩니다.
 
 ⚠️ 한 번 거부되면 시스템이 다시 팝업을 띄워 주지 않습니다 — 앱 설정 화면으로
@@ -252,6 +262,15 @@ session.begin(new Callback<Void>() {
 `floorSession()` 은 항상 같은 인스턴스를 돌려줍니다 — UWB 라디오·판정 엔진·좌표
 버퍼가 기기당 하나뿐이라 세션이 여럿이면 물리적으로 충돌합니다.
 
+⚠️ **`begin()` 은 권한을 받은 뒤에 부르세요.** 권한 없이 부르면 `begin()` 은 던지지
+않습니다 — 세션은 시작되지만 좌표가 나오지 않고 `E2003` 이 남습니다. 그 세션이 도는 동안
+다시 부른 `begin()` 은 무시되므로, 사용자가 권한을 허용한 뒤에는 먼저 `end()` 를 부르고
+`begin()` 을 다시 부르세요.
+
+ℹ️ `begin(provider)`(테스트·데모용 커스텀·Mock 측위 소스)는 좌표만 공급합니다.
+`onZoneEnter` · `onZoneExit` · `onZoneDwell` 은 SDK 내장 측위(`begin()`)에서만 오며, 커스텀
+provider 로는 발화하지 않습니다.
+
 ### 일시정지는 종료가 아닙니다
 
 ```kotlin
@@ -308,6 +327,10 @@ session.isPaused
 - Java: `fun foo(..., callback: Callback<T>)` — 콜백은 메인 스레드에서 호출됩니다.
   반환값이 없으면 `Callback<Void?>`(Java 에서는 `Callback<Void>`)를 써서
   `Unit.INSTANCE` 를 다룰 일이 없습니다.
+
+ℹ️ Java 콜백 판을 메인 스레드에서 불렀고 그 호출이 기다릴 것 없이 끝나면(예: 곧바로 나는
+`SdkError.NotInitialized`) 콜백이 **호출이 돌아오기 전에** 불릴 수 있습니다. 호출 다음 줄이
+먼저 실행된다고 가정하지 마세요.
 
 이벤트 콜백(`onZoneEnter`, `onPosition` 등)은 `fun interface` 라 Kotlin SAM 변환
 (`ZoneListener { zone -> … }`)과 Java 람다(`session.setOnZoneEnter(zone -> …)`) 모두
