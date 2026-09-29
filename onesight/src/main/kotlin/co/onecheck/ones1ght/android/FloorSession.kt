@@ -8,7 +8,9 @@ package co.onecheck.ones1ght.android
 //  · **싱글턴** — UWB 라디오·측위 엔진·좌표 버퍼가 기기당 하나뿐이라
 //    세션이 여럿이면 물리적으로 충돌한다. floorSession() 은 항상 같은 인스턴스를 준다.
 //  · 가동 중 setFloorMap 을 다시 부르면 이 세션이 새 층으로 갈아탄다(재생성 불필요).
-//  · 이벤트는 여기 리스너로만 나간다(Ruling 1) — 내장 provider·판정기의 훅은 내부 전용이다.
+//  · 구역 이벤트의 표준 출구는 여기 리스너다(Ruling 1). 앱이 UwbPositioningProvider 를 직접 만들어
+//    begin(provider) 에 넣으면 그 provider 의 공개 훅(onZoneEvent 등)도 함께 불린다 — SDK 는 provider 의
+//    내부 연결(sessionZoneSink·sessionLogSink)로만 이 세션에 잇고, 앱 훅은 덮지 않는다(0.0.5~).
 //  · 내장 provider 는 한 번만 만들고 계속 쓴다. 그 안의 코루틴 스코프가 프로세스 수명이라
 //    begin 마다 새로 만들면 새는 만큼 쌓인다(iOS 가 hub 를 재사용하는 것과 같다).
 //
@@ -76,18 +78,11 @@ public class FloorSession internal constructor() {
      */
     @JvmSynthetic
     public suspend fun begin(): Unit = OneS1ght.onCore {
-        // 기기를 막는 곳은 여기 하나뿐이다 — initialize 는 기기를 보지 않는다.
-        val capability = OneS1ght.deviceCapability
-        if (capability.sdkInt < MIN_POSITIONING_SDK) throw SdkError.OsVersionTooLow()
-        if (!capability.hasUwbHardware()) throw SdkError.DeviceNotSupported()
+        requirePositioningDevice()
         val context = OneS1ght.appContext
         if (OneS1ght.coordinatorRef == null || context == null) throw SdkError.NotInitialized()
 
         val hub = builtInProvider ?: OneS1ght.builtInProviderFactory(context).also { builtInProvider = it }
-        if (hub is UwbPositioningProvider) {
-            hub.onZoneEvent = { event -> dispatch(event) }
-            hub.onLog = { level, line -> OneS1ght.onDebugLog?.onLog(level, line) } // 엔진 로그 → 표준 디버그 훅
-        }
         start(hub)
     }
 
@@ -100,12 +95,26 @@ public class FloorSession internal constructor() {
     }
 
     /**
-     * 측위 시작 (커스텀 측위 주입) — 테스트(Mock)·데모 등 특수 경우용. 기기 게이트를 거치지 않는다.
+     * 측위 시작 (provider 주입).
      *
-     * @throws SdkError.NotInitialized · SdkError.NotIdentified
+     * - 앱이 만든 [UwbPositioningProvider] 면 [begin] 과 **똑같이** 다룬다 — 같은 기기 게이트, SDK 가 넣는
+     *   라이선스, 구역 이벤트 → 이 세션의 리스너(onZoneEnter/Exit/Dwell), 엔진 로그 → `OneS1ght.onDebugLog`.
+     *   provider 에 앱이 단 훅(onZoneEvent·onLog …)은 그대로 둔다(덮지 않는다). 지도 화면처럼 엔진 상태를
+     *   직접 지켜봐야 할 때 쓴다.
+     * - 그 밖의 provider(테스트 Mock·데모 등)는 기기 게이트를 거치지 않는다.
+     *
+     * @throws SdkError.NotInitialized · SdkError.NotIdentified — UwbPositioningProvider 면 여기에
+     *   SdkError.DeviceNotSupported · SdkError.OsVersionTooLow 가 더해진다.
      */
     @JvmSynthetic
-    public suspend fun begin(provider: PositioningProvider): Unit = OneS1ght.onCore { start(provider) }
+    public suspend fun begin(provider: PositioningProvider): Unit = OneS1ght.onCore {
+        if (provider is UwbPositioningProvider) {
+            // 초기화 전이면 칩을 물을 Context 가 없어 "미지원" 으로 잘못 나간다 — 초기화부터 본다.
+            if (OneS1ght.coordinatorRef == null) throw SdkError.NotInitialized()
+            requirePositioningDevice()
+        }
+        start(provider)
+    }
 
     /** [begin] (provider 주입) 의 Java 판. */
     public fun begin(provider: PositioningProvider, callback: Callback<Void?>) {
@@ -167,8 +176,20 @@ public class FloorSession internal constructor() {
             // 재호출로는 다시 못 붙는다. 여기서 따로 재시도한다.
             coordinator.retryKeyResolutionIfNeeded()
         }
-        if (provider is UwbPositioningProvider) provider.license = coordinator.positioningLicense.orEmpty()
+        if (provider is UwbPositioningProvider) {
+            provider.license = coordinator.positioningLicense.orEmpty()
+            // SDK 내부 연결 — 앱이 provider 에 단 훅(onZoneEvent·onLog)과는 따로 건다(덮지 않는다).
+            provider.sessionZoneSink = { event -> dispatch(event) }
+            provider.sessionLogSink = { level, line -> OneS1ght.onDebugLog?.onLog(level, line) } // 엔진 로그 → 표준 디버그 훅
+        }
         coordinator.start(provider)
+    }
+
+    /** 기기를 막는 곳 — initialize 는 기기를 보지 않는다. 내장 측위를 쓰는 begin 만 부른다. */
+    private fun requirePositioningDevice() {
+        val capability = OneS1ght.deviceCapability
+        if (capability.sdkInt < MIN_POSITIONING_SDK) throw SdkError.OsVersionTooLow()
+        if (!capability.hasUwbHardware()) throw SdkError.DeviceNotSupported()
     }
 
     /** ZoneEvent → 분리된 리스너. */

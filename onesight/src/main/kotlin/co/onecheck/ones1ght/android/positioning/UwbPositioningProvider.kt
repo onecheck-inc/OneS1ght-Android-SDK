@@ -4,7 +4,7 @@ package co.onecheck.ones1ght.android.positioning
 //  UwbPositioningProvider.kt
 //  실측위 어댑터 (내장) — 통합 측위 엔진을 감싼다.
 //
-//  역할 분담 (iOS 0.1.23 과 같다):
+//  역할 분담 (iOS 0.1.24 와 같다):
 //    · 엔진     — BLE 로 층을 고르고, 자기 서버에서 앵커·지오펜스를 받아 UWB(DL-TDoA)로 좌표를 내고,
 //                 영역 진출입(IN/OUT)까지 준다.
 //    · OneS1ght — 좌표를 서버에 수집하고(delegate.onPosition), 영역 이벤트를 콘솔 zone_id 로 옮겨
@@ -21,12 +21,20 @@ package co.onecheck.ones1ght.android.positioning
 //  스레드: 엔진 콜백은 엔진 스레드에서 오고, 전부 주입된 코어 디스패처로 넘긴 뒤 처리한다.
 //  콜백마다 기동 세대([generation])를 달아, 이미 내린 기동의 늦은 콜백이 새 기동을 건드리지 않게 한다.
 //
-//  포팅 원본: UwbPositioningProvider.swift (iOS 0.1.23 — 통합 엔진 경로).
+//  공개 표면(0.0.5~): iOS 0.1.24 의 UwbPositioningProvider 와 같은 것을 연다 — 앱이 직접 만들어
+//  FloorSession.begin(provider) 에 넣고, 상태(phase·latestPosition …)를 지켜보며 지도를 그린다.
+//  iOS @Published 는 Kotlin StateFlow(`…Flow`) + 게터 + [ProviderChangeListener](Java) 로 옮겼다.
+//
+//  포팅 원본: UwbPositioningProvider.swift (iOS 0.1.24 — 통합 엔진 경로).
 //
 
 import android.content.Context
+import android.os.Build
+import androidx.annotation.MainThread
 import androidx.annotation.RequiresApi
+import co.onecheck.ones1ght.android.DebugLogListener
 import co.onecheck.ones1ght.android.MIN_POSITIONING_SDK
+import co.onecheck.ones1ght.android.OneS1ght
 import co.onecheck.ones1ght.android.model.Coordinates
 import co.onecheck.ones1ght.android.model.ZoneEvent
 import co.onecheck.ones1ght.android.model.ZoneEventStatus
@@ -41,14 +49,27 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * 내장 UWB 측위 제공자. 고객 앱이 직접 만들지 않는다 — FloorSession 이
- * [createBuiltInProvider] 로 만들어 쓴다.
+ * 내장 UWB 측위 제공자 — 측위 엔진(층 탐지·UWB 측위·영역 판정)을 감싼다.
+ *
+ * 보통은 앱이 만들 일이 없다 — `OneS1ght.floorSession().begin()` 이 안에서 만든다. 지도 화면처럼
+ * 엔진 상태([phase]·[latestPosition]·[detectedFloorId] …)를 직접 지켜봐야 할 때만 앱이 만들어
+ * `begin(provider)` 에 넣는다:
+ *
+ * ```kotlin
+ * val provider = UwbPositioningProvider(context)
+ * provider.onFloorDetected = FloorDetectedListener { floorId -> … }
+ * OneS1ght.floorSession().begin(provider)          // begin() 과 같은 대우(라이선스·구역 이벤트·로그)
+ * provider.latestPositionFlow.collect { … }
+ * ```
+ *
+ * 모든 멤버는 메인 스레드에서 부른다. 훅도 메인 스레드에서 불린다.
  */
-// 생성자는 private — internal 이면 JVM 에선 public 이라 Java 에 CoroutineDispatcher·Function0 이 드러난다.
-// 모듈 안에서는 [create]/[createBuiltInProvider] 로 만든다.
 public class UwbPositioningProvider private constructor(
     private val engine: HubEngine,
     main: CoroutineDispatcher,
@@ -56,19 +77,74 @@ public class UwbPositioningProvider private constructor(
     private val clock: () -> Long,
 ) : PositioningProvider {
 
+    /**
+     * 실제 측위 엔진을 쓰는 provider 를 만든다. 어느 OS 에서든 던지지 않는다 — Android 17(API 37) 미만이면
+     * 엔진 없이 만들어지고, 시작하면 미지원 기기 오류(E2002)로 끝난다. 쓰기 전에 [isSupported] 로 거른다.
+     */
+    public constructor(context: Context) : this(
+        engine = realEngine(context),
+        main = OneS1ght.dispatcher,
+        dwellScheduler = null,
+        clock = System::currentTimeMillis,
+    )
+
+    /** 엔진 자체 상태 — 측위 가동([isRunning])과는 별개다. 엔진은 층을 찾기 위해 측위보다 먼저 돌 수 있다. */
+    public enum class PositioningPhase { IDLE, STARTING, SEARCHING, TRACKING, STOPPING }
+
+    /**
+     * 등록 로케이터 vs 수신 — 엔진이 앵커별 상태를 주지 않아 "좌표가 나오면 전부 수신, 아니면 아직 모름" 으로만
+     * 답한다. 모르는 것을 고장으로 칠하지 않는다 — [missing] 은 항상 비어 있다.
+     */
+    public data class AnchorDiagnostic(
+        /** 콘솔에 등록된 로케이터 주소(오름차순) — [apply] (config) 로 받은 것. */
+        public val registered: List<Int>,
+        /** 신호가 잡힌 로케이터 — 좌표가 나오고 있으면 [registered] 전부, 아니면 빈 목록. */
+        public val received: List<Int>,
+        /** 등록 ∩ 수신 — [received] 와 같다. */
+        public val matched: List<Int>,
+        /** 등록됐는데 신호가 없는 주소 — 엔진이 특정할 수 없어 항상 비어 있다. */
+        public val missing: List<Int>,
+        /** 지금 좌표가 있는가([latestPosition] 이 있는가). */
+        public val hasFix: Boolean,
+        /** 한 줄 요약(엔진 상태 · 층 · 좌표 수 · 등록 로케이터 수) — 현재 언어. */
+        public val summary: String,
+    ) {
+        /** 측위 가능한가 — [hasFix] 와 같다. */
+        public val canPosition: Boolean get() = hasFix
+    }
+
     override var delegate: PositioningProviderDelegate? = null
 
-    /** 로컬 zone 이벤트 훅(IN/OUT/DWELL) — 내부 호출자 전용(고객 콜백은 FloorSession 리스너). */
-    internal var onZoneEvent: ((ZoneEvent) -> Unit)? = null
+    // MARK: - 훅 (앱용 — 전부 메인 스레드)
 
-    /** 엔진 내부 로그 훅 — 표준 경로에서 onDebugLog 로 이어진다. */
-    internal var onLog: ((LogLevel, String) -> Unit)? = null
+    /** 로컬 구역 이벤트(진입·이탈·체류) — 서버 전송과 무관하게 호스트 UI 가 즉시 반응한다. */
+    @Volatile public var onZoneEvent: ZoneEventListener? = null
 
-    /** 층 추적 시작(층 번호)/종료(null) — 내부 진단용. */
-    internal var onFloorDetected: ((Long?) -> Unit)? = null
+    /** 엔진 로그 — [note] 로 넣은 줄도 여기로 온다. */
+    @Volatile public var onLog: DebugLogListener? = null
 
-    /** 엔진이 준 **원본** 영역 이벤트 — 콘솔 존으로 옮기기 전 그대로(진단·테스트용). */
-    internal var onRawAreaEvent: ((floorId: Long, areaName: String, inOut: String, atMs: Long) -> Unit)? = null
+    /** 층 추적 시작(층 번호) / 종료(`null`) — 호스트가 층 자동 선택에 쓴다. */
+    @Volatile public var onFloorDetected: FloorDetectedListener? = null
+
+    /** 엔진 오류 — 엔진 원본 번호·문장 그대로. */
+    @Volatile public var onEngineError: EngineErrorListener? = null
+
+    /**
+     * 엔진이 준 **원본** 영역 이벤트 — 콘솔 구역으로 옮기기 전 그대로. 측위 가동 여부와 무관하게 온다
+     * (일시정지 중에는 오지 않는다). [onZoneEvent] 와 나란히 놓고 이름·시점을 대조할 때 쓴다.
+     */
+    @Volatile public var onRawAreaEvent: RawAreaEventListener? = null
+
+    /** 관찰 상태가 바뀌었다 — Java 용. Kotlin 은 `…Flow` 를 모은다. */
+    @Volatile public var onChange: ProviderChangeListener? = null
+
+    // MARK: - SDK 내부 연결 (FloorSession 이 건다 — 앱 훅과 따로 둔다)
+
+    /** FloorSession 리스너(onZoneEnter/Exit/Dwell)로 가는 길. 앱의 [onZoneEvent] 를 덮지 않으려고 따로 둔다. */
+    @Volatile internal var sessionZoneSink: ((ZoneEvent) -> Unit)? = null
+
+    /** OneS1ght.onDebugLog 로 가는 길. 앱의 [onLog] 를 덮지 않으려고 따로 둔다. */
+    @Volatile internal var sessionLogSink: ((LogLevel, String) -> Unit)? = null
 
     /**
      * 엔진 라이선스 키. 콘솔 `/config` 의 측위 키를 FloorSession 이 넣어 준다.
@@ -89,18 +165,17 @@ public class UwbPositioningProvider private constructor(
     /** apply(buildingId, floorId) 로 받은 콘솔 층 ID — 대조(E3008)와 엔진 층이 없을 때의 귀속용. */
     private var floorId = ""
 
-    /** 콘솔 로케이터 수 — 엔진이 앵커를 자기 서버에서 받으므로 진단 '등록' 기준으로만 쓴다. */
-    private var registeredLocators = 0
-
-    /** 엔진이 지금 추적 중인 층(공간 서비스 층 번호). null = 층 탐색 중. */
-    internal var detectedFloorId: Long? = null
-        private set
+    /** 콘솔 로케이터 주소 — 엔진이 앵커를 자기 서버에서 받으므로 진단 '등록' 기준으로만 쓴다. */
+    private var registeredAddresses: List<Int> = emptyList()
 
     /** 이번 가동에서 좌표가 한 번이라도 나왔는가 — 수신 점검(hasFix) 기준. 일시정지와 무관하다. */
     private var producedFix = false
 
-    /** 이번 가동에서 소비한 좌표 수(종료 로그용). */
+    /** 이번 가동에서 소비한 좌표 수. */
     private var fixCount = 0
+
+    /** 마지막 좌표 — 가동 중·일시정지 아님일 때만 있다. */
+    private var lastPosition: Coordinates? = null
 
     /** 층 불일치는 층마다 한 번만 알린다 — 층이 유지되는 동안 반복하면 로그가 덮인다. */
     private var warnedFloorMismatch: Long? = null
@@ -124,9 +199,70 @@ public class UwbPositioningProvider private constructor(
     /** 엔진 버전 안내는 한 번만. */
     private var announced = false
 
-    internal val phase: Phase get() = machine.phase
-    internal val isRunning: Boolean get() = machine.isRunning
+    /** 화면 로그(최근 [LOG_CAPACITY] 줄). */
+    private val logLines = ArrayDeque<String>()
+
+    // MARK: - 관찰 상태
+
+    private val _phase = MutableStateFlow(PositioningPhase.IDLE)
+    private val _isRunning = MutableStateFlow(false)
+    private val _isPaused = MutableStateFlow(false)
+    private val _latestPosition = MutableStateFlow<Coordinates?>(null)
+    private val _detectedFloorId = MutableStateFlow<Long?>(null)
+    private val _measurementCount = MutableStateFlow(0)
+    private val _log = MutableStateFlow<List<String>>(emptyList())
+
+    /** 엔진 상태 흐름 — [phase] 의 StateFlow 판. */
+    public val phaseFlow: StateFlow<PositioningPhase> = _phase.asStateFlow()
+
+    /** 측위 가동 흐름 — [isRunning] 의 StateFlow 판. */
+    public val isRunningFlow: StateFlow<Boolean> = _isRunning.asStateFlow()
+
+    /** 일시정지 흐름 — [isPaused] 의 StateFlow 판. */
+    public val isPausedFlow: StateFlow<Boolean> = _isPaused.asStateFlow()
+
+    /** 마지막 좌표 흐름 — [latestPosition] 의 StateFlow 판. */
+    public val latestPositionFlow: StateFlow<Coordinates?> = _latestPosition.asStateFlow()
+
+    /** 엔진이 추적 중인 층 흐름 — [detectedFloorId] 의 StateFlow 판. */
+    public val detectedFloorIdFlow: StateFlow<Long?> = _detectedFloorId.asStateFlow()
+
+    /** 좌표 수 흐름 — [measurementCount] 의 StateFlow 판. */
+    public val measurementCountFlow: StateFlow<Int> = _measurementCount.asStateFlow()
+
+    /** 화면 로그 흐름 — [log] 의 StateFlow 판. */
+    public val logFlow: StateFlow<List<String>> = _log.asStateFlow()
+
+    /** 엔진 상태 — [PositioningPhase.IDLE] 이 아니면 엔진이 돌고 있다. */
+    public val phase: PositioningPhase get() = _phase.value
+
+    /** 상태 기계의 단계 그대로 — 테스트·내부 판정용([phase] 는 publish 시점의 공개 사본). */
+    internal val enginePhase: Phase get() = machine.phase
+
+    /** 엔진이 돌고 있는가(탐색 중이든 추적 중이든). */
+    public val isDetecting: Boolean
+        get() = phase != PositioningPhase.IDLE && phase != PositioningPhase.STOPPING
+
+    /** 측위 가동 중인가 — 좌표를 표시·수집·판정하고 있는가(일시정지 중에도 true). */
+    public val isRunning: Boolean get() = machine.isRunning
+
+    /**
+     * 일시정지 중인가 — **엔진은 계속 돈다**(층·앵커를 붙들고 있어야 재개가 즉시 된다).
+     * 멈추는 것은 좌표의 소비(표시·수집·판정)뿐이다.
+     */
     override val isPaused: Boolean get() = machine.isPaused
+
+    /** 마지막 좌표(도면 로컬 미터). 측위 전·일시정지 중·층을 놓친 뒤에는 `null`. */
+    public val latestPosition: Coordinates? get() = _latestPosition.value
+
+    /** 엔진이 지금 추적 중인 층(공간 서비스 층 번호). `null` = 층 탐색 중. */
+    public val detectedFloorId: Long? get() = _detectedFloorId.value
+
+    /** 이번 가동에서 받은 좌표 수(가동 중만 센다). */
+    public val measurementCount: Int get() = _measurementCount.value
+
+    /** 화면 로그 — 최근 200줄. */
+    public val log: List<String> get() = _log.value
 
     /**
      * 프로토콜용 진단 — 코어(SessionCoordinator)가 읽어 로그 코드로 남긴다.
@@ -136,14 +272,36 @@ public class UwbPositioningProvider private constructor(
      */
     override val positioningDiagnostic: PositioningDiagnostic
         get() {
-            val received = if (producedFix) registeredLocators else 0
+            val registered = registeredAddresses.size
+            val received = if (producedFix) registered else 0
             return PositioningDiagnostic(
-                registeredCount = registeredLocators,
+                registeredCount = registered,
                 receivedCount = received,
                 matchedCount = received,
                 missingAddresses = emptyList(), // 엔진은 미수신을 특정할 수 없다
                 hasFix = producedFix,
                 canAttributePerAnchor = false,
+            )
+        }
+
+    /** 로케이터 단위 진단(화면용). 엔진 한계 — [AnchorDiagnostic] 참고. */
+    public val diagnostic: AnchorDiagnostic
+        get() {
+            val fix = latestPosition != null
+            val summary = SdkLocalized.t(
+                "uwb.diag",
+                phase.name.lowercase(),
+                detectedFloorId?.toString() ?: "-",
+                measurementCount,
+                registeredAddresses.size,
+            )
+            return AnchorDiagnostic(
+                registered = registeredAddresses,
+                received = if (fix) registeredAddresses else emptyList(),
+                matched = if (fix) registeredAddresses else emptyList(),
+                missing = emptyList(),
+                hasFix = fix,
+                summary = summary,
             )
         }
 
@@ -153,11 +311,25 @@ public class UwbPositioningProvider private constructor(
         judge.onReport = { code, ctx -> report(code, ctx) }
     }
 
+    // MARK: - 로그
+
+    /** 외부(호스트) 로그 합류 — 앱 로그를 같은 스트림([log]·[onLog])에 끼운다. */
+    @MainThread
+    public fun note(message: String) {
+        log(LogLevel.LOG, message)
+    }
+
+    /** [note] 의 등급 지정 판. */
+    @MainThread
+    public fun note(level: LogLevel, message: String) {
+        log(level, message)
+    }
+
     // MARK: - 설정 주입
 
     /**
      * 콘솔 건물·층 ID — 코어(applyFloorStateToProvider)가 넣는다. 층 지정 해제(setFloorMap(null))면 빈 값이
-     * 온다 — 그러면 E3008 대조를 멈추고, 엔진 층이 없을 때의 귀속도 하지 않는다.
+     * 온다 — 그러면 E3008 대조를 멈추고, 엔진 층이 없을 때의 귀속도 하지 않는다. 가동 중에 불러도 안전하다.
      */
     override fun apply(buildingId: String, floorId: String) {
         this.buildingId = buildingId
@@ -173,7 +345,7 @@ public class UwbPositioningProvider private constructor(
      *   (구역을 전부 지운 상황이 전달되지 않으면 사라진 구역에서 시책이 계속 발화한다).
      */
     override fun apply(config: PositioningConfig) {
-        if (config.anchors.isNotEmpty()) registeredLocators = config.anchors.size
+        if (config.anchors.isNotEmpty()) registeredAddresses = config.anchors.keys.sorted()
         judge.apply(config.zones)
         log(LogLevel.LOG, SdkLocalized.t("uwb.zonesApply", config.zones.size, config.anchors.size))
     }
@@ -191,6 +363,38 @@ public class UwbPositioningProvider private constructor(
         log(LogLevel.WARN, SdkLocalized.t("uwb.geofenceReload"))
         reloading = true
         machine.restart()
+        publish()
+    }
+
+    // MARK: - 엔진 기동 (측위 시작과 분리)
+
+    /**
+     * 엔진만 띄워 층부터 찾는다. 좌표는 아직 쓰지 않는다 — 층이 잡히면 [onFloorDetected] 로 알리고,
+     * 측위 가동은 그 뒤 `FloorSession.begin(provider)`(또는 [start])가 한다. 엔진이 이미 돌고 있으면 아무것도 안 한다.
+     *
+     * 라이선스는 SDK 가 콘솔에서 받은 값을 쓴다 — `OneS1ght.initialize` 뒤에 부른다(전이면 E1007 로 끝난다).
+     */
+    @MainThread
+    public fun startDetection() {
+        if (machine.phase != Phase.IDLE) return
+        if (license.isBlank()) license = OneS1ght.coordinatorRef?.positioningLicense.orEmpty()
+        announceOnce()
+        machine.openDetection()
+        afterStartAttempt(freshStart = false)
+        publish()
+    }
+
+    /** 엔진을 완전히 멈춘다. 측위 중이었으면 그것도 끝난다. */
+    @MainThread
+    public fun stopDetection() {
+        if (machine.phase == Phase.IDLE || machine.phase == Phase.STOPPING) return
+        val wasRunning = machine.isRunning
+        reloading = false
+        cancelFloorWatch()
+        machine.stop()
+        clearPosition()
+        if (wasRunning) log(LogLevel.INFO, SdkLocalized.t("uwb.positioningOff", fixCount))
+        publish()
     }
 
     // MARK: - 수명주기
@@ -202,23 +406,35 @@ public class UwbPositioningProvider private constructor(
         fixCount = 0
         producedFix = false
         warnedFloorMismatch = null
+        clearPosition()
         judge.reset()
         machine.start()
         afterStartAttempt(freshStart = true)
+        publish()
     }
 
-    /** 측위 종료 — 좌표 표시·수집·판정을 끄고 엔진도 함께 멈춘다. */
+    /**
+     * 측위 종료 — 좌표 표시·수집·판정을 끄고 엔진도 함께 멈춘다. 측위가 꺼져 있으면(엔진만 도는
+     * [startDetection] 상태 포함) 예약된 시작만 지우고 엔진은 그대로 둔다 — 엔진까지 끄려면 [stopDetection].
+     */
     override fun stop() {
-        val wasRunning = machine.isRunning
+        if (!machine.isRunning) {
+            machine.cancelPendingStart()
+            return
+        }
         reloading = false
         cancelFloorWatch()
         machine.stop()
-        if (wasRunning) log(LogLevel.INFO, SdkLocalized.t("uwb.positioningOff", fixCount))
+        clearPosition()
+        log(LogLevel.INFO, SdkLocalized.t("uwb.positioningOff", fixCount))
+        publish()
     }
 
     /** 좌표·영역 이벤트 소비만 멈춘다 — **엔진은 계속 돈다**(층·앵커를 다시 찾지 않도록). */
     override fun pause() {
         machine.pause()
+        if (machine.isPaused) clearPosition() // 마지막 점을 살아 있는 것처럼 두지 않는다
+        publish()
     }
 
     /**
@@ -227,6 +443,7 @@ public class UwbPositioningProvider private constructor(
      */
     override fun resume() {
         if (machine.resume()) judge.reset()
+        publish()
     }
 
     // MARK: - 상태 기계 콜백
@@ -236,11 +453,12 @@ public class UwbPositioningProvider private constructor(
         val key = license.trim()
         if (key.isEmpty()) {
             log(LogLevel.ERROR, SdkLocalized.t("uwb.noLicense"))
+            onEngineError?.onEngineError(HUB_NO_LICENSE, "license not set")
             pendingOpenFailure = SdkErrorCode.KEY_UNAVAILABLE to "reason=engine_license_empty"
             return
         }
         generation += 1
-        detectedFloorId = null
+        setDetectedFloor(null)
         try {
             engine.setLicense(key)
             engine.setListener(listenerFor(generation))
@@ -277,6 +495,7 @@ public class UwbPositioningProvider private constructor(
             generation += 1
             log(LogLevel.WARN, SdkLocalized.t("uwb.stopped") + " (timeout ${STOP_TIMEOUT_MS}ms)")
             finishStopped()
+            publish()
         }
     }
 
@@ -315,7 +534,12 @@ public class UwbPositioningProvider private constructor(
     }
 
     private fun onCore(gen: Int, block: () -> Unit) {
-        scope.launch { if (gen == generation) block() }
+        scope.launch {
+            if (gen == generation) {
+                block()
+                publish()
+            }
+        }
     }
 
     private fun handleStarted() {
@@ -354,10 +578,11 @@ public class UwbPositioningProvider private constructor(
         val wasReloading = reloading
         reloading = false
         if (detectedFloorId != null) {
-            detectedFloorId = null
-            if (!wasReloading) onFloorDetected?.invoke(null)
+            setDetectedFloor(null)
+            if (!wasReloading) onFloorDetected?.onFloorDetected(null)
         }
         machine.onClosed()
+        if (!machine.isRunning) clearPosition()
         if (machine.phase == Phase.IDLE) {
             cancelFloorWatch()
             engine.setListener(null) // 정지 직후가 아니라 여기(onStopped 뒤)서 해제한다
@@ -368,11 +593,11 @@ public class UwbPositioningProvider private constructor(
 
     private fun handleTrackingStarted(fid: Long) {
         machine.onTrackingStarted()
-        detectedFloorId = fid
+        setDetectedFloor(fid)
         cancelFloorWatch() // 층을 찾았다 — 미탐지 감시 해제
         log(LogLevel.INFO, SdkLocalized.t("uwb.trackingStart", fid))
         checkFloorAgreement(fid)
-        onFloorDetected?.invoke(fid)
+        onFloorDetected?.onFloorDetected(fid)
     }
 
     /**
@@ -391,22 +616,25 @@ public class UwbPositioningProvider private constructor(
 
     private fun handleTrackingStopped(fid: Long) {
         machine.onTrackingStopped()
-        detectedFloorId = null
+        setDetectedFloor(null)
+        clearPosition()
         log(LogLevel.INFO, SdkLocalized.t("uwb.trackingStop", fid))
-        onFloorDetected?.invoke(null)
+        onFloorDetected?.onFloorDetected(null)
     }
 
     private fun handlePosition(fid: Long, x: Double, y: Double, z: Double) {
-        // 측위 중이 아니면(정지 중 늦게 온 좌표) 버린다 — 화면에도, 서버에도 안 간다.
+        // 측위 중이 아니면(탐색만 하는 중, 정지 중 늦게 온 좌표) 버린다 — 화면에도, 서버에도 안 간다.
         if (!machine.isRunning) return
         producedFix = true
         // 일시정지 중에도 엔진은 좌표를 계속 준다. 소비하는 자리에서 버린다 — 엔진을 끄지 않는
         // 것이 일시정지의 요점이라(층·앵커 유지).
         if (!machine.acceptsPosition()) return
         fixCount += 1
+        val coordinates = Coordinates(x, y, z)
+        lastPosition = coordinates
         // 좌표 라인은 로그에서 제외 — 초당 여러 건이라 판정 이벤트를 묻어버린다.
         // 존 판정은 엔진이 한다 — 여기서 좌표를 판정기에 넣지 않는다(onAreaEvent 로 들어온다).
-        delegate?.onPosition(this, Coordinates(x, y, z), fid.toString(), clock())
+        delegate?.onPosition(this, coordinates, fid.toString(), clock())
     }
 
     /** 엔진이 올린 영역 전환. */
@@ -420,7 +648,7 @@ public class UwbPositioningProvider private constructor(
         }
         val now = clock()
         log(LogLevel.INFO, SdkLocalized.t("uwb.area", inOut, name, fid))
-        onRawAreaEvent?.invoke(fid, name, inOut, now) // 원본 그대로 — 진단용
+        onRawAreaEvent?.onRawAreaEvent(fid, name, inOut, now) // 원본 그대로 — 진단용
         // 가동 중이 아니면 여기서 끝. 수집·전송은 측위 세션 안에서만 한다.
         if (!machine.isRunning) return
         judge.handleAreaEvent(inOut, name, now)
@@ -435,6 +663,7 @@ public class UwbPositioningProvider private constructor(
      */
     private fun handleError(code: Int, message: String) {
         log(LogLevel.ERROR, SdkLocalized.t("uwb.error", code, message, describe(code)))
+        onEngineError?.onEngineError(code, message)
         sdkCode(code)?.let { report(it, "engine=$code $message") }
         if (machine.phase != Phase.STARTING) return
         when (code) {
@@ -449,13 +678,14 @@ public class UwbPositioningProvider private constructor(
     }
 
     /**
-     * ZoneEvent → 밖으로. 서버 전송은 IN/OUT 만, DWELL 은 onZoneEvent(앱 내 훅)까지만.
+     * ZoneEvent → 밖으로. 서버 전송은 IN/OUT 만, DWELL 은 훅(FloorSession 리스너·[onZoneEvent])까지만.
      * (서버 시책 매칭이 dwell 시책을 IN 에도 태우므로 같이 보내면 중복 발급 여지가 있다)
      */
     private fun handleZoneEvent(event: ZoneEvent) {
         if (machine.isPaused || !machine.isRunning) return
         log(LogLevel.LOG, "🎯 ${event.label}")
-        onZoneEvent?.invoke(event)
+        sessionZoneSink?.invoke(event)
+        onZoneEvent?.onZoneEvent(event)
         val status = when (event) {
             is ZoneEvent.Enter -> ZoneEventStatus.ENTER
             is ZoneEvent.Exit -> ZoneEventStatus.EXIT
@@ -495,6 +725,14 @@ public class UwbPositioningProvider private constructor(
     /** 서버에 실을 층 ID — 엔진이 잡은 층이 있으면 그 번호, 없으면 콘솔에서 주입받은 값. */
     private fun currentFloorId(): String? = detectedFloorId?.toString() ?: floorId.ifEmpty { null }
 
+    private fun setDetectedFloor(fid: Long?) {
+        _detectedFloorId.value = fid
+    }
+
+    private fun clearPosition() {
+        lastPosition = null
+    }
+
     private fun announceOnce() {
         if (announced) return
         announced = true
@@ -511,16 +749,58 @@ public class UwbPositioningProvider private constructor(
     }
 
     private fun log(level: LogLevel, msg: String) {
-        onLog?.invoke(level, msg)
+        logLines.addLast(msg)
+        while (logLines.size > LOG_CAPACITY) logLines.removeFirst()
+        _log.value = logLines.toList()
+        sessionLogSink?.invoke(level, msg)
+        onLog?.onLog(level, msg)
+        notifyChanged()
     }
 
-    internal companion object {
+    /**
+     * 상태 기계·내부 값 → 관찰 상태. 바뀐 것이 있으면 [onChange] 를 한 번 부른다.
+     * 공개 동작·엔진 콜백 하나를 처리한 끝에서 부른다(중간 상태를 밖에 보이지 않도록).
+     */
+    private fun publish() {
+        var changed = false
+        fun <T> MutableStateFlow<T>.set(value: T) {
+            if (this.value != value) {
+                this.value = value
+                changed = true
+            }
+        }
+        _phase.set(machine.phase.toPublic())
+        _isRunning.set(machine.isRunning)
+        _isPaused.set(machine.isPaused)
+        _latestPosition.set(if (machine.acceptsPosition()) lastPosition else null)
+        _measurementCount.set(fixCount)
+        if (changed) notifyChanged()
+    }
+
+    private fun notifyChanged() {
+        onChange?.onChanged(this)
+    }
+
+    public companion object {
+        /**
+         * 이 기기가 측위를 할 수 있는가 — Android 17(API 37) 이상 && UWB 칩 있음. `OneS1ght.initialize` 전에도
+         * 쓸 수 있다(Context 를 직접 받는다). 판정은 `OneS1ght.deviceAvailability == AVAILABLE` 과 같다.
+         * 칩은 있어도 DL-TDoA 를 못 하는 드문 기기는 여기서 가를 수 없다 — 시작 뒤 E2002 로 남는다.
+         */
+        @JvmStatic
+        public fun isSupported(context: Context): Boolean =
+            AndroidDeviceCapability(contextProvider = { context.applicationContext ?: context }).hasUwbHardware()
+
         /** 층 미탐지 감시 시간 — iOS 와 같다. */
-        const val FLOOR_DETECT_DELAY_MS: Long = 20_000L
+        internal const val FLOOR_DETECT_DELAY_MS: Long = 20_000L
 
         /** 정지 요청 뒤 onStopped 를 기다리는 최대 시간. */
-        const val STOP_TIMEOUT_MS: Long = 5_000L
+        internal const val STOP_TIMEOUT_MS: Long = 5_000L
 
+        /** 화면 로그 보관 줄 수 — iOS 와 같다. */
+        internal const val LOG_CAPACITY: Int = 200
+
+        private const val HUB_NO_LICENSE = 1
         private const val HUB_ALREADY_STARTED = 2
         private const val HUB_STOPPING = 8
 
@@ -529,7 +809,7 @@ public class UwbPositioningProvider private constructor(
          * 1 라이선스 미등록 · 3 Bluetooth · 7 위치 · 9 설정 누락 · 10 라이선스 거부 · 11 서버 미도달 ·
          * 12 미지원 기기 · 13 스캔 과다.
          */
-        val START_ABORT_CODES: Set<Int> = setOf(1, 3, 7, 9, 10, 11, 12, 13)
+        internal val START_ABORT_CODES: Set<Int> = setOf(1, 3, 7, 9, 10, 11, 12, 13)
 
         /**
          * 측위 엔진 오류 코드 → SDK E-코드. `null` 은 "로그로만 남길 것" — 2(중복 start)·8(정지 중 start)은
@@ -539,7 +819,7 @@ public class UwbPositioningProvider private constructor(
          * 로 올린다. 층은 BLE 스캔으로만 찾으므로 결과가 같다(층을 못 찾아 좌표가 안 나온다). 원인이 스캔
          * 제한이라는 사실은 문맥(`engine=13 …`)에 남는다 — 잠시 뒤 다시 시작하면 풀린다.
          */
-        fun sdkCode(hubError: Int): SdkErrorCode? = when (hubError) {
+        internal fun sdkCode(hubError: Int): SdkErrorCode? = when (hubError) {
             1 -> SdkErrorCode.INVALID_KEY // 라이선스 미등록
             3 -> SdkErrorCode.PERMISSION_DENIED // Bluetooth 불가(꺼짐·권한)
             4 -> SdkErrorCode.LOCATORS_MISSING // 그 층의 앵커 정보 없음
@@ -555,18 +835,34 @@ public class UwbPositioningProvider private constructor(
         }
 
         /** 측위 엔진 오류 코드표(1~13) — 로그 문구. */
-        fun describe(code: Int): String =
+        internal fun describe(code: Int): String =
             if (code in 1..13) SdkLocalized.t("uwb.err$code") else SdkLocalized.t("uwb.errUnknown")
 
         /** 모듈 내부 팩토리 — @JvmSynthetic 이라 Java 에는 안 보인다. */
         @JvmSynthetic
-        fun create(
+        internal fun create(
             engine: HubEngine,
             main: CoroutineDispatcher,
             clock: () -> Long,
             dwellScheduler: DwellScheduler? = null,
         ): UwbPositioningProvider = UwbPositioningProvider(engine, main, dwellScheduler, clock)
+
+        /**
+         * 공개 생성자의 엔진 — API 37 이상이면 실제 엔진, 아니면 엔진 클래스를 건드리지 않는 자리표시자.
+         * 게이트는 여기서 직접 `Build.VERSION.SDK_INT` 로 본다(lint NewApi 가 확인한다).
+         */
+        private fun realEngine(context: Context): HubEngine =
+            if (Build.VERSION.SDK_INT >= MIN_POSITIONING_SDK) IntelligenceHubEngine(context) else UnavailableHubEngine()
     }
+}
+
+/** 상태 기계의 내부 단계 → 공개 단계. */
+private fun Phase.toPublic(): UwbPositioningProvider.PositioningPhase = when (this) {
+    Phase.IDLE -> UwbPositioningProvider.PositioningPhase.IDLE
+    Phase.STARTING -> UwbPositioningProvider.PositioningPhase.STARTING
+    Phase.SEARCHING -> UwbPositioningProvider.PositioningPhase.SEARCHING
+    Phase.TRACKING -> UwbPositioningProvider.PositioningPhase.TRACKING
+    Phase.STOPPING -> UwbPositioningProvider.PositioningPhase.STOPPING
 }
 
 /**

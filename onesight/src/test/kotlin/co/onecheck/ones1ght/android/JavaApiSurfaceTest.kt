@@ -310,6 +310,9 @@ class JavaApiSurfaceTest {
         val API_TYPE_PREFIXES = listOf(
             "java.", "javax.", "android.", "kotlin.", "org.jetbrains.annotations.",
             "androidx.activity.",
+            // UwbPositioningProvider 의 상태 흐름(StateFlow) — kotlinx-coroutines-core 를 api 로 싣는다(0.0.5~).
+            // flow 패키지만 연다 — CoroutineScope·Dispatcher 같은 실행 도구가 공개 시그니처에 새면 여전히 잡는다.
+            "kotlinx.coroutines.flow.",
             "co.onecheck.ones1ght.android.",
         )
 

@@ -1,6 +1,14 @@
 package co.onecheck.ones1ght.android;
 
 import co.onecheck.ones1ght.android.model.Building;
+import co.onecheck.ones1ght.android.model.Coordinates;
+import co.onecheck.ones1ght.android.positioning.PositioningConfig;
+import co.onecheck.ones1ght.android.positioning.PositioningDiagnostic;
+import co.onecheck.ones1ght.android.positioning.UwbPositioningProvider;
+import co.onecheck.ones1ght.android.runtime.LogLevel;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 import co.onecheck.ones1ght.android.model.Floor;
 import co.onecheck.ones1ght.android.model.FloorLocators;
 import co.onecheck.ones1ght.android.model.Zone;
@@ -35,6 +43,87 @@ public class JavaInteropTest {
             s.end(new Callback<Void>() { @Override public void onSuccess(Void r) {} @Override public void onError(Throwable e) {} });
             h.drain(); assertFalse(s.isRunning());
             try { throw new SdkError.NotInitialized(); } catch (SdkError e) { assertEquals("E1001", e.getCode().getCode()); }
+        } finally {
+            h.close();
+        }
+    }
+
+    /**
+     * 0.0.5 공개 표면 — 앱이 UwbPositioningProvider 를 직접 만들어 begin(provider) 에 넣고 상태·훅·진단을 쓴다.
+     * 공개 생성자를 그대로 쓴다(JVM 의 SDK_INT 는 0 이라 엔진 없이 만들어진다 — 던지지 않아야 한다).
+     */
+    @Test public void uwbProviderSurfaceFromJava() throws Exception {
+        JavaInteropHarness h = JavaInteropHarness.start();
+        try {
+            assertFalse(UwbPositioningProvider.isSupported(h.context()));
+            UwbPositioningProvider p = new UwbPositioningProvider(h.context());
+
+            final int[] changes = new int[1];
+            p.setOnChange(provider -> changes[0]++);
+            p.setOnFloorDetected(floorId -> {});
+            p.setOnEngineError((code, message) -> {});
+            p.setOnRawAreaEvent((floorId, areaName, inOut, atMs) -> {});
+            p.setOnZoneEvent(event -> {});
+            p.setOnLog((level, message) -> {});
+            assertNotNull(p.getOnChange());
+
+            UwbPositioningProvider.PositioningPhase phase = p.getPhase();
+            assertEquals(UwbPositioningProvider.PositioningPhase.IDLE, phase);
+            assertEquals(phase, p.getPhaseFlow().getValue());
+            assertFalse(p.isDetecting());
+            assertFalse(p.isRunning());
+            assertFalse(p.isRunningFlow().getValue());
+            assertFalse(p.isPaused());
+            assertFalse(p.isPausedFlow().getValue());
+            Coordinates last = p.getLatestPosition();
+            assertNull(last);
+            assertNull(p.getLatestPositionFlow().getValue());
+            Long floor = p.getDetectedFloorId();
+            assertNull(floor);
+            assertNull(p.getDetectedFloorIdFlow().getValue());
+            assertEquals(0, p.getMeasurementCount());
+            assertEquals(Integer.valueOf(0), p.getMeasurementCountFlow().getValue());
+
+            p.note("from-java");
+            p.note(LogLevel.WARN, "warn-from-java");
+            List<String> log = p.getLog();
+            assertEquals("warn-from-java", log.get(log.size() - 1));
+            assertEquals(log, p.getLogFlow().getValue());
+            assertTrue(changes[0] > 0);
+
+            Map<Integer, double[]> anchors = new HashMap<>();
+            anchors.put(1, new double[] {0.0, 0.0, 2.0});
+            p.apply(new PositioningConfig(anchors));
+            p.apply("b1", "14");
+            UwbPositioningProvider.AnchorDiagnostic d = p.getDiagnostic();
+            assertEquals(Collections.singletonList(1), d.getRegistered());
+            assertTrue(d.getReceived().isEmpty());
+            assertTrue(d.getMatched().isEmpty());
+            assertTrue(d.getMissing().isEmpty());
+            assertFalse(d.getHasFix());
+            assertFalse(d.getCanPosition());
+            assertNotNull(d.getSummary());
+            PositioningDiagnostic pd = p.getPositioningDiagnostic();
+            assertFalse(pd.getCanAttributePerAnchor());
+
+            p.pause(); p.resume(); p.reloadGeofences();
+            p.startDetection(); h.drain();
+            p.stopDetection();
+
+            final Object[] got = new Object[1];
+            OneS1ght.initialize(h.context(), "ock_java_uwb", h.baseUrl(), new Callback<Void>() {
+                @Override public void onSuccess(Void r) { got[0] = "ok"; }
+                @Override public void onError(Throwable e) { got[0] = e; } });
+            h.drain(); assertEquals("ok", got[0]);
+            OneS1ght.identify("p1");
+            FloorSession s = OneS1ght.floorSession();
+            s.begin(p, new Callback<Void>() {
+                @Override public void onSuccess(Void r) { got[0] = "begun"; }
+                @Override public void onError(Throwable e) { got[0] = e; } });
+            h.drain(); assertEquals("begun", got[0]);
+            s.end(new Callback<Void>() { @Override public void onSuccess(Void r) {} @Override public void onError(Throwable e) {} });
+            h.drain();
+            p.start(); p.stop();
         } finally {
             h.close();
         }
