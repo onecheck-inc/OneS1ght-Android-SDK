@@ -16,7 +16,7 @@
 | 항목 | 요구사항 |
 |---|---|
 | 측위 동작 | **Android 17 (API 37)+** · UWB **DL-TDoA** 지원 기기 · Bluetooth LE(층 탐지) |
-| 패키지 추가 | **Android 17 (API 37)+** (`minSdk 37` — 측위 엔진의 최소 사양). UWB 가 없는 기기에서도 앱은 정상 동작하고 측위만 비활성 |
+| 패키지 추가 | **Android 8.0 (API 26)+** (`minSdk 26`). Android 17 미만이거나 UWB 가 없는 기기에서도 앱은 정상 동작하고 측위만 비활성(`OS_VERSION_TOO_LOW` / `E2001`) |
 | 빌드 환경 | `compileSdk` / `targetSdk` 37, JVM target 17 |
 | 언어 | Java 8+ / Kotlin 1.9+ 앱에서 사용 가능 |
 
@@ -36,7 +36,7 @@ SDK가 실제로 동작하려면 키와 공간 설정이 먼저 준비되어야 
 
 ```kotlin
 dependencies {
-    implementation("com.ones1ght.sdk:android:0.0.3")
+    implementation("com.ones1ght.sdk:android:0.0.4")
 }
 ```
 
@@ -52,9 +52,13 @@ dependencyResolutionManagement {
 }
 ```
 
-앱 모듈의 `minSdk` 는 **37 이상**이어야 합니다 — 그보다 낮으면 매니페스트 병합이 실패합니다.
+앱 모듈의 `minSdk` 는 **26 이상**이면 됩니다. 측위 자체는 Android 17(API 37) 이상에서만 동작합니다 —
+그 아래에서는 `deviceAvailability` 가 `OS_VERSION_TOO_LOW`, `permissions(activity)` 가 팝업 없이
+`UNSUPPORTED`, `begin()` 이 `SdkError.OsVersionTooLow`(`E2001`)입니다. 초기화·공간 조회·프로필 등
+나머지는 모든 지원 OS 에서 동작합니다.
 
-> 0.0.2 에서 올라오나요? `minSdk` 를 37 로 올리세요. `permissions(activity)` 가 `BLUETOOTH_SCAN`
+> 0.0.3 에서 올라오나요? 고칠 것이 없습니다 — 앱 `minSdk` 를 다시 낮춰도 됩니다(26 이상).
+> 0.0.2 에서 올라오나요? `permissions(activity)` 가 `BLUETOOTH_SCAN`
 > 도 함께 요청하고, `setFloorMap` 은 선택이 됐습니다 — [CHANGELOG](CHANGELOG.md) 참고.
 > 0.0.1 에서 올라오나요? 좌표도 바뀌었습니다(`co.onecheck.ones1ght:android` →
 > `com.ones1ght.sdk:android`). 패키지 이름은 같습니다.

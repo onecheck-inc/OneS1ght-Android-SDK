@@ -11,24 +11,28 @@ package co.onecheck.ones1ght.android.positioning
 
 import android.content.Context
 import android.os.Build
+import co.onecheck.ones1ght.android.MIN_POSITIONING_SDK
 
 internal class AndroidDeviceCapability(
     /** 지금 아는 applicationContext — initialize·permissions 가 채운다. */
     private val contextProvider: () -> Context?,
-    /** 엔진 판정 — 기본은 내장 엔진. */
-    private val hardware: (Context) -> Boolean = { IntelligenceHubEngine(it).hardwareAvailable },
+    /** 엔진 판정 — 기본은 내장 엔진. API 37 미만이면 엔진 클래스를 건드리지 않고 false. */
+    private val hardware: (Context) -> Boolean = ::engineHardwareAvailable,
 ) : DeviceCapability {
 
     override val sdkInt: Int
         get() = Build.VERSION.SDK_INT
 
     override fun hasUwbHardware(): Boolean {
-        if (sdkInt < MIN_ENGINE_SDK) return false
+        if (sdkInt < MIN_POSITIONING_SDK) return false
         val context = contextProvider() ?: return false
         return runCatching { hardware(context) }.getOrDefault(false)
     }
-
-    private companion object {
-        const val MIN_ENGINE_SDK = 37
-    }
 }
+
+/**
+ * 내장 엔진의 UWB 칩 판정. 게이트는 여기서 직접 `Build.VERSION.SDK_INT` 로 본다 — lint 가 확인할 수 있고,
+ * API 37 미만 기기에서는 엔진 클래스를 로드하지 않는다(엔진은 android.ranging 을 쓴다).
+ */
+private fun engineHardwareAvailable(context: Context): Boolean =
+    if (Build.VERSION.SDK_INT >= MIN_POSITIONING_SDK) IntelligenceHubEngine(context).hardwareAvailable else false

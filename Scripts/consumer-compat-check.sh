@@ -85,7 +85,7 @@ plugins { id("com.android.application") version "$AGP" }
 android {
     namespace = "consumer.minified"
     compileSdk = $COMPILE_SDK
-    defaultConfig { applicationId = "consumer.minified"; minSdk = 37; targetSdk = $COMPILE_SDK }
+    defaultConfig { applicationId = "consumer.minified"; minSdk = 26; targetSdk = $COMPILE_SDK }
     buildTypes { release { isMinifyEnabled = true; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt")) } }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }

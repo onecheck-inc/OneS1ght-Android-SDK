@@ -8,13 +8,19 @@ package co.onecheck.ones1ght.android.positioning
 //  · 권한 검사·요청은 엔진이 하지 않는다 — 검사만 하고 없으면 onError(3·7) 로 알린다. 요청은
 //    OneS1ght.permissions(activity) 몫이다. 그래서 start() 호출부의 MissingPermission 린트는 끈다.
 //  · 엔진 타입은 이 파일 밖으로 나가지 않는다(공개 API·다른 클래스에 새지 않게).
+//  · 엔진은 API 37(android.ranging)부터 돈다. 패키지 minSdk 는 26 이라 이 클래스는 @RequiresApi(37) 로
+//    묶는다 — 게이트(SDK_INT 검사) 없이 만드는 곳이 생기면 lint NewApi 가 잡는다. 이 클래스를 만들기
+//    전까지는 엔진 클래스가 하나도 로드되지 않는다(엔진 타입이 이 파일 밖으로 안 나가는 이유이기도 하다).
 //
 
 import android.annotation.SuppressLint
 import android.content.Context
+import androidx.annotation.RequiresApi
+import co.onecheck.ones1ght.android.MIN_POSITIONING_SDK
 import kr.geoplan.android.lib.ihub.IntelligenceHub
 import kr.geoplan.android.lib.ihub.listener.HubListener
 
+@RequiresApi(MIN_POSITIONING_SDK)
 internal class IntelligenceHubEngine(context: Context) : HubEngine {
 
     private val appContext: Context = context.applicationContext ?: context

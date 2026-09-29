@@ -9,6 +9,28 @@
 
 ---
 
+## [0.0.4] — 2026-09-29
+
+**Android 17 미만 앱에도 SDK 를 넣을 수 있습니다.** 패키지 `minSdk` 를 37 → **26**(Android 8.0)으로
+낮췄습니다 — "설치는 넓게, 측위는 지원 OS 에서만"(iOS 의 패키지 iOS 18 · 측위 iOS 27 과 같은 모양).
+공개 API 는 그대로이고 앱 코드는 고칠 것이 없습니다([`Migrations/android.json`](Migrations/android.json)
+0.0.3→0.0.4).
+
+### 바뀜
+
+- **패키지 최소 사양 Android 8.0(API 26)** — 0.0.3 때문에 앱 `minSdk` 를 37 로 올렸다면 되돌려도 됩니다.
+  ```kotlin
+  implementation("com.ones1ght.sdk:android:0.0.4")
+  ```
+- **측위는 여전히 Android 17(API 37) 이상에서만** — 측위 엔진이 Android 17 의 `android.ranging` 을 쓰기
+  때문입니다. 그 아래 OS 에서는 측위만 꺼지고 앱은 정상 동작합니다:
+  `deviceAvailability` = `OS_VERSION_TOO_LOW` · `isDeviceAvailable` = `false` ·
+  `permissions(activity)` = 팝업 없이 `UNSUPPORTED` · `floorSession().begin()` =
+  `SdkError.OsVersionTooLow`(`E2001`). 초기화·공간 조회·프로필·전송은 모든 지원 OS 에서 동작합니다.
+- **내부** — 엔진에 닿는 길(엔진 감싸개·UWB 칩 조회·내장 provider 생성)을 `SDK_INT` 게이트와
+  `@RequiresApi(37)` 로 묶었습니다. Android 17 미만에서는 엔진 클래스가 로드되지 않습니다
+  (API 26 · 35 에뮬레이터에서 확인).
+
 ## [0.0.3] — 2026-09-29
 
 **측위 엔진을 통합 엔진으로 바꿨습니다 — iOS(0.1.23)와 같은 구조입니다.** 층 탐지(BLE)·UWB 측위·

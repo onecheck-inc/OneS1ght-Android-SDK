@@ -18,8 +18,12 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        // 측위 엔진의 최소 사양 그대로 — 엔진이 API 37(Android 17)의 android.ranging 을 쓴다.
-        minSdk = 37
+        // 패키지 최소 사양 — Android 8.0(API 26). "설치는 넓게, 측위는 지원 OS 에서만"(iOS 와 같다:
+        // 패키지 iOS 18 · 측위 iOS 27). 측위 엔진은 API 37(Android 17)의 android.ranging 을 쓰므로
+        // 엔진에 닿는 길은 전부 런타임 게이트(MIN_POSITIONING_SDK · SDK_INT 검사)를 지나야 한다 —
+        // 엔진 감싸개(IntelligenceHubEngine · createBuiltInProvider)는 @RequiresApi(37) 이라
+        // 게이트를 빠뜨리면 lint NewApi 가 잡는다.
+        minSdk = 26
         // consumerProguardFiles 는 아래 엔진 분기(계정 있음/없음)에서 등록한다 —
         // 계정이 있으면 consumer-rules.pro 를 그대로 쓰지 않고 엔진 proguard.txt 와
         // 합친 파일 하나로 대체한다(둘 다 등록하면 consumer-rules.pro 내용이 두 번 실린다).

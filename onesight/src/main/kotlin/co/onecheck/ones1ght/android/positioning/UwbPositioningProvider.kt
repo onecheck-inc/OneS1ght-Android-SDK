@@ -25,6 +25,8 @@ package co.onecheck.ones1ght.android.positioning
 //
 
 import android.content.Context
+import androidx.annotation.RequiresApi
+import co.onecheck.ones1ght.android.MIN_POSITIONING_SDK
 import co.onecheck.ones1ght.android.model.Coordinates
 import co.onecheck.ones1ght.android.model.ZoneEvent
 import co.onecheck.ones1ght.android.model.ZoneEventStatus
@@ -574,6 +576,7 @@ public class UwbPositioningProvider private constructor(
  * 엔진 콜백과 DWELL 타이머가 모두 이 디스패처로 넘어온다.
  */
 @JvmSynthetic
+@RequiresApi(MIN_POSITIONING_SDK)
 internal fun createBuiltInProvider(
     context: Context,
     main: CoroutineDispatcher,

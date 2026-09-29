@@ -1,6 +1,6 @@
 {
   "platform": "android",
-  "currentVersion": "0.0.3",
+  "currentVersion": "0.0.4",
   "_readme": [
     "판올림마다 이 파일에 한 칸을 더한다. 비어 있으면 MCP 가 '변경 없음' 이라고 답할 근거가 없어",
     "에이전트가 추측으로 코드를 고치게 된다 — 그게 이 파일이 존재하는 이유다.",
@@ -44,6 +44,20 @@
           "file": "(권한을 앱이 직접 요청하는 경우만)",
           "before": "arrayOf(Manifest.permission.RANGING, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)",
           "after": "arrayOf(Manifest.permission.RANGING, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.BLUETOOTH_SCAN)"
+        }
+      ]
+    },
+    {
+      "from": "0.0.3",
+      "to": "0.0.4",
+      "breaking": false,
+      "summary": "패키지 minSdk 가 37 → 26(Android 8.0)으로 낮아졌다. 측위는 여전히 Android 17(API 37) 이상에서만 동작한다 — 그 아래에서는 deviceAvailability=OS_VERSION_TOO_LOW · permissions()=UNSUPPORTED · begin()=SdkError.OsVersionTooLow(E2001). 공개 API·동작(Android 17+)은 그대로다.",
+      "action": "의존성 좌표만 com.ones1ght.sdk:android:0.0.4 로 바꾼다. 코드는 고칠 것이 없다. 0.0.3 때문에 앱 minSdk 를 37 로 올렸다면 원래 값(26 이상)으로 되돌려도 된다 — 되돌리는 경우 Android 17 미만 기기에서 begin() 이 SdkError.OsVersionTooLow 를 던지므로, 이미 deviceAvailability 로 OS_VERSION_TOO_LOW 를 안내하거나 begin() 예외를 잡고 있는지 확인한다(0.0.2 까지와 같은 분기다).",
+      "changes": [
+        {
+          "file": "app/build.gradle.kts",
+          "before": "implementation(\"com.ones1ght.sdk:android:0.0.3\")",
+          "after": "implementation(\"com.ones1ght.sdk:android:0.0.4\")"
         }
       ]
     }
