@@ -37,7 +37,7 @@ Add the dependency to your app module's `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("com.ones1ght.sdk:android:0.0.4")
+    implementation("com.ones1ght.sdk:android:0.0.5")
 }
 ```
 
@@ -58,6 +58,8 @@ below that `deviceAvailability` is `OS_VERSION_TOO_LOW`, `permissions(activity)`
 without a prompt, and `begin()` throws `SdkError.OsVersionTooLow` (`E2001`). Everything else
 (initialize, spaces, profiles) works on every supported OS.
 
+> Upgrading from 0.0.4? Nothing to change — 0.0.5 only adds API (an app can now create the positioning
+> provider itself and observe its state; see [CHANGELOG](CHANGELOG.md)).
 > Upgrading from 0.0.3? Nothing to change — you may lower your app's `minSdk` back (26+).
 > Upgrading from 0.0.2? `permissions(activity)` now also asks for
 > `BLUETOOTH_SCAN`, and `setFloorMap` became optional — see [CHANGELOG](CHANGELOG.md).
@@ -295,6 +297,22 @@ the permission, call `end()` first and then `begin()` again.
 ℹ️ `begin(provider)` (a custom or mock positioning source, for tests and demos) feeds
 positions only. `onZoneEnter` · `onZoneExit` · `onZoneDwell` come from the SDK's built-in
 positioning (`begin()`) and do not fire for a custom provider.
+
+ℹ️ **Watching the positioning engine yourself (0.0.5+).** A map screen that needs the engine's
+own state can create the built-in provider and pass it in — it is treated exactly like `begin()`
+(same device check, zone listeners, debug log), and your hooks on the provider are kept:
+
+```kotlin
+if (UwbPositioningProvider.isSupported(context)) {
+    val provider = UwbPositioningProvider(context)
+    provider.onFloorDetected = FloorDetectedListener { floorId -> /* auto-select the floor */ }
+    OneS1ght.floorSession().begin(provider)
+    provider.latestPositionFlow.collect { position -> /* draw "me" */ }
+}
+```
+
+`phase` · `isRunning` · `isPaused` · `latestPosition` · `detectedFloorId` · `measurementCount` · `log` are
+available as getters and as `StateFlow`s (`…Flow`); Java apps use the getters plus `setOnChange(…)`.
 
 ### Pausing is not stopping
 

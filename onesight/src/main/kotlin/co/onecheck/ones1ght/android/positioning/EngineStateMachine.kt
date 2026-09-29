@@ -69,6 +69,23 @@ internal class EngineStateMachine(
         isPaused = false
     }
 
+    /**
+     * 엔진만 띄운다 — 측위(isRunning)는 켜지 않는다. 층을 먼저 찾을 때 쓴다(iOS startDetection).
+     * IDLE 일 때만 연다 — 돌고 있거나 내려가는 중이면 아무것도 안 한다.
+     * @return 새로 열었는가
+     */
+    internal fun openDetection(): Boolean {
+        if (phase != Phase.IDLE) return false
+        phase = Phase.STARTING
+        openSession()
+        return true
+    }
+
+    /** 예약된 start 만 지운다 — 엔진은 건드리지 않는다(측위가 꺼져 있을 때의 stop). */
+    internal fun cancelPendingStart() {
+        startAfterStop = false
+    }
+
     internal fun stop() {
         // 예약된 start 가 있으면 먼저 지운다 — 끄겠다는 최신 의사가 이긴다.
         startAfterStop = false

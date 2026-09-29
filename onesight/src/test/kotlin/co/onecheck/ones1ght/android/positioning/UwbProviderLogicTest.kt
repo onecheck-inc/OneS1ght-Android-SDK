@@ -1,5 +1,6 @@
 package co.onecheck.ones1ght.android.positioning
 
+import co.onecheck.ones1ght.android.DebugLogListener
 import co.onecheck.ones1ght.android.model.Coordinates
 import co.onecheck.ones1ght.android.model.Position
 import co.onecheck.ones1ght.android.model.Zone
@@ -81,9 +82,9 @@ class UwbProviderLogicTest {
         provider = UwbPositioningProvider.create(engine, main, clock = { scheduler.currentTime })
         provider.delegate = delegate
         provider.license = "lic-0123456789"
-        provider.onZoneEvent = { zoneEvents += it }
-        provider.onRawAreaEvent = { _, name, inOut, _ -> raw += "$inOut:$name" }
-        provider.onLog = { level, msg -> logs += level to msg }
+        provider.onZoneEvent = ZoneEventListener { zoneEvents += it }
+        provider.onRawAreaEvent = RawAreaEventListener { _, name, inOut, _ -> raw += "$inOut:$name" }
+        provider.onLog = DebugLogListener { level, msg -> logs += level to msg }
     }
 
     @After fun tearDown() {
@@ -129,7 +130,7 @@ class UwbProviderLogicTest {
         assertEquals(0, engine.starts)
         assertTrue(engine.licenses.isEmpty())
         assertEquals(listOf(SdkErrorCode.KEY_UNAVAILABLE), delegate.codes())
-        assertEquals(Phase.IDLE, provider.phase)
+        assertEquals(Phase.IDLE, provider.enginePhase)
         assertFalse(provider.isRunning)
         assertTrue("입장 트리거도 없다", delegate.enters.isEmpty())
     }
@@ -144,14 +145,14 @@ class UwbProviderLogicTest {
         assertEquals(listOf("lic-0123456789"), engine.licenses)
         assertNotNull(engine.current)
         assertEquals(1, engine.starts)
-        assertEquals(Phase.STARTING, provider.phase)
+        assertEquals(Phase.STARTING, provider.enginePhase)
         assertTrue(provider.isRunning)
         assertEquals(listOf("b-1"), delegate.enters)
         assertFalse("라이선스가 로그에 찍혔다", logs.any { it.second.contains("lic-0123") })
 
         hub.onStarted()
         flush()
-        assertEquals(Phase.SEARCHING, provider.phase)
+        assertEquals(Phase.SEARCHING, provider.enginePhase)
     }
 
     // MARK: - 층
@@ -159,13 +160,13 @@ class UwbProviderLogicTest {
     @Test fun trackingStartedMovesToTrackingAndRemembersFloor() {
         tracking()
 
-        assertEquals(Phase.TRACKING, provider.phase)
+        assertEquals(Phase.TRACKING, provider.enginePhase)
         assertEquals(14L, provider.detectedFloorId)
         assertTrue("같은 층이면 불일치가 아니다", delegate.reports.isEmpty())
 
         hub.onTrackingStopped(14)
         flush()
-        assertEquals(Phase.SEARCHING, provider.phase)
+        assertEquals(Phase.SEARCHING, provider.enginePhase)
         assertNull(provider.detectedFloorId)
     }
 
@@ -419,12 +420,12 @@ class UwbProviderLogicTest {
 
         provider.stop()
         assertEquals(1, engine.stops)
-        assertEquals(Phase.STOPPING, provider.phase)
+        assertEquals(Phase.STOPPING, provider.enginePhase)
         assertFalse(provider.isRunning)
 
         listener.onStopped()
         flush()
-        assertEquals(Phase.IDLE, provider.phase)
+        assertEquals(Phase.IDLE, provider.enginePhase)
         assertNull("정지 뒤 리스너를 푼다", engine.current)
         assertNull(provider.detectedFloorId)
         assertTrue("사용자가 끈 것은 오류 코드가 아니다", delegate.reports.isEmpty())
@@ -443,7 +444,7 @@ class UwbProviderLogicTest {
         flush()
         assertEquals(2, engine.starts)
         assertTrue(provider.isRunning)
-        assertEquals(Phase.STARTING, provider.phase)
+        assertEquals(Phase.STARTING, provider.enginePhase)
         assertEquals("새 가동이라 입장 트리거가 다시 나간다", listOf("b-1", "b-1"), delegate.enters)
     }
 
@@ -465,7 +466,7 @@ class UwbProviderLogicTest {
         old.onPosition(14, 1.0, 1.0, 1.0)
         flush()
         assertTrue("옛 기동의 늦은 콜백이 새 기동을 건드렸다", provider.isRunning)
-        assertEquals(Phase.STARTING, provider.phase)
+        assertEquals(Phase.STARTING, provider.enginePhase)
         assertTrue(delegate.positions.isEmpty())
     }
 
@@ -477,7 +478,7 @@ class UwbProviderLogicTest {
         hub.onStopped()
         flush()
 
-        assertEquals(Phase.IDLE, provider.phase)
+        assertEquals(Phase.IDLE, provider.enginePhase)
         assertFalse(provider.isRunning)
         assertEquals(listOf(SdkErrorCode.PERMISSION_DENIED), delegate.codes())
         assertEquals("engine=3 bluetooth unavailable", delegate.reports[0].second)
@@ -494,7 +495,7 @@ class UwbProviderLogicTest {
         hub.onError(10, "license is invalid")
         flush()
 
-        assertEquals(Phase.IDLE, provider.phase)
+        assertEquals(Phase.IDLE, provider.enginePhase)
         assertFalse(provider.isRunning)
         assertEquals(listOf(SdkErrorCode.INVALID_KEY), delegate.codes())
         assertNull(engine.current)
@@ -512,7 +513,7 @@ class UwbProviderLogicTest {
         hub.onError(13, "scan started too frequently")
         flush()
 
-        assertEquals(Phase.IDLE, provider.phase)
+        assertEquals(Phase.IDLE, provider.enginePhase)
         assertEquals(listOf(SdkErrorCode.FLOOR_NOT_DETECTED), delegate.codes())
     }
 
@@ -525,13 +526,13 @@ class UwbProviderLogicTest {
         hub.onError(8, "still stopping")
         flush()
         assertTrue("8 은 호출 순서 문제 — 코드로 올리지 않는다", delegate.reports.isEmpty())
-        assertEquals(Phase.STOPPING, provider.phase)
+        assertEquals(Phase.STOPPING, provider.enginePhase)
         assertTrue("가동 의사는 유지된다", provider.isRunning)
 
         hub.onStopped()
         flush()
         assertEquals(2, engine.starts)
-        assertEquals(Phase.STARTING, provider.phase)
+        assertEquals(Phase.STARTING, provider.enginePhase)
         assertTrue(provider.isRunning)
         assertEquals("재시도는 입장 트리거를 다시 쏘지 않는다", enters, delegate.enters.size)
     }
@@ -544,7 +545,7 @@ class UwbProviderLogicTest {
         hub.onError(2, "already started")
         flush()
 
-        assertEquals(Phase.SEARCHING, provider.phase)
+        assertEquals(Phase.SEARCHING, provider.enginePhase)
         assertTrue(provider.isRunning)
         assertTrue(delegate.reports.isEmpty())
     }
@@ -557,7 +558,7 @@ class UwbProviderLogicTest {
         provider.start()
         flush()
 
-        assertEquals(Phase.IDLE, provider.phase)
+        assertEquals(Phase.IDLE, provider.enginePhase)
         assertFalse(provider.isRunning)
         assertEquals(listOf(SdkErrorCode.PERMISSION_DENIED), delegate.codes())
     }
@@ -582,7 +583,7 @@ class UwbProviderLogicTest {
         assertNotSame("새 기동은 새 리스너(세대)", first, engine.current)
         assertTrue(provider.isRunning)
         assertTrue("일시정지는 재적재에 풀리지 않는다", provider.isPaused)
-        assertEquals(Phase.STARTING, provider.phase)
+        assertEquals(Phase.STARTING, provider.enginePhase)
         assertEquals(listOf("b-1"), delegate.enters)
         assertFalse("재적재는 스스로 멈춘 것이 아니다", logs.any { it.second == SdkLocalized.t("uwb.stoppedSelf") })
         assertTrue(delegate.reports.isEmpty())
@@ -607,7 +608,7 @@ class UwbProviderLogicTest {
         flush()
 
         assertEquals(1, engine.starts)
-        assertEquals(Phase.IDLE, provider.phase)
+        assertEquals(Phase.IDLE, provider.enginePhase)
         assertFalse(provider.isRunning)
     }
 
@@ -642,19 +643,19 @@ class UwbProviderLogicTest {
     @Test fun staleOnStoppedWhileStartingIsIgnored() {
         configured()
         provider.start()
-        assertEquals(Phase.STARTING, provider.phase)
+        assertEquals(Phase.STARTING, provider.enginePhase)
 
         hub.onStopped()
         flush()
 
-        assertEquals(Phase.STARTING, provider.phase)
+        assertEquals(Phase.STARTING, provider.enginePhase)
         assertTrue(provider.isRunning)
         assertNotNull("리스너가 풀리면 안 된다", engine.current)
         assertFalse(logs.any { it.second == SdkLocalized.t("uwb.stoppedSelf") })
 
         hub.onStarted()
         flush()
-        assertEquals(Phase.SEARCHING, provider.phase)
+        assertEquals(Phase.SEARCHING, provider.enginePhase)
     }
 
     /** 층 지정 해제(빈 층) 뒤에는 옛 층으로 E3008 을 대조하지 않고, 이벤트를 옛 층으로 귀속하지 않는다. */

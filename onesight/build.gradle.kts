@@ -309,7 +309,9 @@ if (!hasSigningKey) {
 
 dependencies {
     implementation(libs.kotlinx.serialization.json)
-    implementation(libs.kotlinx.coroutines.core)
+    // 공개 API UwbPositioningProvider 가 상태를 StateFlow(kotlinx.coroutines.flow)로 노출하므로 api 로 싣는다(0.0.5~).
+    // 1.9.0 은 kotlin-stdlib 2.0.0 을 요구 — 고객 Kotlin 1.9+ 약속 안이다(consumer-compat-check 가 확인).
+    api(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
     implementation(libs.androidx.lifecycle.process)

@@ -20,6 +20,8 @@ import co.onecheck.ones1ght.android.positioning.PositioningPermission
 import co.onecheck.ones1ght.android.positioning.PositioningProvider
 import co.onecheck.ones1ght.android.positioning.PositioningProviderDelegate
 import co.onecheck.ones1ght.android.positioning.FakeHubEngine
+import co.onecheck.ones1ght.android.positioning.PositioningConfig
+import co.onecheck.ones1ght.android.positioning.ZoneEventListener
 import co.onecheck.ones1ght.android.positioning.UwbPositioningProvider
 import co.onecheck.ones1ght.android.runtime.FakeAppLifecycle
 import co.onecheck.ones1ght.android.runtime.InMemoryKeyValueStore
@@ -207,7 +209,7 @@ class OneS1ghtTest {
 
         h.await { session.begin() }
 
-        val hook = hub.onZoneEvent
+        val hook = hub.sessionZoneSink
         assertNotNull("begin() 이 구역 훅을 걸어야 한다", hook)
         val zone = Zone("z1", "Z", listOf(Position(0.0, 0.0), Position(1.0, 0.0), Position(1.0, 1.0)))
         hook!!.invoke(ZoneEvent.Enter(zone, 1_000))
@@ -218,10 +220,78 @@ class OneS1ghtTest {
         assertEquals(listOf("z1"), exited)
         assertEquals(listOf("z1" to 5.0), dwelled)
 
-        val logHook = hub.onLog
+        val logHook = hub.sessionLogSink
         assertNotNull("begin() 이 엔진 로그 훅을 걸어야 한다", logHook)
         logHook!!.invoke(LogLevel.INFO, "engine-line")
         assertTrue(logs.contains("engine-line"))
+    }
+
+    /**
+     * 앱이 만든 UwbPositioningProvider 를 begin(provider) 에 넣으면 begin() 과 같은 대우를 받는다(0.0.5) —
+     * 라이선스·구역 이벤트 → 세션 리스너·엔진 로그 → onDebugLog. 앱이 provider 에 단 훅은 덮지 않는다.
+     */
+    @Test fun injectedUwbProviderIsWiredLikeBuiltInAndKeepsAppHooks() {
+        val engine = FakeHubEngine()
+        val provider = UwbPositioningProvider.create(engine, h.dispatcher, clock = { 0L })
+        val appZones = mutableListOf<String>()
+        val appLogs = mutableListOf<String>()
+        provider.onZoneEvent = ZoneEventListener { appZones += it.zone.id }
+        provider.onLog = DebugLogListener { _, msg -> appLogs += msg }
+        h.enableSpaceService() // 콘솔이 측위 키를 준다(없으면 E1007 로 시작하지 않는다)
+        initialize()
+        OneS1ght.identify("p1")
+        val session = OneS1ght.floorSession()
+        val entered = mutableListOf<String>()
+        val sdkLogs = mutableListOf<String>()
+        session.onZoneEnter = ZoneListener { entered += it.id }
+        OneS1ght.onDebugLog = DebugLogListener { _, msg -> sdkLogs += msg }
+
+        h.await { session.begin(provider) }
+
+        assertTrue(provider.isRunning)
+        assertTrue(session.isRunning)
+        assertEquals(1, engine.starts)
+        val license = OneS1ght.coordinatorRef!!.positioningLicense
+        assertFalse("SDK 가 콘솔 라이선스를 넣어야 한다", license.isNullOrBlank())
+        assertEquals(listOf(license), engine.licenses)
+        assertEquals("내장 provider 를 만들지 않는다", 0, h.builtInCreated)
+
+        val zone = Zone("z1", "Z", listOf(Position(0.0, 0.0), Position(1.0, 0.0), Position(1.0, 1.0)))
+        provider.apply(PositioningConfig(zones = listOf(zone)))
+        engine.current!!.onStarted()
+        engine.current!!.onTrackingStarted(14)
+        engine.current!!.onAreaEvent(14, "Z", "IN")
+        h.eventually { entered.isNotEmpty() }
+
+        assertEquals(listOf("z1"), entered)
+        assertEquals("앱 훅도 그대로 불린다", listOf("z1"), appZones)
+        provider.note("app-line")
+        assertTrue(appLogs.contains("app-line"))
+        assertTrue("provider 로그가 onDebugLog 로도 가야 한다", sdkLogs.contains("app-line"))
+        assertEquals(14L, provider.detectedFloorId)
+        assertEquals(UwbPositioningProvider.PositioningPhase.TRACKING, provider.phase)
+
+        h.await { session.end() }
+        assertFalse(provider.isRunning)
+    }
+
+    /** begin(UwbPositioningProvider) 는 begin() 과 같은 기기 게이트를 탄다 — 초기화 확인이 먼저다. */
+    @Test fun injectedUwbProviderPassesDeviceGate() {
+        val provider = UwbPositioningProvider.create(FakeHubEngine(), h.dispatcher, clock = { 0L })
+        val session = FloorSession.shared // floorSession() 은 초기화 전이면 던진다 — 세션 자체의 판정을 본다
+        assertThrows<SdkError.NotInitialized> { h.await { session.begin(provider) } }
+
+        initialize()
+        OneS1ght.identify("p1")
+        h.capability.supported = false
+        assertThrows<SdkError.DeviceNotSupported> { h.await { session.begin(provider) } }
+        h.capability.sdkInt = 36
+        assertThrows<SdkError.OsVersionTooLow> { h.await { session.begin(provider) } }
+        assertFalse(provider.isRunning)
+
+        // Mock 등 다른 provider 는 종전대로 게이트를 거치지 않는다(0.0.4 동작 유지).
+        h.await { session.begin(h.mock) }
+        assertTrue(h.mock.isRunning)
     }
 
     /** 코디네이터 훅 → FloorSession·onDebugLog 리스너 배선. */
