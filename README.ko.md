@@ -6,8 +6,8 @@
 
 실내 위치 인텔리전스 SDK 입니다. 앱에 추가하면 UWB(DL-TDoA) 실내 측위로 방문·동선
 데이터를 수집하고, 구역 진입·이탈·체류 이벤트를 기기에서 직접 받을 수 있습니다.
-서버 계약은 iOS SDK 와 같고, 공개 API 도 (세 가지 플랫폼상 불가피한 차이를 빼면,
-[CHANGELOG](CHANGELOG.md) 참고) 동일합니다.
+서버 계약과 측위 구조(엔진이 BLE 로 층을 찾고 구역도 직접 판정)는 iOS SDK 와 같고, 공개 API 도
+(두 가지 플랫폼상 불가피한 차이를 빼면, [CHANGELOG](CHANGELOG.md) 참고) 동일합니다.
 
 ---
 
@@ -15,8 +15,8 @@
 
 | 항목 | 요구사항 |
 |---|---|
-| 측위 동작 | **Android 17 (API 37)+** · UWB **DL-TDoA** 지원 기기 |
-| 패키지 추가 | Android 8.1 (API 27)+ — 미지원 기기에서도 앱은 정상 동작하고 SDK만 비활성 |
+| 측위 동작 | **Android 17 (API 37)+** · UWB **DL-TDoA** 지원 기기 · Bluetooth LE(층 탐지) |
+| 패키지 추가 | **Android 17 (API 37)+** (`minSdk 37` — 측위 엔진의 최소 사양). UWB 가 없는 기기에서도 앱은 정상 동작하고 측위만 비활성 |
 | 빌드 환경 | `compileSdk` / `targetSdk` 37, JVM target 17 |
 | 언어 | Java 8+ / Kotlin 1.9+ 앱에서 사용 가능 |
 
@@ -36,7 +36,7 @@ SDK가 실제로 동작하려면 키와 공간 설정이 먼저 준비되어야 
 
 ```kotlin
 dependencies {
-    implementation("com.ones1ght.sdk:android:0.0.2")
+    implementation("com.ones1ght.sdk:android:0.0.3")
 }
 ```
 
@@ -52,11 +52,15 @@ dependencyResolutionManagement {
 }
 ```
 
-> 0.0.1 에서 올라오나요? 좌표만 바뀌었습니다(`co.onecheck.ones1ght:android` →
-> `com.ones1ght.sdk:android`). 패키지 이름과 API 는 같아 코드는 고칠 것이 없습니다.
+앱 모듈의 `minSdk` 는 **37 이상**이어야 합니다 — 그보다 낮으면 매니페스트 병합이 실패합니다.
 
-라이브러리 자체 매니페스트가 `RANGING` · `ACCESS_FINE_LOCATION` · `ACCESS_COARSE_LOCATION` ·
-`INTERNET` 권한을
+> 0.0.2 에서 올라오나요? `minSdk` 를 37 로 올리세요. `permissions(activity)` 가 `BLUETOOTH_SCAN`
+> 도 함께 요청하고, `setFloorMap` 은 선택이 됐습니다 — [CHANGELOG](CHANGELOG.md) 참고.
+> 0.0.1 에서 올라오나요? 좌표도 바뀌었습니다(`co.onecheck.ones1ght:android` →
+> `com.ones1ght.sdk:android`). 패키지 이름은 같습니다.
+
+라이브러리 자체 매니페스트가 `RANGING` · `BLUETOOTH_SCAN` · `ACCESS_FINE_LOCATION` ·
+`ACCESS_COARSE_LOCATION` · `INTERNET` · `ACCESS_NETWORK_STATE` · `CHANGE_NETWORK_STATE` 권한을
 앱에 자동으로 병합합니다. 앱에서 따로 선언할 필요가 없습니다.
 
 ---
@@ -110,14 +114,13 @@ when (OneS1ght.deviceAvailability) {
 }
 ```
 
-throw 하지 않고 네트워크도 타지 않습니다. **`initialize` 다음에** 읽으세요 — 칩 확인에
-`initialize`(또는 `permissions(activity)`)가 넘겨주는 앱 Context 가 필요합니다. 그 전에
-Android 17 이상에서 읽으면 판단할 수 없어 `DEVICE_NOT_SUPPORTED` 를 돌려줍니다
-(`onDebugLog` 에 WARN 이 남습니다).
+throw 하지 않고 네트워크도 타지 않으며 기다리지도 않습니다. **`initialize` 다음에** 읽으세요 —
+UWB 확인에 `initialize`(또는 `permissions(activity)`)가 넘겨주는 앱 Context 가 필요합니다.
+그 전에 읽으면 판단할 수 없어 `DEVICE_NOT_SUPPORTED` 를 돌려줍니다(`onDebugLog` 에 WARN 이
+남습니다).
 
-`initialize` 가 칩 확인을 미리 백그라운드로 시작하고, 답은 프로세스가 살아 있는 동안
-기억합니다(5초 안에 답하지 않는 칩은 미지원으로 기억합니다). 그 뒤의 읽기는 곧바로
-돌아옵니다. 맨 처음 확인이 끝나기 전에 읽은 경우에만 그 답을 최대 5초 기다립니다.
+기기에 UWB 칩이 있는지를 봅니다. 칩은 있지만 DL-TDoA 를 지원하지 않는 드문 기기는 측위를
+시작할 때 걸러지고 `E2002` 로 남습니다.
 
 ---
 
@@ -144,16 +147,16 @@ OneS1ght.permissions(activity, new Callback<PermissionStatus>() {
 });
 ```
 
-`permissions(activity)` 는 `ActivityResultRegistry` 로 `RANGING` + `ACCESS_FINE_LOCATION`
-을 함께 요청하므로, `onCreate` 이후 아무 때나 불러도 안전합니다. `ACCESS_COARSE_LOCATION`
-도 같이 요청합니다 — Android 12 이상은 대략 위치를 함께 요청해야 정밀 위치를 고를 수
-있게 해 주기 때문입니다.
+`permissions(activity)` 는 `ActivityResultRegistry` 로 `RANGING`(UWB) + `ACCESS_FINE_LOCATION`
++ `BLUETOOTH_SCAN`(근처 기기 — 엔진이 BLE 로 층을 찾습니다)을 함께 요청하므로, `onCreate` 이후
+아무 때나 불러도 안전합니다. `ACCESS_COARSE_LOCATION` 도 같이 요청합니다 — Android 12 이상은
+대략 위치를 함께 요청해야 정밀 위치를 고를 수 있게 해 주기 때문입니다.
 
-⚠️ 측위에는 **정밀** 위치가 필요합니다. 사용자가 시스템 팝업에서 "대략적인 위치"를
-고르면 결과는 `DENIED` 입니다.
+⚠️ 측위에는 **정밀** 위치와 **근처 기기** 권한이 필요합니다. 사용자가 "대략적인 위치"를
+고르거나 근처 기기를 거부하면 결과는 `DENIED` 입니다.
 
 ⚠️ `deviceAvailability != AVAILABLE` 이면 시스템 팝업 없이 곧바로 `UNSUPPORTED` 를
-돌려줍니다. `RANGING` 과 정밀 위치가 이미 허용돼 있으면 팝업 없이 `AUTHORIZED` 를 돌려줍니다. 그 외에는
+돌려줍니다. 셋 다 이미 허용돼 있으면 팝업 없이 `AUTHORIZED` 를 돌려줍니다. 그 외에는
 30초 안에 응답이 없으면 `DENIED` 로 확정됩니다.
 
 ⚠️ 한 번 거부되면 시스템이 다시 팝업을 띄워 주지 않습니다 — 앱 설정 화면으로
@@ -198,7 +201,7 @@ OneS1ght.identify(profileId)
 
 ---
 
-## Step 5: 공간 선택 (필수)
+## Step 5: 공간 선택 (선택)
 
 ```kotlin
 val buildings = OneS1ght.buildings()
@@ -207,13 +210,14 @@ val floors = OneS1ght.floors(buildings[0].id)
 OneS1ght.setFloorMap(floors[0], buildingId = buildings[0].id)
 ```
 
-`setFloorMap` 은 로케이터·UWB 세션 ID·존을 받아 측위 파이프라인에 주입합니다. 실행
-중에 다시 호출하면 층이 전환되고 세션은 유지됩니다.
+측위 엔진은 iOS 와 같이 BLE 로 층을 스스로 찾습니다 — 층 없이 `begin()` 해도 좌표가
+나옵니다(`E3001` WARN 이 한 번 남습니다. 정상 경로입니다). 20초 안에 층을 못 찾으면
+`E3007` 이 남습니다.
 
-⚠️ **iOS 와 달리 안드로이드는 층을 스스로 찾지 않습니다.** iOS 엔진은 로케이터가 BLE
-로 광고하는 신호로 층을 찾아내지만, 안드로이드 파이프라인에는 그런 경로가 없습니다.
-`setFloorMap` 을 부르지 않고 `begin()` 하면 측위는 돌아가지만 좌표가 나오지 않고,
-`E3001`(WARN) 이 한 번 남습니다. 건너뛸 수 있는 단계가 아닙니다.
+`setFloorMap` 은 그 층의 로케이터·UWB 세션 ID·존을 받습니다. **구역 이벤트**를 쓰면 부르세요 —
+엔진은 구역 진입·이탈을 영역 **이름**으로 알려주고, SDK 는 그 이름을 지정한 층의 콘솔 존에
+맞춰 서버로 보낼 zone id 를 얻습니다(맞는 이름이 없으면 `E3009`). 엔진이 찾은 층이 지정한 층과
+다르면 `E3008` 이 남습니다. 실행 중에 다시 호출하면 층이 전환되고 세션은 유지됩니다.
 
 ### 지도 그리기
 
@@ -273,7 +277,7 @@ session.begin(new Callback<Void>() {
 });
 ```
 
-`floorSession()` 은 항상 같은 인스턴스를 돌려줍니다 — UWB 라디오·판정 엔진·좌표
+`floorSession()` 은 항상 같은 인스턴스를 돌려줍니다 — UWB 라디오·측위 엔진·좌표
 버퍼가 기기당 하나뿐이라 세션이 여럿이면 물리적으로 충돌합니다.
 
 ⚠️ **`begin()` 은 권한을 받은 뒤에 부르세요.** 권한 없이 부르면 `begin()` 은 던지지
@@ -299,7 +303,7 @@ session.isPaused
 | 구역 진입/이탈 | 멈춤 | 멈춤 |
 | 서버 전송 | 멈춤 | 잔여 전송 후 멈춤 |
 | 엔진·층·로케이터 | **유지** | 해제 |
-| 복귀 비용 | 즉시 | 로케이터를 처음부터 다시 찾음 |
+| 복귀 비용 | 즉시 | 층과 로케이터를 처음부터 다시 찾음 |
 
 "잠깐 내 위치 표시를 끈다"에는 `pause()` 를, 공간을 떠날 때는 `end()` 를 씁니다.
 재개하면 판정 상태가 초기화되므로, `resume()` 뒤 첫 구역 이벤트는 현재 위치를 새로
@@ -389,8 +393,9 @@ initialize ─→ begin ─→ [UWB 좌표] ─┬─→ onPosition            (
 
 | 증상 | 코드 | 첫 확인 |
 |---|---|---|
-| 앱은 도는데 좌표가 안 나온다 | `E3001` · `E3003` · `E4002` | 층 지정(`setFloorMap`) 여부 → UWB 세션 → 로케이터 배치 |
-| 존 이벤트가 안 뜬다 | `E3004` | 콘솔에 존이 등록됐는지, **측위 시작 시점**에 있었는지 |
+| 앱은 도는데 좌표가 안 나온다 | `E3007` · `E2003` · `E4002` | BLE 로 층을 찾았는지(근처 기기 허용·블루투스 켬) → 로케이터 배치 |
+| 존 이벤트가 안 뜬다 | `E3009` · `E3004` | 층 지정(`setFloorMap`) 여부, 콘솔 존 이름이 현장 영역과 맞는지 |
+| 데이터가 다른 층에 쌓인다 | `E3008` | 앱에서 지정한 층과 엔진이 찾은 층 |
 | 특정 기기에서만 안 된다 | `E2001` · `E2002` | Android 17 / UWB DL-TDoA 지원 기기인지 |
 | 권한 팝업이 다시 안 뜬다 | `E2003` | 이미 거부됨 — 설정 앱 유도 |
 | 연동 직후 401 | `E1002` | 키 상태·환경(production/development) |
@@ -406,33 +411,24 @@ initialize ─→ begin ─→ [UWB 좌표] ─┬─→ onPosition            (
 | `E2001` | Android 버전 미달 |
 | `E2002` | UWB 미지원 기기 |
 | `E2003` | 측위 권한 거부 |
-| `E3001` | 층 미지정 — **WARN, `setFloorMap` 을 부르기 전까지는 정상** |
+| `E3001` | 층 미지정 — **WARN, 정상: 엔진이 BLE 로 층을 찾는다** |
 | `E3002` | 층에 로케이터 없음 |
 | `E3003` | 층에 UWB 세션 없음 |
 | `E3004` | 층에 존 없음 |
 | `E3006` | 로케이터 조회 실패 (지도는 정상) |
+| `E3007` | 20초 안에 BLE 로 층을 못 찾음 |
+| `E3008` | 엔진이 찾은 층이 앱에서 지정한 층과 다름 |
+| `E3009` | 엔진 영역 이름에 맞는 콘솔 존이 없음 — 이벤트를 보내지 않음 |
 | `E4001` | UWB 세션 실패 |
 | `E4002` | 좌표 미산출 |
 | `E4003` | 로케이터 일부 미수신 — **WARN, 측위는 계속됩니다** |
-| `E4004` | 그 회차 구역 판정 실패 |
+| `E4004` | 측위 엔진의 구역 판정 실패 |
 | `E5001` | 네트워크 실패 |
 | `E5002` | 서버 오류 |
 | `E5003` | 요청 형식 불일치 |
 | `E5004` | 권한 없는 자원 접근 |
 | `E5005` | 응답 해석 실패 |
 | `E5006` | 미전송 좌표 유실 |
-
-`E3007` · `E3008` 은 (iOS 가 쓰는) BLE 자동 층 탐지 경로용으로 코드만 예약돼
-있습니다 — 엔진이 로케이터 광고로 층을 찾고 추적하는 경로입니다. 안드로이드는 앱이
-`setFloorMap` 으로 층을 직접 지정하므로 자동 탐지 단계 자체가 없어 이 코드를
-발생시키지 않습니다.
-
-`E3009` 는 다른 용도입니다 — 엔진이 알려준 영역 **이름**을 콘솔 존에 대응시키는
-코드입니다. iOS 의 측위 엔진은 자기 지오펜스를 기준으로 진입·이탈을 판정하고 이름으로
-알려주므로, SDK 가 그 이름을 콘솔 존 id 로 되짚어 맞춰야 하고 못 맞추면 `E3009` 가
-납니다. 이 코드도 예약만 돼 있고 안드로이드는 발생시키지 않습니다 — 안드로이드의
-구역 판정은 콘솔에서 받은 존 도형을 기기에서 직접 대조하므로, 맞춰야 할 별도의
-이름이 없습니다.
 
 에러는 콘솔 로그 분석기로도 올라가므로, 테넌트 관리자가 앱을 거치지 않고 확인할 수
 있습니다.

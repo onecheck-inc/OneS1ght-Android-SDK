@@ -99,7 +99,7 @@ internal const val MIN_POSITIONING_SDK: Int = 37
 public object OneS1ght {
 
     /** SDK 버전 (verify 등 서버 요청에 실림). */
-    public const val SDK_VERSION: String = "0.0.2"
+    public const val SDK_VERSION: String = "0.0.3"
 
     // MARK: - 콜백
 
