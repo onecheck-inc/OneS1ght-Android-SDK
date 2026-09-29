@@ -9,6 +9,54 @@
 
 ---
 
+## [0.0.5] — 2026-09-29
+
+**앱이 측위 provider 를 직접 만들어 엔진 상태를 지켜볼 수 있습니다 — iOS 0.1.24 와 같은 공개 표면입니다.**
+API 를 더하기만 했고 기존 API·동작은 그대로입니다. 인자 없는 `begin()` 을 쓰는 앱은 고칠 것이 없습니다
+([`Migrations/android.json`](Migrations/android.json) 0.0.4→0.0.5).
+
+```kotlin
+implementation("com.ones1ght.sdk:android:0.0.5")
+```
+
+### 추가
+
+- **`UwbPositioningProvider(context)`** — 내장 측위 provider 를 앱이 만든다. 어느 OS 에서든 던지지 않는다
+  (Android 17 미만이면 엔진 없이 만들어지고, 시작하면 `E2002` 로 끝난다).
+- **`UwbPositioningProvider.isSupported(context)`** — 정적 판정. `initialize` 전에도 쓸 수 있고, 판정은
+  `deviceAvailability == AVAILABLE` 과 같다(Android 17+ && UWB 칩).
+- **`floorSession().begin(provider)` 에 `UwbPositioningProvider` 를 넣으면 `begin()` 과 똑같이 다룬다** —
+  같은 기기 확인(`OsVersionTooLow`·`DeviceNotSupported`, 초기화 확인이 먼저), SDK 가 넣는 라이선스,
+  구역 이벤트 → `onZoneEnter/Exit/Dwell`, 엔진 로그 → `OneS1ght.onDebugLog`. provider 에 앱이 단 훅은
+  덮지 않는다. 다른 provider(Mock 등)는 종전처럼 기기 확인 없이 돈다.
+- **관찰 상태** — `phase`(`PositioningPhase`: `IDLE`·`STARTING`·`SEARCHING`·`TRACKING`·`STOPPING`)·
+  `isDetecting`·`isRunning`·`isPaused`·`latestPosition`·`detectedFloorId`·`measurementCount`·`log`(최근 200줄).
+  게터와 `StateFlow`(`phaseFlow`·`latestPositionFlow` …) 둘 다 있고, Java 는 `setOnChange(…)` 로 변경 통지를 받는다.
+- **훅** — `onFloorDetected`(층 번호 / `null`)·`onEngineError`(엔진 원본 번호·문장)·`onRawAreaEvent`
+  (엔진 원본 영역 이벤트)·`onZoneEvent`(콘솔 구역으로 옮긴 진입·이탈·체류)·`onLog`, 그리고 `note(…)`
+  (앱 로그를 같은 스트림에 합류).
+- **진단** — `diagnostic`(`AnchorDiagnostic`: `registered`·`received`·`matched`·`missing`·`hasFix`·
+  `canPosition`·`summary`). ⚠️ 측위 엔진은 앵커별 수신 상태를 주지 않는다 — `registered` 는 콘솔
+  로케이터(`apply(config)`)이고, 좌표가 있으면 `received`·`matched` 가 `registered` 전부, 없으면 빈 목록이다.
+  `missing` 은 **항상 비어 있다**(특정할 수 없는 것을 고장으로 칠하지 않는다). `positioningDiagnostic` 도
+  그대로 `canAttributePerAnchor = false`.
+- **엔진 기동 분리** — `startDetection()`(엔진만 띄워 층부터 찾기, 좌표는 측위를 켜기 전까지 버림)·
+  `stopDetection()`(엔진까지 정지). iOS 와 같이 측위가 꺼진 상태의 `stop()` 은 엔진을 건드리지 않는다.
+- `apply(buildingId, floorId)`·`apply(config)`·`start`·`stop`·`pause`·`resume`·`reloadGeofences` 는 원래
+  `PositioningProvider` 로 공개돼 있던 그대로다.
+
+### 바뀜
+
+- `kotlinx-coroutines-core`(1.9.0)가 **api 의존**이 됐다 — 공개 `StateFlow` 때문이다. 고객 앱 컴파일
+  클래스패스에 함께 올라간다(Kotlin 1.9+ · Java 8 호환 검사 통과).
+
+### iOS 와 다른 점
+
+- `license` 는 열지 않는다 — 측위 엔진 라이선스는 SDK 가 콘솔 값으로 넣는다(앱이 알 필요 없음).
+  `startDetection()` 도 초기화된 SDK 의 값을 쓴다(초기화 전이면 `E1007`).
+- iOS `@Published` 는 `StateFlow` + 게터 + `onChange` 로, `Date` 는 epoch 밀리초(`atMs`)로 옮겼다.
+- `FloorSession.onPosition` 은 iOS 와 같이 좌표만 준다 — 층은 `provider.detectedFloorId` 로 본다.
+
 ## [0.0.4] — 2026-09-29
 
 **Android 17 미만 앱에도 SDK 를 넣을 수 있습니다.** 패키지 `minSdk` 를 37 → **26**(Android 8.0)으로

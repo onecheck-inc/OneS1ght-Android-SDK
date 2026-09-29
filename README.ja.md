@@ -36,7 +36,7 @@ SDK が実際に動作するには、キーと空間設定が先に用意され�
 
 ```kotlin
 dependencies {
-    implementation("com.ones1ght.sdk:android:0.0.4")
+    implementation("com.ones1ght.sdk:android:0.0.5")
 }
 ```
 
@@ -58,6 +58,8 @@ dependencyResolutionManagement {
 ダイアログなしで `UNSUPPORTED`、`begin()` は `SdkError.OsVersionTooLow`(`E2001`)になります。初期化・空間取得・
 プロフィールなどそれ以外の機能は、すべての対応 OS で動作します。
 
+> 0.0.4 から更新する場合: 変更は不要です — 0.0.5 は API の追加のみです(アプリが測位 provider を直接
+> 作成して状態を監視できるようになりました — [CHANGELOG](CHANGELOG.md))。
 > 0.0.3 から更新する場合: 変更は不要です — アプリの `minSdk` を 26 以上の値に戻して構いません。
 > 0.0.2 から更新する場合: `permissions(activity)` は
 > `BLUETOOTH_SCAN` も一緒に要求し、`setFloorMap` は任意になりました — [CHANGELOG](CHANGELOG.md) 参照。
@@ -296,6 +298,22 @@ session.begin(new Callback<Void>() {
 ℹ️ `begin(provider)`(テスト・デモ用のカスタム・Mock 測位ソース)は座標だけを供給します。
 `onZoneEnter` ・ `onZoneExit` ・ `onZoneDwell` は SDK 内蔵の測位(`begin()`)からのみ届き、
 カスタム provider では発火しません。
+
+ℹ️ **測位エンジンの状態を直接見る(0.0.5~)。** 地図画面のようにエンジンの状態が必要な場合は、内蔵
+provider を直接作成して渡せます — `begin()` と同じ扱いになり(同じ端末チェック・ゾーンリスナー・デバッグログ)、
+provider に設定したアプリのフックはそのまま残ります:
+
+```kotlin
+if (UwbPositioningProvider.isSupported(context)) {
+    val provider = UwbPositioningProvider(context)
+    provider.onFloorDetected = FloorDetectedListener { floorId -> /* フロアの自動選択 */ }
+    OneS1ght.floorSession().begin(provider)
+    provider.latestPositionFlow.collect { position -> /* 現在地を描く */ }
+}
+```
+
+`phase` ・ `isRunning` ・ `isPaused` ・ `latestPosition` ・ `detectedFloorId` ・ `measurementCount` ・ `log` は
+ゲッターと `StateFlow`(`…Flow`)の両方で提供されます。Java アプリはゲッターと `setOnChange(…)` を使います。
 
 ### 一時停止は終了ではありません
 

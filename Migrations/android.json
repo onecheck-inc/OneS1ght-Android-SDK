@@ -1,6 +1,6 @@
 {
   "platform": "android",
-  "currentVersion": "0.0.4",
+  "currentVersion": "0.0.5",
   "_readme": [
     "판올림마다 이 파일에 한 칸을 더한다. 비어 있으면 MCP 가 '변경 없음' 이라고 답할 근거가 없어",
     "에이전트가 추측으로 코드를 고치게 된다 — 그게 이 파일이 존재하는 이유다.",
@@ -58,6 +58,20 @@
           "file": "app/build.gradle.kts",
           "before": "implementation(\"com.ones1ght.sdk:android:0.0.3\")",
           "after": "implementation(\"com.ones1ght.sdk:android:0.0.4\")"
+        }
+      ]
+    },
+    {
+      "from": "0.0.4",
+      "to": "0.0.5",
+      "breaking": false,
+      "summary": "API 추가만 있다 — 앱이 UwbPositioningProvider(context) 로 내장 측위 provider 를 직접 만들어 floorSession().begin(provider) 에 넣을 수 있다(begin() 과 같은 기기 확인·라이선스·구역 리스너·디버그 로그). provider 는 phase·isDetecting·isRunning·isPaused·latestPosition·detectedFloorId·measurementCount·log 를 게터와 StateFlow(…Flow)로, onFloorDetected·onEngineError·onRawAreaEvent·onZoneEvent·onLog·onChange 훅, diagnostic·note·startDetection·stopDetection, 정적 isSupported(context) 를 연다(iOS 0.1.24 와 같은 표면). kotlinx-coroutines-core 가 api 의존이 됐다(StateFlow). 기존 공개 API·동작은 그대로다.",
+      "action": "의존성 좌표만 com.ones1ght.sdk:android:0.0.5 로 바꾼다. 코드는 고칠 것이 없다. 인자 없는 begin() 을 쓰는 앱은 그대로 두면 된다 — provider 를 직접 만드는 것은 엔진 상태를 화면에 그려야 할 때만이다.",
+      "changes": [
+        {
+          "file": "app/build.gradle.kts",
+          "before": "implementation(\"com.ones1ght.sdk:android:0.0.4\")",
+          "after": "implementation(\"com.ones1ght.sdk:android:0.0.5\")"
         }
       ]
     }

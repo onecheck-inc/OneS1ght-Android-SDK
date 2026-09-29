@@ -36,7 +36,7 @@ SDK가 실제로 동작하려면 키와 공간 설정이 먼저 준비되어야 
 
 ```kotlin
 dependencies {
-    implementation("com.ones1ght.sdk:android:0.0.4")
+    implementation("com.ones1ght.sdk:android:0.0.5")
 }
 ```
 
@@ -57,6 +57,8 @@ dependencyResolutionManagement {
 `UNSUPPORTED`, `begin()` 이 `SdkError.OsVersionTooLow`(`E2001`)입니다. 초기화·공간 조회·프로필 등
 나머지는 모든 지원 OS 에서 동작합니다.
 
+> 0.0.4 에서 올라오나요? 고칠 것이 없습니다 — 0.0.5 는 API 를 더하기만 했습니다(앱이 측위 provider 를 직접
+> 만들어 상태를 지켜볼 수 있게 됨 — [CHANGELOG](CHANGELOG.md)).
 > 0.0.3 에서 올라오나요? 고칠 것이 없습니다 — 앱 `minSdk` 를 다시 낮춰도 됩니다(26 이상).
 > 0.0.2 에서 올라오나요? `permissions(activity)` 가 `BLUETOOTH_SCAN`
 > 도 함께 요청하고, `setFloorMap` 은 선택이 됐습니다 — [CHANGELOG](CHANGELOG.md) 참고.
@@ -292,6 +294,22 @@ session.begin(new Callback<Void>() {
 ℹ️ `begin(provider)`(테스트·데모용 커스텀·Mock 측위 소스)는 좌표만 공급합니다.
 `onZoneEnter` · `onZoneExit` · `onZoneDwell` 은 SDK 내장 측위(`begin()`)에서만 오며, 커스텀
 provider 로는 발화하지 않습니다.
+
+ℹ️ **측위 엔진 상태를 직접 지켜보기(0.0.5~).** 지도 화면처럼 엔진 상태가 필요하면 내장 provider 를
+직접 만들어 넣을 수 있습니다 — `begin()` 과 똑같이 다뤄지고(같은 기기 확인·구역 리스너·디버그 로그),
+provider 에 단 앱 훅은 그대로 둡니다:
+
+```kotlin
+if (UwbPositioningProvider.isSupported(context)) {
+    val provider = UwbPositioningProvider(context)
+    provider.onFloorDetected = FloorDetectedListener { floorId -> /* 층 자동 선택 */ }
+    OneS1ght.floorSession().begin(provider)
+    provider.latestPositionFlow.collect { position -> /* 내 위치 그리기 */ }
+}
+```
+
+`phase` · `isRunning` · `isPaused` · `latestPosition` · `detectedFloorId` · `measurementCount` · `log` 는
+게터와 `StateFlow`(`…Flow`) 둘 다로 제공됩니다. Java 앱은 게터와 `setOnChange(…)` 를 씁니다.
 
 ### 일시정지는 종료가 아닙니다
 
