@@ -10,8 +10,10 @@
 # 검사
 #   1. OneS1ght.SDK_VERSION · Snippets/android.json · Migrations/android.json 세 곳의 버전 일치
 #   2. Migrations 마지막 칸의 to 가 이 버전 — 최신으로 가는 길이 있는가(빈 체인은 0.0.1 만 허용)
-#   3. CHANGELOG.md 에 [버전] 항목
-#   4. ./gradlew :onesight:testDebugUnitTest
+#   3. 설치 좌표(com.ones1ght.sdk:android:버전) 가 Snippets 설치 단계·README 세 언어에 있는가
+#      (Maven Central 좌표는 onesight/build.gradle.kts 가 OneS1ght.SDK_VERSION 을 읽어 만든다)
+#   4. CHANGELOG.md 에 [버전] 항목
+#   5. ./gradlew :onesight:testDebugUnitTest
 #
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -40,6 +42,19 @@ LAST_TO=$(python3 -c 'import json;m=json.load(open("Migrations/android.json"))["
 if [[ "$LAST_TO" == "$VERSION" ]]; then ok "마이그레이션 마지막 칸 → $VERSION"
 elif [[ -z "$LAST_TO" && "$VERSION" == "0.0.1" ]]; then ok "마이그레이션 빈 체인 (첫 판 0.0.1)"
 else bad "마이그레이션 마지막 칸의 to 가 $LAST_TO — $VERSION 로 가는 경로가 없다"; fi
+
+# 배포 좌표 — onesight/build.gradle.kts 의 mavenPublishing.coordinates 와 같은 값. 버전은 SDK_VERSION 에서 온다.
+COORD="com.ones1ght.sdk:android:$VERSION"
+grep -q 'coordinates("com.ones1ght.sdk", "android", sdkVersion)' onesight/build.gradle.kts \
+    || bad "onesight/build.gradle.kts 의 배포 좌표가 com.ones1ght.sdk:android:<SDK_VERSION> 가 아니다"
+SNIPPET_COORD=$(python3 -c 'import json,sys
+s=[x for x in json.load(open("Snippets/android.json"))["steps"] if x["id"]=="install"][0]
+print("\n".join(f.get("code","") for f in s.get("files",[])))')
+[[ "$SNIPPET_COORD" == *"\"$COORD\""* ]] || bad "Snippets/android.json 설치 단계에 $COORD 가 없다"
+for readme in README.md README.ko.md README.ja.md; do
+    grep -qF "\"$COORD\"" "$readme" || bad "$readme 설치 절에 $COORD 가 없다"
+done
+[[ $FAIL -eq 0 ]] && ok "설치 좌표 $COORD (Snippets · README 세 언어)"
 
 if grep -q "^## \[$VERSION\]" CHANGELOG.md; then ok "CHANGELOG [$VERSION]"
 else bad "CHANGELOG.md 에 [$VERSION] 항목이 없다"; fi

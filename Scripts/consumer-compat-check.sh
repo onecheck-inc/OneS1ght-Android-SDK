@@ -15,9 +15,18 @@
 # kotlinc 는 GitHub 릴리스 zip 을 받아 캐시에 푼다(전역 설치 없음, sha256 대조):
 #   ${ONESIGHT_TOOL_CACHE:-~/.cache/onesight-sdk}/kotlinc-<버전>
 #
+# 배포본 모드(PUBLISHED=1) — 1 의 빌드 산출물 대신 "배포된 좌표" 를 받아서 같은 컴파일을 한다.
+#    build/consumer-compat/published 에 안드로이드 플러그인 없는 일회용 Gradle 프로젝트를 만들어
+#    com.ones1ght.sdk:android:<SDK_VERSION> 을 mavenLocal()(→ google() · mavenCentral()) 에서 받고,
+#    고객 컴파일 클래스패스(AAR + 전이 api 의존)를 Gradle 메타데이터 그대로 푼다. 받기 전에 배포본이
+#    엔진 저장소 좌표를 참조하지 않는지, AAR 에 엔진 jar(libs/) 가 들어 있는지도 본다.
+#    먼저 ./gradlew :onesight:publishToMavenLocal 로 올려 둔다(RELEASING.md D).
+#
 # 사용:  Scripts/consumer-compat-check.sh
 #        CONSUMER_KOTLIN_VERSIONS="2.1.21" Scripts/consumer-compat-check.sh   (검사할 Kotlin 버전 바꾸기)
 #        SKIP_BUILD=1 Scripts/consumer-compat-check.sh   (AAR·클래스패스를 이미 만든 단계에서)
+#        PUBLISHED=1 Scripts/consumer-compat-check.sh    (mavenLocal 의 배포본으로 검사)
+#        PUBLISHED=1 CONSUMER_SDK_VERSION=0.0.2 Scripts/consumer-compat-check.sh   (받을 버전 지정)
 #
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -35,7 +44,107 @@ ok()   { printf '  ✓ %s\n' "$1"; }
 die()  { printf '  ✗ %s\n' "$1" >&2; exit 1; }
 
 # --- 1. 빌드 ---------------------------------------------------------------------------------
-if [[ "${SKIP_BUILD:-}" == "1" ]]; then
+if [[ "${PUBLISHED:-}" == "1" ]]; then
+    SDK_VERSION="${CONSUMER_SDK_VERSION:-$(Scripts/sdk-version.sh)}"
+    COORD="com.ones1ght.sdk:android:$SDK_VERSION"
+    PUB="$ROOT/onesight/build/consumer-compat/published"
+    LOCAL_DIR="$HOME/.m2/repository/com/ones1ght/sdk/android/$SDK_VERSION"
+    step "배포본 $COORD (mavenLocal) 확인"
+    [[ -f "$LOCAL_DIR/android-$SDK_VERSION.module" && -f "$LOCAL_DIR/android-$SDK_VERSION.pom" ]] \
+        || die "mavenLocal 에 $COORD 가 없다 — 먼저 ./gradlew :onesight:publishToMavenLocal"
+    # 엔진 저장소 그룹(settings.gradle.kts 의 includeGroup)이 POM·.module 에 새면 고객 빌드가 깨진다.
+    ENGINE_GROUP=$(sed -n 's/.*includeGroup("\([^"]*\)").*/\1/p' settings.gradle.kts | head -1)
+    [[ -n "$ENGINE_GROUP" ]] || die "settings.gradle.kts 에서 엔진 그룹을 찾지 못함"
+    if grep -qF "$ENGINE_GROUP" "$LOCAL_DIR/android-$SDK_VERSION.pom" "$LOCAL_DIR/android-$SDK_VERSION.module"; then
+        die "배포본 POM/.module 이 엔진 저장소 좌표를 참조한다"
+    fi
+    ok "POM·.module 에 엔진 저장소 좌표 없음"
+    ENGINE_JARS=$(unzip -Z1 "$LOCAL_DIR/android-$SDK_VERSION.aar" | grep -c '^libs/.*\.jar$' || true)
+    [[ "$ENGINE_JARS" -ge 1 ]] || die "배포본 AAR 에 libs/*.jar(엔진) 가 없다 — 스텁 빌드가 올라갔다"
+    ok "AAR 에 엔진 jar ${ENGINE_JARS}개"
+
+    step "일회용 Gradle 프로젝트로 $COORD 받기"
+    rm -rf "$PUB"; mkdir -p "$PUB"
+    cat > "$PUB/settings.gradle.kts" <<'KTS'
+rootProject.name = "onesight-published-consumer"
+dependencyResolutionManagement {
+    repositories {
+        mavenLocal { content { includeGroup("com.ones1ght.sdk") } }
+        google()
+        mavenCentral()
+    }
+}
+KTS
+    cat > "$PUB/build.gradle.kts" <<KTS
+// 안드로이드 앱이 이 SDK 를 받을 때 보는 컴파일 클래스패스를 흉내 낸다 — java-api 변형 + AGP 처럼
+// 런타임과 같은 버전으로 맞춤. AGP 없이 속성만으로 고른다(java-base = JVM 속성 호환 규칙: android 소비자도
+// standard-jvm 변형을 받는다).
+plugins { \`java-base\` }
+val kotlinPlatform = Attribute.of("org.jetbrains.kotlin.platform.type", String::class.java)
+// Kotlin Gradle 플러그인이 해 주던 규칙 — androidJvm 소비자는 jvm 변형도 받고, 둘 다 있으면 androidJvm 을 고른다.
+class AndroidJvmAcceptsJvm : AttributeCompatibilityRule<String> {
+    override fun execute(d: CompatibilityCheckDetails<String>) {
+        if (d.consumerValue == "androidJvm" && d.producerValue == "jvm") d.compatible()
+    }
+}
+class PreferAndroidJvm : AttributeDisambiguationRule<String> {
+    override fun execute(d: MultipleCandidatesDetails<String>) {
+        if ("androidJvm" in d.candidateValues) d.closestMatch("androidJvm")
+        else if ("jvm" in d.candidateValues) d.closestMatch("jvm")
+    }
+}
+dependencies.attributesSchema.attribute(kotlinPlatform) {
+    compatibilityRules.add(AndroidJvmAcceptsJvm::class.java)
+    disambiguationRules.add(PreferAndroidJvm::class.java)
+}
+fun Configuration.androidLike(usage: String) {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    attributes {
+        attribute(Usage.USAGE_ATTRIBUTE, objects.named(usage))
+        attribute(Category.CATEGORY_ATTRIBUTE, objects.named(Category.LIBRARY))
+        attribute(TargetJvmEnvironment.TARGET_JVM_ENVIRONMENT_ATTRIBUTE, objects.named(TargetJvmEnvironment.ANDROID))
+        attribute(kotlinPlatform, "androidJvm")
+    }
+}
+val sdkRuntime = configurations.create("sdkRuntime") { androidLike(Usage.JAVA_RUNTIME) }
+val sdkCompile = configurations.create("sdkCompile") {
+    androidLike(Usage.JAVA_API)
+    shouldResolveConsistentlyWith(sdkRuntime)
+}
+dependencies {
+    add("sdkRuntime", "$COORD")
+    add("sdkCompile", "$COORD")
+}
+tasks.register<Sync>("exportSdkCompile") {
+    from(sdkCompile)
+    into(layout.buildDirectory.dir("api-deps"))
+}
+tasks.register("printSdkRuntime") {
+    val ids = sdkRuntime.incoming.resolutionResult.rootComponent.map { root ->
+        root.dependencies.filterIsInstance<org.gradle.api.artifacts.result.ResolvedDependencyResult>()
+            .flatMap { d -> listOf(d.selected) + d.selected.dependencies
+                .filterIsInstance<org.gradle.api.artifacts.result.ResolvedDependencyResult>().map { it.selected } }
+            .map { it.moduleVersion.toString() }.distinct().sorted()
+    }
+    doLast { ids.get().forEach { println("runtime: \$it") } }
+}
+KTS
+    ./gradlew -q -p "$PUB" exportSdkCompile printSdkRuntime > "$PUB/resolve.log" 2>&1 \
+        || { cat "$PUB/resolve.log" >&2; die "$COORD 받기 실패"; }
+    grep '^runtime: ' "$PUB/resolve.log" | sed 's/^runtime: /    · /' | grep -v 'com.ones1ght.sdk:android' | head -20
+    # api-deps 에 SDK 자신(AAR)도 함께 풀린다 — AAR 은 따로 두고 나머지만 api 의존으로 쓴다.
+    API_DEPS="$PUB/api-deps"
+    rm -rf "$API_DEPS"; mkdir -p "$API_DEPS"
+    for f in "$PUB/build/api-deps"/*; do
+        case "$(basename "$f")" in
+            android-"$SDK_VERSION".aar) AAR="$PUB/onesight-published.aar"; cp "$f" "$AAR" ;;
+            *) cp "$f" "$API_DEPS/" ;;
+        esac
+    done
+    [[ "$AAR" == "$PUB/onesight-published.aar" ]] || die "받은 클래스패스에 $COORD AAR 이 없다"
+    WORK="$PUB/work"
+elif [[ "${SKIP_BUILD:-}" == "1" ]]; then
     step "빌드 (건너뜀 — SKIP_BUILD=1)"
 else
     step "AAR·고객 컴파일 클래스패스 만들기"
@@ -274,4 +383,4 @@ javac --release 8 -Xlint:all -Xlint:-options -Xlint:-classfile -Werror \
     > "$WORK/java/log.txt" 2>&1 || { cat "$WORK/java/log.txt" >&2; die "Java 소비자 컴파일 실패"; }
 ok "javac $(javac -version 2>&1 | awk '{print $2}') --release 8 컴파일 통과"
 
-echo "고객 앱 호환 검사 통과 (Kotlin ${KOTLIN_VERSIONS// / · } · Java 8)."
+echo "고객 앱 호환 검사 통과 (Kotlin ${KOTLIN_VERSIONS// / · } · Java 8)${COORD:+ — 배포본 $COORD}."

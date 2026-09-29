@@ -9,6 +9,30 @@
 
 ---
 
+## [0.0.2] — 2026-09-29
+
+**Maven Central 첫 배포판입니다.** 공개 API·동작은 0.0.1 과 같고, 앱 코드는 고칠 것이 없습니다
+— 의존성 좌표만 바꾸면 됩니다([`Migrations/android.json`](Migrations/android.json) 0.0.1→0.0.2).
+
+### 바뀜
+
+- **배포 좌표** — `co.onecheck.ones1ght:android` → **`com.ones1ght.sdk:android`**.
+  Maven Central 에서 받습니다. `repositories` 에 `mavenCentral()` 만 있으면 되고,
+  별도 저장소 주소는 더 이상 필요 없습니다. 패키지 이름(`co.onecheck.ones1ght.android`)은
+  그대로라 `import` 는 바뀌지 않습니다.
+  ```kotlin
+  implementation("com.ones1ght.sdk:android:0.0.2")
+  ```
+- **실제 측위 엔진 내장** — 배포 AAR 에 측위 엔진이 들어 있습니다. 엔진을 받으려고 앱에
+  저장소·의존성을 따로 추가하지 않습니다.
+- **의존 버전 정렬** — 엔진이 쓰는 라이브러리를 엔진과 같은 판으로 맞췄습니다:
+  `commons-math3 3.6.1` · `jts-core 1.18.2` · `slf4j-api 1.7.31`(런타임 의존).
+
+### 더함
+
+- **라이선스** — [`LICENSE`](LICENSE)(OneS1ght SDK License, 법무 검토 전 초안). POM 에도 실립니다.
+- **소스·문서 jar** — Maven Central 판에 `-sources.jar` · `-javadoc.jar`(Dokka HTML)가 함께 올라갑니다.
+
 ## [0.0.1] — 2026-09-28
 
 **첫 공개판입니다.** iOS SDK(v0.1.23 기준)와 같은 사양 — 같은 기능, 같은 서버 계약 —
@@ -51,4 +75,5 @@
 
 그 밖의 이름·인자 순서·기본값·동작·오류 코드 26개·서버 계약은 iOS 와 같습니다.
 
+[0.0.2]: https://github.com/onecheck-inc/OneS1ght-Android-SDK/releases/tag/v0.0.2
 [0.0.1]: https://github.com/onecheck-inc/OneS1ght-Android-SDK/releases/tag/v0.0.1

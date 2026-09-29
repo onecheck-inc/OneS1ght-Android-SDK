@@ -1,3 +1,6 @@
+import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
+import com.vanniktech.maven.publish.JavadocJar
+import com.vanniktech.maven.publish.SourcesJar
 import org.gradle.api.artifacts.Configuration
 import org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
@@ -6,6 +9,8 @@ import org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.dokka)
+    alias(libs.plugins.maven.publish)
 }
 
 android {
@@ -171,6 +176,90 @@ if (hasGeoplanEngineCreds) {
     tasks.matching { it.name == "preReleaseBuild" }.configureEach {
         doLast {
             throw GradleException("gpa engine missing: set geoplanNexus* in ~/.gradle/gradle.properties")
+        }
+    }
+
+    // 배포(publish*) 도 계정 없이는 막는다 — 스텁 빌드가 Maven Central·mavenLocal 에 올라가는 사고 방지.
+    // release AAR 이 preReleaseBuild 에서 이미 막히지만, 태스크 그래프가 정해진 순간(어떤 태스크도 돌기
+    // 전)에 한 번 더 막는다 — sources·javadoc jar 처럼 AAR 을 거치지 않는 태스크도 돌지 않는다.
+    // `tasks`·테스트처럼 배포가 아닌 명령은 계정 없이도 돈다.
+    gradle.taskGraph.whenReady {
+        if (allTasks.any { it.project == project && it.name.startsWith("publish") }) {
+            throw GradleException("gpa engine missing: publishing requires geoplanNexus* in ~/.gradle/gradle.properties")
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Maven Central 배포 — com.ones1ght.sdk:android:<SDK_VERSION>
+//
+// 버전의 단일 출처는 OneS1ght.SDK_VERSION 이다(Scripts/sdk-version.sh · check-release.sh 가 같은 줄을
+// 읽는다). 여기서도 그 줄을 읽어 좌표에 쓴다 — 판올림 때 고칠 곳이 늘지 않는다.
+//
+// 계정·서명 값은 레포에 두지 않는다. vanniktech 표준 이름으로 ~/.gradle/gradle.properties 또는
+// ORG_GRADLE_PROJECT_<이름> 환경변수에서 읽는다(RELEASING.md 참고):
+//   mavenCentralUsername · mavenCentralPassword       (Central Portal 사용자 토큰)
+//   signingInMemoryKey · signingInMemoryKeyId · signingInMemoryKeyPassword   (GPG 개인키)
+// 서명 키가 없으면 mavenLocal 배포는 서명 없이 되고(로컬 확인용), Maven Central 업로드는 막는다.
+// ---------------------------------------------------------------------------
+val sdkVersion: String = run {
+    val src = file("src/main/kotlin/co/onecheck/ones1ght/android/OneS1ght.kt").readText()
+    Regex("""SDK_VERSION: String = "([^"]+)"""").find(src)?.groupValues?.get(1)
+        ?: throw GradleException("OneS1ght.SDK_VERSION 을 찾지 못함 — OneS1ght.kt 의 선언 모양이 바뀌었는지 확인")
+}
+val hasSigningKey = !providers.gradleProperty("signingInMemoryKey").orNull.isNullOrBlank()
+
+mavenPublishing {
+    configure(
+        AndroidSingleVariantLibrary(
+            javadocJar = JavadocJar.Dokka("dokkaGeneratePublicationHtml"),
+            sourcesJar = SourcesJar.Sources(),
+            variant = "release",
+        ),
+    )
+    publishToMavenCentral()
+    if (hasSigningKey) signAllPublications()
+
+    coordinates("com.ones1ght.sdk", "android", sdkVersion)
+
+    pom {
+        name.set("OneS1ght Android SDK")
+        description.set(
+            "OneS1ght indoor location intelligence SDK for Android — UWB indoor positioning, " +
+                "zone enter/exit/dwell events and visit data collection for OneS1ght customers.",
+        )
+        inceptionYear.set("2026")
+        url.set("https://github.com/onecheck-inc/OneS1ght-Android-SDK")
+        licenses {
+            license {
+                name.set("OneS1ght SDK License")
+                url.set("https://github.com/onecheck-inc/OneS1ght-Android-SDK/blob/main/LICENSE")
+                distribution.set("repo")
+            }
+        }
+        developers {
+            developer {
+                id.set("onecheck")
+                name.set("OneCheck Inc.")
+                email.set("onesight-support@onecheck.co.kr")
+                organization.set("OneCheck Inc.")
+                organizationUrl.set("https://ones1ght.com")
+            }
+        }
+        scm {
+            url.set("https://github.com/onecheck-inc/OneS1ght-Android-SDK")
+            connection.set("scm:git:https://github.com/onecheck-inc/OneS1ght-Android-SDK.git")
+            developerConnection.set("scm:git:ssh://git@github.com/onecheck-inc/OneS1ght-Android-SDK.git")
+        }
+    }
+}
+
+// Maven Central 은 서명 없는 판을 받지 않는다 — 키 없이 Central 태스크를 부르면 태스크 그래프가 정해진
+// 순간(빌드·업로드 전)에 멈춘다. mavenLocal 배포는 영향 없다.
+if (!hasSigningKey) {
+    gradle.taskGraph.whenReady {
+        if (allTasks.any { it.project == project && it.name.contains("MavenCentral") }) {
+            throw GradleException("Maven Central 배포에는 서명 키(signingInMemoryKey)가 필요하다 — RELEASING.md 참고")
         }
     }
 }

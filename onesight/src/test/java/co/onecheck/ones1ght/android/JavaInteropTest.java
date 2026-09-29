@@ -101,7 +101,7 @@ public class JavaInteropTest {
     @Test public void staticSurfaceIsReachableFromJava() throws Exception {
         JavaInteropHarness h = JavaInteropHarness.start();
         try {
-            assertEquals("0.0.1", OneS1ght.SDK_VERSION);
+            assertTrue(OneS1ght.SDK_VERSION.matches("\\d+\\.\\d+\\.\\d+")); // 판올림마다 고치지 않게 형식만 본다
             DeviceAvailability a = OneS1ght.getDeviceAvailability();
             assertEquals(DeviceAvailability.AVAILABLE, a);
             assertTrue(OneS1ght.isDeviceAvailable());
