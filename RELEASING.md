@@ -166,6 +166,7 @@ bash Scripts/consumer-compat-check.sh   # Java 8 · Kotlin 1.9/2.0 앱 컴파일
 # (권장) 먼저 로컬에 올려 POM·AAR 을 눈으로 본다 — 서명 키가 없어도 된다
 ./gradlew :onesight:publishToMavenLocal
 PUBLISHED=1 bash Scripts/consumer-compat-check.sh   # mavenLocal 의 좌표를 실제로 받아 컴파일
+MINIFIED=1 bash Scripts/consumer-compat-check.sh    # minifyEnabled 앱으로 빌드 — R8 뒤에도 엔진 응답 모델이 살아 있는지
 rm -rf ~/.m2/repository/com/ones1ght/sdk/android/0.0.2
 
 # 업로드 + 검증 + 공개까지 한 번에

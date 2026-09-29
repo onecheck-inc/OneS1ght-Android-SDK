@@ -141,9 +141,17 @@ if (hasGeoplanEngineCreds) {
                 if (res.exists() && res.walkTopDown().any { it.isFile }) {
                     throw GradleException("$base 에 res/ 가 생겼다 — fat 방식으로 실을 수 없다(빌드 방식 재검토 필요)")
                 }
-                File(tmp, "classes.jar").takeIf { it.exists() }?.copyTo(File(jarsDir, "$base.jar"), overwrite = true)
-                File(tmp, "libs").listFiles { f -> f.name.endsWith(".jar") }?.forEach {
-                    it.copyTo(File(jarsDir, it.name), overwrite = true)
+                // 이름이 겹치면 덮어쓰지 않고 멈춘다 — 조용히 덮으면 엔진 하나의 클래스가 통째로 빠진다.
+                fun addJar(src: File, name: String) {
+                    val dest = File(jarsDir, name)
+                    if (dest.exists()) {
+                        throw GradleException("엔진 jar 이름 충돌: $name ($base) — 두 엔진 AAR 이 같은 이름의 jar 를 싣는다")
+                    }
+                    src.copyTo(dest)
+                }
+                File(tmp, "classes.jar").takeIf { it.exists() }?.let { addJar(it, "$base.jar") }
+                File(tmp, "libs").listFiles { f -> f.name.endsWith(".jar") }?.sortedBy { it.name }?.forEach {
+                    addJar(it, it.name)
                 }
                 File(tmp, "proguard.txt").takeIf { it.exists() }?.copyTo(File(rulesDir, "$base.txt"), overwrite = true)
             }

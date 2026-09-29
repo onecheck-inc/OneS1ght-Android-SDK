@@ -153,10 +153,14 @@ public class UwbPositioningProvider private constructor(
 
     // MARK: - 설정 주입
 
-    /** 콘솔 건물·층 ID — 코어(applyFloorStateToProvider)가 넣는다. */
+    /**
+     * 콘솔 건물·층 ID — 코어(applyFloorStateToProvider)가 넣는다. 층 지정 해제(setFloorMap(null))면 빈 값이
+     * 온다 — 그러면 E3008 대조를 멈추고, 엔진 층이 없을 때의 귀속도 하지 않는다.
+     */
     override fun apply(buildingId: String, floorId: String) {
         this.buildingId = buildingId
         this.floorId = floorId
+        warnedFloorMismatch = null // 대조 기준이 바뀌었다 — 새 층 기준으로 다시 한 번 알린다
         log(LogLevel.LOG, SdkLocalized.t("provider.configApply", floorId.take(8)))
     }
 
@@ -319,6 +323,14 @@ public class UwbPositioningProvider private constructor(
 
     private fun handleStopped() {
         if (machine.phase == Phase.IDLE) return
+        // 시작 중에는 onStopped 가 올 일이 없다 — 엔진은 시작 단계 실패를 onError 로만 알리고(onStopped 없음),
+        // onStopped 는 우리가 stop 을 부른 뒤(STOPPING)에만 보낸다. 여기 오는 것은 앞 기동의 늦은 정지 통지가
+        // 새 리스너에 닿은 것이다(엔진 싱글턴이라 리스너 교체 뒤에도 옛 통지가 올 수 있다) — 받으면 방금 띄운
+        // 측위를 스스로 멈춘 것으로 오인한다.
+        if (machine.phase == Phase.STARTING) {
+            log(LogLevel.LOG, SdkLocalized.t("uwb.stopped") + " (stale — ignored while starting)")
+            return
+        }
         val requested = machine.phase == Phase.STOPPING // stop()·재적재가 부른 정지
         if (requested) {
             log(LogLevel.LOG, SdkLocalized.t("uwb.stopped"))

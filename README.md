@@ -420,7 +420,7 @@ Every failure carries a code. Include it when contacting support.
 | `E3003` | No UWB session on floor |
 | `E3004` | No zones on floor |
 | `E3006` | Locator lookup failed (map still renders) |
-| `E3007` | Floor not detected over BLE within 20 s |
+| `E3007` | Floor not detected over BLE within 20 s — also raised when the device rate-limits BLE scan starts (context `engine=13`; starting again after a moment clears it) |
 | `E3008` | Engine floor differs from the floor set in the app |
 | `E3009` | Engine area name matches no console zone — event not sent |
 | `E4001` | UWB session failed |

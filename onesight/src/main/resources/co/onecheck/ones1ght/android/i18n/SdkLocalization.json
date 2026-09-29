@@ -325,19 +325,19 @@
     "en": "⚠️ %d zones were injected but the judging engine did not start — dropping coordinates"
   },
   "uwb.ready": {
-    "ko": "측위 엔진 %@ 준비됨 · DL-TDoA %@",
-    "ja": "測位エンジン %@ 準備完了 · DL-TDoA %@",
-    "en": "positioning engine %@ ready · DL-TDoA %@"
+    "ko": "측위 엔진 %@ 준비됨 · UWB 하드웨어 %@",
+    "ja": "測位エンジン %@ 準備完了 · UWB ハードウェア %@",
+    "en": "positioning engine %@ ready · UWB hardware %@"
   },
   "uwb.supported": {
-    "ko": "지원",
-    "ja": "対応",
-    "en": "supported"
+    "ko": "있음",
+    "ja": "あり",
+    "en": "present"
   },
   "uwb.unsupported": {
-    "ko": "미지원",
-    "ja": "非対応",
-    "en": "unsupported"
+    "ko": "없음",
+    "ja": "なし",
+    "en": "absent"
   },
   "uwb.noLicense": {
     "ko": "⚠️ 측위 라이선스 키가 없습니다 — 콘솔의 측위 키 설정을 확인하세요",

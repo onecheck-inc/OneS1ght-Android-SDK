@@ -632,4 +632,62 @@ class UwbProviderLogicTest {
 
         assertEquals(2, provider.positioningDiagnostic.registeredCount)
     }
+
+    // MARK: - Fix round 1
+
+    /**
+     * 시작 중(STARTING)에 온 onStopped 는 앞 기동의 늦은 통지다 — 엔진은 시작 단계 실패를 onError 로만
+     * 알리고 onStopped 는 우리가 stop 한 뒤에만 보낸다. 받아들이면 방금 띄운 측위를 스스로 멈춘 것으로 오인한다.
+     */
+    @Test fun staleOnStoppedWhileStartingIsIgnored() {
+        configured()
+        provider.start()
+        assertEquals(Phase.STARTING, provider.phase)
+
+        hub.onStopped()
+        flush()
+
+        assertEquals(Phase.STARTING, provider.phase)
+        assertTrue(provider.isRunning)
+        assertNotNull("리스너가 풀리면 안 된다", engine.current)
+        assertFalse(logs.any { it.second == SdkLocalized.t("uwb.stoppedSelf") })
+
+        hub.onStarted()
+        flush()
+        assertEquals(Phase.SEARCHING, provider.phase)
+    }
+
+    /** 층 지정 해제(빈 층) 뒤에는 옛 층으로 E3008 을 대조하지 않고, 이벤트를 옛 층으로 귀속하지 않는다. */
+    @Test fun clearedConsoleFloorStopsMismatchAndAttribution() {
+        configured(consoleFloor = "15")
+        provider.apply("", "") // setFloorMap(null) 이 코어를 통해 부르는 것
+        provider.apply(PositioningConfig(zones = listOf(zoneA))) // 매핑 확인용으로 존만 다시
+
+        provider.start()
+        hub.onAreaEvent(14, "정육 코너", "IN") // 엔진 층 미탐지 상태
+        hub.onStarted()
+        hub.onTrackingStarted(14)
+        flush()
+
+        assertFalse("해제한 층으로 대조했다", delegate.codes().contains(SdkErrorCode.FLOOR_ID_MISMATCH))
+        assertEquals(listOf(Triple("za", ZoneEventStatus.ENTER, null as String?)), delegate.zones)
+    }
+
+    /** 층을 다시 지정하면 새 층 기준으로 다시 대조한다(같은 엔진 층이어도 한 번 더 알린다). */
+    @Test fun changingConsoleFloorRearmsMismatchWarning() {
+        configured(consoleFloor = "15")
+        provider.start()
+        hub.onStarted()
+        hub.onTrackingStarted(14)
+        flush()
+        provider.apply("b-1", "16")
+        hub.onTrackingStopped(14)
+        hub.onTrackingStarted(14)
+        flush()
+
+        assertEquals(
+            listOf("engine=14 console=15", "engine=14 console=16"),
+            delegate.reports.filter { it.first == SdkErrorCode.FLOOR_ID_MISMATCH }.map { it.second },
+        )
+    }
 }
