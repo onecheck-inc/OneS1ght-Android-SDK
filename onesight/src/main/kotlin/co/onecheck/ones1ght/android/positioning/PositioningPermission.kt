@@ -2,11 +2,13 @@ package co.onecheck.ones1ght.android.positioning
 
 //
 //  PositioningPermission.kt
-//  측위 권한 확인·요청 — RANGING + ACCESS_FINE_LOCATION(+ 함께 묻는 ACCESS_COARSE_LOCATION)을 한 번에.
+//  측위 권한 확인·요청 — RANGING + ACCESS_FINE_LOCATION + BLUETOOTH_SCAN(+ 함께 묻는 ACCESS_COARSE_LOCATION)을
+//  한 번에. 셋 다 측위 엔진이 start 때 검사하는 권한이다(UWB · 정밀 위치 · 층 탐지 BLE 스캔).
+//  엔진은 권한을 요청하지 않고 검사만 한다 — 없으면 onError(3·7) 로 떨어진다. 그래서 SDK 가 요청한다.
 //
 //  iOS 는 NearbyInteraction 에 상태 조회 API 가 없어 세션을 띄워 보는 프로브였지만,
 //  안드로이드는 런타임 권한이라 조회와 요청이 나뉜다:
-//    · 이미 둘 다 허용됐으면 팝업 없이 AUTHORIZED
+//    · 이미 셋 다 허용됐으면 팝업 없이 AUTHORIZED
 //    · 아니면 ActivityResultRegistry 로 한 번에 요청 — onCreate 이후 아무 때나 불러도 된다
 //      (registerForActivityResult 와 달리 등록 시점 제약이 없다).
 //    · 30초 안에 답이 없으면 보수적으로 DENIED — 팝업을 방치하면 앱이 영영 기다리기 때문이다.
@@ -37,11 +39,14 @@ internal object PositioningPermission {
      */
     const val COARSE_LOCATION: String = "android.permission.ACCESS_COARSE_LOCATION"
 
-    /** 측위에 반드시 있어야 하는 권한 — 둘 다 허용이어야 AUTHORIZED. */
-    val REQUIRED: Array<String> = arrayOf(RANGING, FINE_LOCATION)
+    /** 층 탐지 BLE 스캔 권한 (API 31+). 엔진이 BLE 로 층을 고른다 — 없으면 엔진 오류 3. */
+    const val BLUETOOTH_SCAN: String = "android.permission.BLUETOOTH_SCAN"
+
+    /** 측위에 반드시 있어야 하는 권한 — 셋 다 허용이어야 AUTHORIZED(측위 엔진의 요구와 같다). */
+    val REQUIRED: Array<String> = arrayOf(RANGING, FINE_LOCATION, BLUETOOTH_SCAN)
 
     /** 한 번에 요청하는 권한 — 순서는 팝업 순서다. */
-    val PERMISSIONS: Array<String> = arrayOf(RANGING, FINE_LOCATION, COARSE_LOCATION)
+    val PERMISSIONS: Array<String> = arrayOf(RANGING, FINE_LOCATION, COARSE_LOCATION, BLUETOOTH_SCAN)
 
     /** ActivityResultRegistry 키 접두어 — 실제 키는 호출마다 뒤에 번호를 붙인다. */
     const val REGISTRY_KEY: String = "onesight.permissions"

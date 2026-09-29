@@ -9,7 +9,10 @@ package co.onecheck.ones1ght.android.positioning
 //  재개할 때마다 앵커를 처음부터 찾게 되어 걷기 검증이 못 쓰게 된다. 그래서 pause()/resume()
 //  은 phase 를 건드리지 않고 isPaused 와 acceptsPosition() 으로만 소비를 막는다.
 //
-//  포팅 원본: UwbPositioningProvider.swift 의 phase·startAfterStop·pause 로직(약 452~600행).
+//  엔진 대응: openSession = 엔진 start · closeSession = 엔진 stop · onOpened = onStarted ·
+//  onTrackingStarted/Stopped = 층 추적 시작/종료 · onClosed = onStopped · restart = 구역 재적재.
+//
+//  포팅 원본: UwbPositioningProvider.swift 의 phase·startAfterStop·pause·reloadingGeofences 로직.
 //
 
 import co.onecheck.ones1ght.android.runtime.LogLevel
@@ -46,7 +49,7 @@ internal class EngineStateMachine(
     private var startAfterStop = false
 
     /**
-     * 내부 재시작(세션 번호 교체) 중인가 — 이때는 [onClosed] 가 isRunning·isPaused 를 그대로 둔 채
+     * 내부 재시작(구역 재적재·정지 중 거절된 시작의 재시도) 중인가 — 이때는 [onClosed] 가 isRunning·isPaused 를 그대로 둔 채
      * 곧바로 다시 연다. 호스트가 켠 측위·일시정지 상태가 재시작 한 번에 뒤집히면 안 된다.
      */
     private var restarting = false
@@ -85,8 +88,14 @@ internal class EngineStateMachine(
         if (phase == Phase.STARTING) phase = Phase.SEARCHING
     }
 
-    internal fun onFirstFix() {
-        phase = Phase.TRACKING
+    /** 엔진이 층을 잡아 추적을 시작했다. 내려가는 중(STOPPING)에 늦게 온 통지는 무시한다. */
+    internal fun onTrackingStarted() {
+        if (phase == Phase.STARTING || phase == Phase.SEARCHING) phase = Phase.TRACKING
+    }
+
+    /** 엔진이 층을 잃었다 — 다시 탐색한다. */
+    internal fun onTrackingStopped() {
+        if (phase == Phase.TRACKING) phase = Phase.SEARCHING
     }
 
     /**

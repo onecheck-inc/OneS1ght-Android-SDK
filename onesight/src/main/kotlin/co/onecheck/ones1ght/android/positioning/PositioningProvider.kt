@@ -4,8 +4,8 @@ package co.onecheck.ones1ght.android.positioning
 //  PositioningProvider.kt
 //  측위 엔진 주입 계약 — SDK는 UWB를 모른다.
 //
-//  실제 구현(호스트 쪽): 직접 레인징 + ZoneEngine을 감싼 어댑터가 이 인터페이스를 구현해
-//  콜백 3종(+선택 1종)을 쏜다. 패키지는 그 결과를 서버 계약에 맞춰 전송만 한다.
+//  실제 구현: 측위 엔진(층 탐지·UWB 측위·영역 판정)을 감싼 어댑터(UwbPositioningProvider)가 이
+//  인터페이스를 구현해 콜백 3종(+선택 1종)을 쏜다. 패키지는 그 결과를 서버 계약에 맞춰 전송만 한다.
 //
 //  포팅 원본: PositioningProvider.swift.
 //

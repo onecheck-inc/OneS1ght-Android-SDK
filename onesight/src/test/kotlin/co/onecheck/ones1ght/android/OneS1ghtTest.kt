@@ -19,16 +19,12 @@ import co.onecheck.ones1ght.android.network.ApiError
 import co.onecheck.ones1ght.android.positioning.PositioningPermission
 import co.onecheck.ones1ght.android.positioning.PositioningProvider
 import co.onecheck.ones1ght.android.positioning.PositioningProviderDelegate
-import co.onecheck.ones1ght.android.positioning.RangingEngine
+import co.onecheck.ones1ght.android.positioning.FakeHubEngine
 import co.onecheck.ones1ght.android.positioning.UwbPositioningProvider
 import co.onecheck.ones1ght.android.runtime.FakeAppLifecycle
 import co.onecheck.ones1ght.android.runtime.InMemoryKeyValueStore
 import co.onecheck.ones1ght.android.runtime.LogLevel
-import co.onecheck.ones1ght.android.zone.CoroutineDwellScheduler
-import co.onecheck.ones1ght.android.zone.ZoneEngine
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -194,13 +190,7 @@ class OneS1ghtTest {
 
     /** 내장 provider 의 구역 이벤트가 FloorSession 리스너로 나뉘어 간다(Ruling 1). */
     @Test fun builtInZoneEventsReachSessionListeners() {
-        val engine = NoopRangingEngine()
-        val hub = UwbPositioningProvider.create(
-            engine,
-            ZoneEngine(CoroutineDwellScheduler(CoroutineScope(SupervisorJob() + h.dispatcher))),
-            h.dispatcher,
-            clock = { 0L },
-        )
+        val hub = UwbPositioningProvider.create(FakeHubEngine(), h.dispatcher, clock = { 0L })
         h.builtIn = hub
         initialize()
         OneS1ght.identify("p1")
@@ -454,25 +444,33 @@ class OneS1ghtTest {
     @Test fun permissionResultDecision() {
         val ranging = PositioningPermission.RANGING
         val fine = PositioningPermission.FINE_LOCATION
-        assertEquals(PermissionStatus.AUTHORIZED, PositioningPermission.decide(mapOf(ranging to true, fine to true)))
-        assertEquals(PermissionStatus.DENIED, PositioningPermission.decide(mapOf(ranging to true, fine to false)))
-        assertEquals(PermissionStatus.DENIED, PositioningPermission.decide(mapOf(ranging to false, fine to true)))
+        val scan = PositioningPermission.BLUETOOTH_SCAN
+        assertEquals(PermissionStatus.AUTHORIZED, PositioningPermission.decide(mapOf(ranging to true, fine to true, scan to true)))
+        assertEquals(PermissionStatus.DENIED, PositioningPermission.decide(mapOf(ranging to true, fine to false, scan to true)))
+        assertEquals(PermissionStatus.DENIED, PositioningPermission.decide(mapOf(ranging to false, fine to true, scan to true)))
+        // 근처 기기(BLE 스캔)를 거부하면 층을 못 찾는다 — 측위 엔진이 오류 3 으로 떨어지므로 거부다.
+        assertEquals(PermissionStatus.DENIED, PositioningPermission.decide(mapOf(ranging to true, fine to true, scan to false)))
+        assertEquals(PermissionStatus.DENIED, PositioningPermission.decide(mapOf(ranging to true, fine to true)))
         // 요청이 취소되면(액티비티 재생성 등) 빈 결과가 온다 — 허용으로 보지 않는다.
         assertEquals(PermissionStatus.DENIED, PositioningPermission.decide(emptyMap()))
         assertEquals(PermissionStatus.DENIED, PositioningPermission.decide(mapOf(ranging to true)))
         // 대략 위치만 허용(정밀 거부)은 측위가 안 된다 — 거부다.
         val coarse = PositioningPermission.COARSE_LOCATION
-        assertEquals(PermissionStatus.DENIED, PositioningPermission.decide(mapOf(ranging to true, fine to false, coarse to true)))
+        assertEquals(
+            PermissionStatus.DENIED,
+            PositioningPermission.decide(mapOf(ranging to true, fine to false, coarse to true, scan to true)),
+        )
         assertEquals(
             PermissionStatus.AUTHORIZED,
-            PositioningPermission.decide(mapOf(ranging to true, fine to true, coarse to true)),
+            PositioningPermission.decide(mapOf(ranging to true, fine to true, coarse to true, scan to true)),
         )
-        // Android 12+ 는 FINE 을 COARSE 와 함께 요청해야 한다 — 요청 목록에는 셋 다 있다.
+        // Android 12+ 는 FINE 을 COARSE 와 함께 요청해야 한다 — 요청 목록에는 넷 다 있다.
         assertEquals(
             listOf(
                 "android.permission.RANGING",
                 "android.permission.ACCESS_FINE_LOCATION",
                 "android.permission.ACCESS_COARSE_LOCATION",
+                "android.permission.BLUETOOTH_SCAN",
             ),
             PositioningPermission.PERMISSIONS.toList(),
         )
@@ -494,16 +492,18 @@ class OneS1ghtTest {
         assertTrue(a.startsWith("onesight.permissions"))
     }
 
-    // MARK: - 기기 판정 캐시 예열 (동기 읽기가 메인을 막지 않게)
+    // MARK: - 기기 판정은 기다리지 않는다
 
-    /** initialize 가 칩 조회를 미리 띄워 두면, 뒤의 동기 읽기는 다시 묻지 않는다(=막지 않는다). */
-    @Test fun initializeWarmsChipQuerySoSyncReadDoesNotQuery() {
+    /**
+     * 판정은 시스템 기능 조회라 즉답이다 — 캐시·예열 없이 읽을 때마다 기기에 묻고, 그 답을 그대로 준다.
+     * (예전에는 칩 능력 콜백을 기다려야 해서 예열·캐시가 있었다.)
+     */
+    @Test fun availabilityFollowsTheDeviceWithoutCaching() {
         initialize()
-        h.eventually("initialize 가 칩 조회를 예열하지 않았다") { h.capability.queries == 1 }
-
         assertEquals(DeviceAvailability.AVAILABLE, OneS1ght.deviceAvailability)
-        assertEquals(DeviceAvailability.AVAILABLE, OneS1ght.deviceAvailability)
-        assertEquals("동기 읽기가 느린 조회를 다시 탔다", 1, h.capability.queries)
+        h.capability.supported = false
+        assertEquals(DeviceAvailability.DEVICE_NOT_SUPPORTED, OneS1ght.deviceAvailability)
+        assertEquals(2, h.capability.queries)
     }
 
     // MARK: - 키 교체
@@ -530,12 +530,6 @@ class OneS1ghtTest {
     }
 
     // MARK: - 가짜
-
-    private class NoopRangingEngine : RangingEngine {
-        override fun open(sessionId: Int, listener: RangingEngine.Listener) {}
-        override fun close() {}
-        override fun applyAnchors(anchors: Map<Int, DoubleArray>) {}
-    }
 
     private class PausableProvider : PositioningProvider {
         override var delegate: PositioningProviderDelegate? = null

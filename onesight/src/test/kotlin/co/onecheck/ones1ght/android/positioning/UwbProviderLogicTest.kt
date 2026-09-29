@@ -8,140 +8,45 @@ import co.onecheck.ones1ght.android.model.ZoneEventStatus
 import co.onecheck.ones1ght.android.runtime.LogLevel
 import co.onecheck.ones1ght.android.runtime.SdkErrorCode
 import co.onecheck.ones1ght.android.runtime.SdkLocalized
-import co.onecheck.ones1ght.android.zone.CoroutineDwellScheduler
-import co.onecheck.ones1ght.android.zone.ZoneEngine
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.TestDispatcher
 import org.junit.After
-import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
 /**
- * UWB 측위 어댑터의 안드로이드 비의존 부분 — 앵커 진단·주소 추출·세션 흐름 오케스트레이션.
+ * 측위 엔진 어댑터의 오케스트레이션 — 라이선스·기동/정지·층 추적·층 감시(E3007)·층 대조(E3008)·
+ * 영역 매핑·일시정지·구역 재적재·오류 매핑·늦은 콜백.
  *
- * 실제 레인징(android.ranging + 좌표 엔진)은 [RangingEngine] 뒤에 있고 여기서는 가짜
- * ([FakeEngine])로 갈아 끼운다. 엔진 콜백은 아무 스레드에서나 오므로 provider 는 메인
- * 디스패처로 넘긴다 — 테스트는 [StandardTestDispatcher] 를 메인으로 주고 `runCurrent()` 로 흘린다.
+ * 실제 엔진은 [HubEngine] 뒤에 있고 여기서는 [FakeHubEngine] 으로 갈아 끼운다. 엔진 콜백은 엔진
+ * 스레드에서 오므로 provider 는 코어 디스패처로 넘긴다 — 테스트는 [StandardTestDispatcher] 를 코어로
+ * 주고 `runCurrent()` 로 흘린다.
  *
- * 포팅 원본: b804f3b UwbPositioningProvider.swift(세션 흐름·진단·좌표 전달),
- * 현재 UwbPositioningProvider.swift(pause·phase), PositioningPauseTests.swift(일시정지 중 영역 이벤트 차단).
+ * 포팅 원본: UwbPositioningProvider.swift(통합 엔진 경로), PositioningPauseTests.swift.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class UwbProviderLogicTest {
 
-    // MARK: - AnchorTracker
-
-    @Test fun anchorTrackerReportsMissingAnchor() {
-        val t = AnchorTracker()
-        t.register(setOf(0x0B4A, 0x0B4B, 0x0B4C))
-        t.seen(0x0B4A)
-        t.seen(0x0B4C)
-
-        val d = t.diagnostic(hasFix = false)
-
-        assertEquals(3, d.registeredCount)
-        assertEquals(2, d.receivedCount)
-        assertEquals(2, d.matchedCount)
-        assertEquals(listOf(0x0B4B), d.missingAddresses)
-        assertEquals("0x0B4B", d.missingLabel)
-        assertFalse(d.hasFix)
-        assertTrue("안드로이드는 앵커별 수신을 안다", d.canAttributePerAnchor)
-    }
-
-    @Test fun anchorTrackerCountsUnregisteredAsReceivedButNotMatched() {
-        val t = AnchorTracker()
-        t.register(setOf(0x0001, 0x0002))
-        t.seen(0x0001)
-        t.seen(0x0001)
-        t.seen(0x0999)
-
-        val d = t.diagnostic(hasFix = true)
-
-        assertEquals(2, d.registeredCount)
-        assertEquals(2, d.receivedCount)
-        assertEquals(1, d.matchedCount)
-        assertEquals(listOf(0x0002), d.missingAddresses)
-        assertTrue(d.hasFix)
-    }
-
-    @Test fun anchorTrackerClearSeenKeepsRegistration() {
-        val t = AnchorTracker()
-        t.register(setOf(0x0001))
-        t.seen(0x0001)
-        t.clearSeen()
-
-        val d = t.diagnostic(hasFix = false)
-        assertEquals(1, d.registeredCount)
-        assertEquals(0, d.receivedCount)
-        assertEquals(listOf(0x0001), d.missingAddresses)
-    }
-
-    // MARK: - 주소 하위 2바이트
-
-    @Test fun shortAddressOfTwoByteAddress() {
-        assertEquals(0x0B4B, AnchorTracker.shortAddress(byteArrayOf(0x0B, 0x4B)))
-    }
-
-    @Test fun shortAddressOfExtendedAddressIsLastTwoBytes() {
-        val ext = byteArrayOf(0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x0B, 0x4B)
-        assertEquals(0x0B4B, AnchorTracker.shortAddress(ext))
-    }
-
-    @Test fun shortAddressIsUnsigned() {
-        assertEquals(0xABCD, AnchorTracker.shortAddress(byteArrayOf(0xAB.toByte(), 0xCD.toByte())))
-    }
-
-    @Test fun shortAddressOfTooShortInputIsNull() {
-        assertNull(AnchorTracker.shortAddress(byteArrayOf(0x01)))
-        assertNull(AnchorTracker.shortAddress(null))
-    }
-
-    // MARK: - 세션 흐름 (가짜 엔진)
-
-    private class FakeEngine : RangingEngine {
-        val opens = mutableListOf<Int>()
-        var closes = 0
-        val appliedAnchors = mutableListOf<Map<Int, DoubleArray>>()
-        var listener: RangingEngine.Listener? = null
-        var throwOnOpen: RuntimeException? = null
-
-        override fun open(sessionId: Int, listener: RangingEngine.Listener) {
-            throwOnOpen?.let { throw it }
-            opens += sessionId
-            this.listener = listener
-        }
-
-        override fun close() {
-            closes += 1
-        }
-
-        override fun applyAnchors(anchors: Map<Int, DoubleArray>) {
-            appliedAnchors += anchors
-        }
-    }
-
     private class RecordingDelegate : PositioningProviderDelegate {
-        val positions = mutableListOf<Triple<Coordinates, String?, Long>>()
-        val zones = mutableListOf<Pair<String, ZoneEventStatus>>()
+        val positions = mutableListOf<Pair<Coordinates, String?>>()
+        val zones = mutableListOf<Triple<String, ZoneEventStatus, String?>>()
         val enters = mutableListOf<String>()
-        val reports = mutableListOf<SdkErrorCode>()
+        val reports = mutableListOf<Pair<SdkErrorCode, String>>()
 
         override fun onPosition(provider: PositioningProvider, coordinates: Coordinates, floorId: String?, atMs: Long) {
-            positions += Triple(coordinates, floorId, atMs)
+            positions += coordinates to floorId
         }
 
         override fun onZone(provider: PositioningProvider, zoneId: String, status: ZoneEventStatus, floorId: String?, atMs: Long) {
-            zones += zoneId to status
+            zones += Triple(zoneId, status, floorId)
         }
 
         override fun onEnter(provider: PositioningProvider, buildingId: String) {
@@ -149,461 +54,582 @@ class UwbProviderLogicTest {
         }
 
         override fun onReport(provider: PositioningProvider, code: SdkErrorCode, context: String) {
-            reports += code
+            reports += code to context
         }
+
+        fun codes(): List<SdkErrorCode> = reports.map { it.first }
     }
 
     private val sq = listOf(Position(0.0, 0.0), Position(10.0, 0.0), Position(10.0, 10.0), Position(0.0, 10.0))
-    private val zoneA = Zone("za", "A", sq, dwellSeconds = 5)
+    private val zoneA = Zone("za", "정육 코너", sq, dwellSeconds = 5)
 
     private lateinit var scheduler: TestCoroutineScheduler
     private lateinit var main: TestDispatcher
-    private lateinit var scope: CoroutineScope
-    private lateinit var engine: FakeEngine
-    private lateinit var zoneEngine: ZoneEngine
+    private lateinit var engine: FakeHubEngine
     private lateinit var delegate: RecordingDelegate
     private lateinit var provider: UwbPositioningProvider
     private val zoneEvents = mutableListOf<ZoneEvent>()
+    private val raw = mutableListOf<String>()
     private val logs = mutableListOf<Pair<LogLevel, String>>()
 
     @Before fun setUp() {
         SdkLocalized.language = "ko"
         scheduler = TestCoroutineScheduler()
         main = StandardTestDispatcher(scheduler)
-        scope = CoroutineScope(SupervisorJob() + main)
-        engine = FakeEngine()
-        zoneEngine = ZoneEngine(CoroutineDwellScheduler(scope))
+        engine = FakeHubEngine()
         delegate = RecordingDelegate()
-        provider = UwbPositioningProvider.create(engine, zoneEngine, main, clock = { scheduler.currentTime })
+        provider = UwbPositioningProvider.create(engine, main, clock = { scheduler.currentTime })
         provider.delegate = delegate
+        provider.license = "lic-0123456789"
         provider.onZoneEvent = { zoneEvents += it }
+        provider.onRawAreaEvent = { _, name, inOut, _ -> raw += "$inOut:$name" }
         provider.onLog = { level, msg -> logs += level to msg }
     }
 
     @After fun tearDown() {
         provider.stop()
-        scope.cancel()
         SdkLocalized.language = null
     }
 
     private fun flush() = scheduler.runCurrent()
 
-    private fun configured(sessionId: Int? = 7) {
-        provider.apply("b-1", "f-1")
+    private val hub: HubEngine.Listener get() = engine.current!!
+
+    /** 콘솔 층 "14" + 존 A. */
+    private fun configured(consoleFloor: String = "14") {
+        provider.apply("b-1", consoleFloor)
         provider.apply(
             PositioningConfig(
                 anchors = mapOf(0x0001 to doubleArrayOf(0.0, 0.0, 2.0), 0x0002 to doubleArrayOf(5.0, 0.0, 2.0)),
-                sessionId = sessionId,
+                sessionId = 7,
                 zones = listOf(zoneA),
             ),
         )
     }
 
-    private fun startOpened() {
+    /** 가동 + 엔진 시작 확인 + 층 14 추적까지. */
+    private fun tracking(floor: Long = 14) {
         configured()
         provider.start()
-        engine.listener!!.onOpened()
+        hub.onStarted()
+        hub.onTrackingStarted(floor)
         flush()
     }
 
-    /** 엔진 스레드에서 좌표 한 점이 오고, 메인에서 처리되기까지. */
-    private fun fix(x: Double, y: Double, atMs: Long) {
-        scheduler.advanceTimeBy(atMs - scheduler.currentTime)
-        engine.listener!!.onPosition(x, y, 1.2)
-        flush()
-    }
+    // MARK: - 라이선스
 
-    @Test fun startWithoutSessionIdIsRefusedWithE3003() {
-        configured(sessionId = null)
+    /** 라이선스가 없으면 엔진을 띄우지 않고 E1007 — 조용한 실패 금지. */
+    @Test fun startWithoutLicenseIsRefusedWithE1007() {
+        provider.license = "  "
+        configured()
 
         provider.start()
         flush()
 
-        assertTrue(engine.opens.isEmpty())
-        assertEquals(listOf(SdkErrorCode.SESSION_ID_MISSING), delegate.reports)
+        assertEquals(0, engine.starts)
+        assertTrue(engine.licenses.isEmpty())
+        assertEquals(listOf(SdkErrorCode.KEY_UNAVAILABLE), delegate.codes())
         assertEquals(Phase.IDLE, provider.phase)
         assertFalse(provider.isRunning)
+        assertTrue("입장 트리거도 없다", delegate.enters.isEmpty())
     }
 
-    @Test fun startOpensSessionWithInjectedSessionIdAndEntersBuilding() {
+    /** 라이선스는 start 직전에 엔진에 등록한다(앞뒤 공백 제거). 로그에 키가 새지 않는다. */
+    @Test fun startRegistersLicenseListenerThenStarts() {
+        provider.license = "  lic-0123456789 "
         configured()
 
         provider.start()
 
-        assertEquals(listOf(7), engine.opens)
+        assertEquals(listOf("lic-0123456789"), engine.licenses)
+        assertNotNull(engine.current)
+        assertEquals(1, engine.starts)
         assertEquals(Phase.STARTING, provider.phase)
+        assertTrue(provider.isRunning)
         assertEquals(listOf("b-1"), delegate.enters)
+        assertFalse("라이선스가 로그에 찍혔다", logs.any { it.second.contains("lic-0123") })
 
-        engine.listener!!.onOpened()
+        hub.onStarted()
         flush()
         assertEquals(Phase.SEARCHING, provider.phase)
     }
 
-    @Test fun applyConfigInjectsAnchorsIntoEngineAndTrackerAndZonesIntoJudge() {
-        configured()
+    // MARK: - 층
 
-        assertEquals(1, engine.appliedAnchors.size)
-        assertEquals(setOf(0x0001, 0x0002), engine.appliedAnchors[0].keys)
-        assertEquals(2, provider.positioningDiagnostic!!.registeredCount)
-        assertEquals(listOf(zoneA), zoneEngine.zones)
-    }
+    @Test fun trackingStartedMovesToTrackingAndRemembersFloor() {
+        tracking()
 
-    @Test fun positionIsForwardedOnMainAndFeedsZoneJudge() {
-        startOpened()
-
-        engine.listener!!.onPosition(5.0, 5.0, 1.2)
-        assertTrue("메인으로 넘기기 전에는 아무것도 나가지 않는다", delegate.positions.isEmpty())
-        flush()
-
-        assertEquals(1, delegate.positions.size)
-        assertEquals(Coordinates(5.0, 5.0, 1.2), delegate.positions[0].first)
-        assertEquals("f-1", delegate.positions[0].second)
         assertEquals(Phase.TRACKING, provider.phase)
-        assertTrue(provider.positioningDiagnostic!!.hasFix)
+        assertEquals(14L, provider.detectedFloorId)
+        assertTrue("같은 층이면 불일치가 아니다", delegate.reports.isEmpty())
 
-        fix(5.0, 5.0, 1_000)
-        fix(5.0, 5.0, 2_000)
-
-        assertEquals(listOf("za" to ZoneEventStatus.ENTER), delegate.zones)
-        assertEquals(1, zoneEvents.size)
-        assertTrue(zoneEvents[0] is ZoneEvent.Enter)
+        hub.onTrackingStopped(14)
+        flush()
+        assertEquals(Phase.SEARCHING, provider.phase)
+        assertNull(provider.detectedFloorId)
     }
 
-    @Test fun anchorSeenFeedsDiagnostic() {
-        startOpened()
-
-        engine.listener!!.onAnchorSeen(0x0001)
+    /** 엔진 층 ≠ 콘솔 층이면 E3008 — 층이 유지되는 동안은 한 번만. */
+    @Test fun floorMismatchIsReportedOncePerFloor() {
+        configured(consoleFloor = "15")
+        provider.start()
+        hub.onStarted()
+        hub.onTrackingStarted(14)
+        hub.onTrackingStopped(14)
+        hub.onTrackingStarted(14)
         flush()
 
-        val d = provider.positioningDiagnostic!!
-        assertEquals(1, d.receivedCount)
-        assertEquals(listOf(0x0002), d.missingAddresses)
+        val mismatches = delegate.reports.filter { it.first == SdkErrorCode.FLOOR_ID_MISMATCH }
+        assertEquals(1, mismatches.size)
+        assertEquals("engine=14 console=15", mismatches[0].second)
+
+        hub.onTrackingStarted(16)
+        flush()
+        assertEquals(2, delegate.reports.count { it.first == SdkErrorCode.FLOOR_ID_MISMATCH })
     }
 
-    @Test fun dwellGoesOnlyToOnZoneEvent() {
-        startOpened()
-        zoneEngine.onEvent!!.invoke(ZoneEvent.Dwell(zoneA, 5.0, 0))
+    /** 콘솔 층을 안 정했으면(setFloorMap 전) 대조하지 않는다 — 그건 불일치가 아니다. */
+    @Test fun noConsoleFloorMeansNoMismatch() {
+        provider.start()
+        hub.onStarted()
+        hub.onTrackingStarted(14)
+        flush()
+
+        assertFalse(delegate.codes().contains(SdkErrorCode.FLOOR_ID_MISMATCH))
+    }
+
+    /** 20초 안에 층을 못 찾으면 E3007 — 엔진은 계속 탐색만 하고 오류를 주지 않는다. */
+    @Test fun floorNotDetectedAfterTwentySeconds() {
+        configured()
+        provider.start()
+        hub.onStarted()
+        flush()
+
+        scheduler.advanceTimeBy(UwbPositioningProvider.FLOOR_DETECT_DELAY_MS - 1)
+        scheduler.runCurrent()
+        assertFalse(delegate.codes().contains(SdkErrorCode.FLOOR_NOT_DETECTED))
+
+        scheduler.advanceTimeBy(2)
+        scheduler.runCurrent()
+        assertEquals(1, delegate.codes().count { it == SdkErrorCode.FLOOR_NOT_DETECTED })
+    }
+
+    @Test fun floorFoundInTimeCancelsTheWatch() {
+        tracking()
+        scheduler.advanceTimeBy(UwbPositioningProvider.FLOOR_DETECT_DELAY_MS * 2)
+        scheduler.runCurrent()
+
+        assertFalse(delegate.codes().contains(SdkErrorCode.FLOOR_NOT_DETECTED))
+    }
+
+    @Test fun stopCancelsTheFloorWatch() {
+        configured()
+        provider.start()
+        provider.stop()
+        scheduler.advanceTimeBy(UwbPositioningProvider.FLOOR_DETECT_DELAY_MS * 2)
+        scheduler.runCurrent()
+
+        assertFalse(delegate.codes().contains(SdkErrorCode.FLOOR_NOT_DETECTED))
+    }
+
+    // MARK: - 좌표
+
+    /** 좌표는 코어로 넘긴 뒤 나가고, 서버 floor_id 는 엔진 층이다(콘솔 층 아님). */
+    @Test fun positionIsForwardedOnCoreWithEngineFloor() {
+        configured(consoleFloor = "15")
+        provider.start()
+        hub.onStarted()
+        hub.onTrackingStarted(14)
+
+        hub.onPosition(14, 5.0, 5.0, 1.2)
+        assertTrue("코어로 넘기기 전에는 아무것도 나가지 않는다", delegate.positions.isEmpty())
+        flush()
+
+        assertEquals(listOf(Coordinates(5.0, 5.0, 1.2) to "14"), delegate.positions)
+        assertTrue(provider.positioningDiagnostic.hasFix)
+    }
+
+    /** 엔진은 앵커별 수신을 안 준다 — 진단은 반드시 "특정 불가" 로 나간다(그래야 E4002 가 산다). */
+    @Test fun diagnosticCannotAttributePerAnchor() {
+        configured()
+        val before = provider.positioningDiagnostic
+        assertFalse(before.canAttributePerAnchor)
+        assertEquals(2, before.registeredCount)
+        assertFalse(before.hasFix)
+        assertTrue(before.missingAddresses.isEmpty())
+
+        provider.start()
+        hub.onPosition(14, 1.0, 1.0, 0.0)
+        flush()
+        val after = provider.positioningDiagnostic
+        assertTrue(after.hasFix)
+        assertEquals(2, after.receivedCount)
+    }
+
+    // MARK: - 영역
+
+    /** 엔진 영역 이름 → 콘솔 zone_id 로 서버에 간다. floor_id 는 엔진 층. */
+    @Test fun areaEventIsMappedToConsoleZone() {
+        tracking()
+
+        hub.onAreaEvent(14, "정육 코너", "IN")
+        hub.onAreaEvent(14, "정육 코너", "OUT")
+        flush()
+
+        assertEquals(
+            listOf(Triple("za", ZoneEventStatus.ENTER, "14"), Triple("za", ZoneEventStatus.EXIT, "14")),
+            delegate.zones,
+        )
+        assertEquals(2, zoneEvents.size)
+        assertEquals(listOf("IN:정육 코너", "OUT:정육 코너"), raw)
+    }
+
+    /** 층을 아직 못 잡았으면 콘솔 층으로 귀속한다. */
+    @Test fun areaEventWithoutEngineFloorUsesConsoleFloor() {
+        configured(consoleFloor = "15")
+        provider.start()
+        hub.onAreaEvent(14, "정육 코너", "IN")
+        flush()
+
+        assertEquals(listOf(Triple("za", ZoneEventStatus.ENTER, "15")), delegate.zones)
+    }
+
+    /** 콘솔에 없는 이름은 E3009 — 이벤트를 만들지 않는다. */
+    @Test fun unmappedAreaIsE3009() {
+        tracking()
+
+        hub.onAreaEvent(14, "수산 코너", "IN")
+        flush()
 
         assertTrue(delegate.zones.isEmpty())
-        assertEquals(1, zoneEvents.size)
+        assertEquals(listOf(SdkErrorCode.ZONE_MAPPING_FAILED), delegate.codes())
     }
 
-    @Test fun pausedPositionsAreNotConsumed() {
-        startOpened()
-        provider.pause()
-
-        fix(5.0, 5.0, 0)
-
-        assertTrue(provider.isPaused)
-        assertTrue(delegate.positions.isEmpty())
-        assertEquals(1, engine.opens.size)
-        assertEquals("일시정지는 세션을 닫지 않는다", 0, engine.closes)
-    }
-
-    /** PositioningPauseTests: 일시정지 중에는 영역 이벤트를 내보내지 않는다. */
-    @Test fun whilePausedZoneEventsAreNotDelivered() {
-        startOpened()
-        provider.pause()
-
-        zoneEngine.onEvent!!.invoke(ZoneEvent.Enter(zoneA, 0))
-        zoneEngine.onEvent!!.invoke(ZoneEvent.Exit(zoneA, 1_000))
-        zoneEngine.onEvent!!.invoke(ZoneEvent.Dwell(zoneA, 5.0, 2_000))
-
-        assertTrue("delegate.onZone 이 나갔다: ${delegate.zones}", delegate.zones.isEmpty())
-        assertTrue("onZoneEvent 가 나갔다: $zoneEvents", zoneEvents.isEmpty())
-    }
-
-    /** PositioningPauseTests: 재개하면 영역 이벤트가 다시 나간다(영원히 막는 구현 방지). */
-    @Test fun afterResumeZoneEventsFlowAgain() {
-        startOpened()
-        provider.pause()
-        zoneEngine.onEvent!!.invoke(ZoneEvent.Enter(zoneA, 0))
-        provider.resume()
-        zoneEngine.onEvent!!.invoke(ZoneEvent.Enter(zoneA, 1_000))
-
-        assertEquals(listOf("za" to ZoneEventStatus.ENTER), delegate.zones)
-        assertEquals(1, zoneEvents.size)
-    }
-
-    @Test fun resumeResetsZoneJudge() {
-        startOpened()
-        fix(5.0, 5.0, 0)
-        fix(5.0, 5.0, 1_000)
-        fix(5.0, 5.0, 2_000)
-        assertEquals("za", zoneEngine.activeZoneId)
-
-        provider.pause()
-        provider.resume()
-
-        assertNull(zoneEngine.activeZoneId)
-    }
-
-    @Test fun sessionIdChangeWhileRunningReopensSession() {
-        startOpened()
-
-        provider.apply(PositioningConfig(sessionId = 9))
-
-        assertEquals(1, engine.closes)
-        assertEquals(listOf(7), engine.opens)
-        engine.listener!!.onClosed(RangingErrorMapping.REASON_LOCAL_REQUEST)
+    /** DWELL 은 앱 훅까지만 — 서버로 보내지 않는다. */
+    @Test fun dwellGoesOnlyToLocalHook() {
+        tracking()
+        hub.onAreaEvent(14, "정육 코너", "IN")
         flush()
 
-        assertEquals(listOf(7, 9), engine.opens)
-        assertTrue(provider.isRunning)
-        assertTrue("정상 종료는 코드를 올리지 않는다", delegate.reports.isEmpty())
-        assertEquals("재오픈은 입장 트리거를 다시 쏘지 않는다", listOf("b-1"), delegate.enters)
-    }
-
-    @Test fun sameSessionIdOrNotRunningDoesNotReopen() {
-        startOpened()
-        provider.apply(PositioningConfig(sessionId = 7))
-        assertEquals(0, engine.closes)
-
-        provider.stop()
-        provider.apply(PositioningConfig(sessionId = 11))
-        assertEquals(1, engine.closes)
-        assertEquals(listOf(7), engine.opens)
-    }
-
-    @Test fun openFailedReportsMappedCodeAndReturnsToIdle() {
-        configured()
-        provider.start()
-
-        engine.listener!!.onOpenFailed(RangingErrorMapping.REASON_UNSUPPORTED)
-        flush()
-
-        assertEquals(listOf(SdkErrorCode.DEVICE_NOT_SUPPORTED), delegate.reports)
-        assertEquals(Phase.IDLE, provider.phase)
-        assertFalse(provider.isRunning)
-    }
-
-    @Test fun unexpectedCloseReportsMappedCodeAndStops() {
-        startOpened()
-
-        engine.listener!!.onClosed(RangingErrorMapping.REASON_NO_PEERS_FOUND)
-        flush()
-
-        assertEquals(listOf(SdkErrorCode.NO_POSITION_FIX), delegate.reports)
-        assertEquals(Phase.IDLE, provider.phase)
-        assertFalse(provider.isRunning)
-    }
-
-    @Test fun localCloseAfterStopReportsNothing() {
-        startOpened()
-        provider.stop()
-        assertEquals(Phase.STOPPING, provider.phase)
-
-        engine.listener!!.onClosed(RangingErrorMapping.REASON_LOCAL_REQUEST)
-        flush()
-
-        assertTrue(delegate.reports.isEmpty())
-        assertEquals(Phase.IDLE, provider.phase)
-    }
-
-    @Test fun securityExceptionOnOpenIsE2003AndStaysIdle() {
-        configured()
-        engine.throwOnOpen = SecurityException("RANGING not granted")
-
-        provider.start()
-        flush()
-
-        assertEquals(listOf(SdkErrorCode.PERMISSION_DENIED), delegate.reports)
-        assertEquals(Phase.IDLE, provider.phase)
-        assertFalse(provider.isRunning)
-    }
-
-    @Test fun unsupportedOnOpenIsE2002() {
-        configured()
-        engine.throwOnOpen = UnsupportedOperationException("API 34 < 37")
-
-        provider.start()
-        flush()
-
-        assertEquals(listOf(SdkErrorCode.DEVICE_NOT_SUPPORTED), delegate.reports)
-        assertEquals(Phase.IDLE, provider.phase)
-        assertFalse(provider.isRunning)
-    }
-
-    @Test fun startWhileStoppingIsQueuedUntilClosed() {
-        startOpened()
-        provider.stop()
-
-        provider.start()
-        assertEquals(listOf(7), engine.opens)
-
-        engine.listener!!.onClosed(RangingErrorMapping.REASON_LOCAL_REQUEST)
-        flush()
-
-        assertEquals(listOf(7, 7), engine.opens)
-        assertTrue(provider.isRunning)
-    }
-
-    @Test fun positionsFromAClosedSessionAreDropped() {
-        startOpened()
-        val old = engine.listener!!
-        provider.stop()
-        old.onClosed(RangingErrorMapping.REASON_LOCAL_REQUEST)
-        flush()
-        provider.start()
-        engine.listener!!.onOpened()
-        flush()
-
-        old.onPosition(5.0, 5.0, 1.0)
-        flush()
-
-        assertTrue(delegate.positions.isEmpty())
-    }
-
-    @Test fun diagnosticLogIsWrittenOnceFiveSecondsAfterStart() {
-        startOpened()
-        val diag = { logs.count { it.second.startsWith("측위 엔진 ") && it.second.contains("콘솔 로케이터") } }
-
-        scheduler.advanceTimeBy(4_999)
+        scheduler.advanceTimeBy(5_001)
         scheduler.runCurrent()
-        assertEquals(0, diag())
 
-        scheduler.advanceTimeBy(1)
-        scheduler.runCurrent()
-        assertEquals(1, diag())
-        assertEquals("좌표 없고 유효 앵커 3대 미만 → ERROR", LogLevel.ERROR, logs.last { it.second.contains("콘솔 로케이터") }.first)
-
-        scheduler.advanceTimeBy(60_000)
-        scheduler.runCurrent()
-        assertEquals(1, diag())
+        assertEquals(1, delegate.zones.size)
+        assertEquals(1, zoneEvents.filterIsInstance<ZoneEvent.Dwell>().size)
     }
 
-    @Test fun stopClearsPauseAndFix() {
-        startOpened()
-        fix(1.0, 1.0, 0)
-        provider.pause()
+    /** 측위 중이 아니면 영역 이벤트는 수집·전송하지 않는다(원본 훅에는 남는다). */
+    @Test fun areaEventWhileNotRunningIsNotForwarded() {
+        configured()
+        provider.handleAreaEvent(14, "정육 코너", "IN")
+        flush()
 
-        provider.stop()
+        assertTrue(delegate.zones.isEmpty())
+        assertEquals(listOf("IN:정육 코너"), raw)
+    }
 
+    // MARK: - 일시정지 (PositioningPauseTests 포팅)
+
+    @Test fun startsUnpaused() {
         assertFalse(provider.isPaused)
-        assertFalse(provider.positioningDiagnostic!!.hasFix)
     }
 
-    @Test fun anchorsAreKeptWhenConfigHasNone() {
-        configured()
-        provider.apply(PositioningConfig(zones = emptyList()))
-
-        assertEquals(1, engine.appliedAnchors.size)
-        assertEquals(2, provider.positioningDiagnostic!!.registeredCount)
-        assertTrue("빈 구역 목록도 그대로 반영한다", zoneEngine.zones.isEmpty())
+    /** 측위 중이 아니면 일시정지는 조용히 무시한다 — 켜지면 다음 start 의 좌표가 통째로 버려진다. */
+    @Test fun pauseIsIgnoredWhenNotRunning() {
+        provider.pause()
+        assertFalse(provider.isPaused)
     }
 
-    @Test fun anchorMapIsPassedThrough() {
-        configured()
-        assertArrayEquals(doubleArrayOf(5.0, 0.0, 2.0), engine.appliedAnchors[0][0x0002], 0.0)
+    @Test fun resumeIsIdempotent() {
+        provider.resume()
+        provider.resume()
+        assertFalse(provider.isPaused)
     }
 
-    // MARK: - Fix round 1
+    @Test fun stopClearsPause() {
+        tracking()
+        provider.pause()
+        provider.stop()
+        assertFalse(provider.isPaused)
+    }
 
-    /** 일시정지 중 세션 번호가 바뀌어도 일시정지·가동 상태가 유지된다(조용한 재개 금지). */
-    @Test fun sessionIdChangeWhilePausedKeepsPauseAndRunning() {
-        startOpened()
+    /** 일시정지는 엔진을 끄지 않는다 — 좌표만 버린다. */
+    @Test fun pauseKeepsTheEngineRunningAndDropsPositions() {
+        tracking()
         provider.pause()
 
-        provider.apply(PositioningConfig(sessionId = 9))
-        assertTrue(provider.isRunning)
-        assertTrue(provider.isPaused)
-
-        engine.listener!!.onClosed(RangingErrorMapping.REASON_LOCAL_REQUEST)
+        hub.onPosition(14, 5.0, 5.0, 1.2)
         flush()
-        assertEquals(listOf(7, 9), engine.opens)
-        assertTrue(provider.isRunning)
-        assertTrue(provider.isPaused)
 
-        engine.listener!!.onOpened()
-        flush()
-        fix(5.0, 5.0, 0)
-        zoneEngine.onEvent!!.invoke(ZoneEvent.Enter(zoneA, 0))
+        assertTrue(provider.isPaused)
         assertTrue(delegate.positions.isEmpty())
+        assertEquals("일시정지는 엔진을 멈추지 않는다", 0, engine.stops)
+        assertTrue("멈춘 동안의 좌표도 수신 진단에는 센다(E4002 오탐 방지)", provider.positioningDiagnostic.hasFix)
+    }
+
+    /** ⚠️ 이번 회귀의 본체(iOS 2026-09-10) — 일시정지 중에는 영역 이벤트도 나가지 않는다. */
+    @Test fun whilePausedAreaEventsAreNotDelivered() {
+        tracking()
+        provider.pause()
+
+        hub.onAreaEvent(14, "정육 코너", "IN")
+        hub.onAreaEvent(14, "정육 코너", "OUT")
+        flush()
+
+        assertTrue("일시정지 중인데 영역 이벤트가 밖으로 나갔다: $raw", raw.isEmpty())
         assertTrue(delegate.zones.isEmpty())
         assertTrue(zoneEvents.isEmpty())
+        assertTrue("넘긴 사실은 로그에 남는다", logs.any { it.second.contains("정육 코너") })
+    }
 
+    /** 막는 것만 맞으면 절반이다 — 재개하면 다시 나가야 한다. */
+    @Test fun afterResumeAreaEventsFlowAgain() {
+        tracking()
+        provider.pause()
+        hub.onAreaEvent(14, "정육 코너", "IN")
+        flush()
         provider.resume()
-        assertFalse(provider.isPaused)
-        fix(5.0, 5.0, 1_000)
-        assertEquals(1, delegate.positions.size)
+        hub.onAreaEvent(14, "정육 코너", "IN")
+        flush()
+
+        assertEquals("재개 뒤의 이벤트가 한 건만 나가야 한다", listOf("IN:정육 코너"), raw)
+        assertEquals(1, delegate.zones.size)
     }
 
-    @Test fun sessionIdChangeKeepsRunningDuringReopenWindow() {
-        startOpened()
-        provider.apply(PositioningConfig(sessionId = 9))
-        assertTrue("재오픈 중에도 가동 중으로 보여야 한다", provider.isRunning)
+    /** 재개는 판정기를 비운다 — 안에서 멈추고 밖에서 재개하면 판정기가 옛 "안" 을 믿는다. */
+    @Test fun resumeResetsTheJudge() {
+        tracking()
+        hub.onAreaEvent(14, "정육 코너", "IN")
+        flush()
+        provider.pause()
+        provider.resume()
+
+        scheduler.advanceTimeBy(10_000)
+        scheduler.runCurrent()
+
+        assertTrue("재개 뒤에 옛 진입의 체류가 발화했다", zoneEvents.none { it is ZoneEvent.Dwell })
     }
 
-    /** onClosed 가 끝내 안 와도 STOPPING 에 고착되지 않는다. */
+    // MARK: - 정지·재시작
+
+    /** 정지는 엔진 onStopped 뒤에 끝난다 — 그때 리스너를 푼다. */
+    @Test fun stopWaitsForOnStoppedThenReleasesListener() {
+        tracking()
+        val listener = hub
+
+        provider.stop()
+        assertEquals(1, engine.stops)
+        assertEquals(Phase.STOPPING, provider.phase)
+        assertFalse(provider.isRunning)
+
+        listener.onStopped()
+        flush()
+        assertEquals(Phase.IDLE, provider.phase)
+        assertNull("정지 뒤 리스너를 푼다", engine.current)
+        assertNull(provider.detectedFloorId)
+        assertTrue("사용자가 끈 것은 오류 코드가 아니다", delegate.reports.isEmpty())
+    }
+
+    /** 내려가는 중에 온 start 는 예약만 하고, onStopped 뒤에 이어서 띄운다(iOS 2026-09-10). */
+    @Test fun startWhileStoppingIsQueuedUntilStopped() {
+        tracking()
+        val listener = hub
+        provider.stop()
+
+        provider.start()
+        assertEquals("아직 띄우면 안 된다", 1, engine.starts)
+
+        listener.onStopped()
+        flush()
+        assertEquals(2, engine.starts)
+        assertTrue(provider.isRunning)
+        assertEquals(Phase.STARTING, provider.phase)
+        assertEquals("새 가동이라 입장 트리거가 다시 나간다", listOf("b-1", "b-1"), delegate.enters)
+    }
+
+    /** onStopped 가 끝내 안 와도 STOPPING 에 고착되지 않는다. 옛 기동의 늦은 콜백은 버린다. */
     @Test fun stopWatchdogUnblocksQueuedStart() {
-        startOpened()
-        val old = engine.listener!!
+        tracking()
+        val old = hub
         provider.stop()
         provider.start()
-        assertEquals(listOf(7), engine.opens)
 
         scheduler.advanceTimeBy(UwbPositioningProvider.STOP_TIMEOUT_MS + 1)
         scheduler.runCurrent()
 
-        assertEquals(listOf(7, 7), engine.opens)
+        assertEquals(2, engine.starts)
         assertTrue(provider.isRunning)
         assertTrue(logs.any { it.first == LogLevel.WARN })
 
-        // 옛 세대의 늦은 onClosed 는 새 세션을 건드리지 않는다.
-        old.onClosed(RangingErrorMapping.REASON_LOCAL_REQUEST)
+        old.onStopped()
+        old.onPosition(14, 1.0, 1.0, 1.0)
         flush()
-        assertTrue(provider.isRunning)
+        assertTrue("옛 기동의 늦은 콜백이 새 기동을 건드렸다", provider.isRunning)
         assertEquals(Phase.STARTING, provider.phase)
+        assertTrue(delegate.positions.isEmpty())
     }
 
-    @Test fun stopWatchdogIsCancelledByTimelyClose() {
-        startOpened()
-        provider.stop()
-        engine.listener!!.onClosed(RangingErrorMapping.REASON_LOCAL_REQUEST)
+    /** 엔진이 스스로 멈추면(오류 3·7·10 뒤) 가동이 끝난다 — 자동 재개 없음, WARN 로그. */
+    @Test fun selfStopEndsPositioning() {
+        tracking()
+
+        hub.onError(3, "bluetooth unavailable")
+        hub.onStopped()
         flush()
-        provider.start()
-        val opens = engine.opens.size
 
-        scheduler.advanceTimeBy(UwbPositioningProvider.STOP_TIMEOUT_MS + 1)
-        scheduler.runCurrent()
-
-        assertEquals(opens, engine.opens.size)
-        assertTrue(provider.isRunning)
-    }
-
-    /** 사용자가 끈 것은 어떤 사유로 닫혀도 오류 코드가 아니다. */
-    @Test fun requestedStopNeverReportsErrorCode() {
-        startOpened()
-        provider.stop()
-        engine.listener!!.onClosed(RangingErrorMapping.REASON_UNKNOWN)
-        flush()
-        assertTrue(delegate.reports.isEmpty())
         assertEquals(Phase.IDLE, provider.phase)
+        assertFalse(provider.isRunning)
+        assertEquals(listOf(SdkErrorCode.PERMISSION_DENIED), delegate.codes())
+        assertEquals("engine=3 bluetooth unavailable", delegate.reports[0].second)
+        assertTrue(logs.any { it.first == LogLevel.WARN && it.second == SdkLocalized.t("uwb.stoppedSelf") })
     }
 
-    @Test fun openFailedAfterStopDuringStartingReportsNothing() {
+    // MARK: - 시작 단계 오류
+
+    /** 시작 단계 실패(onStopped 없이 끝남)는 여기서 되돌린다 — 안 그러면 STARTING 에 고착된다. */
+    @Test fun startAbortErrorReturnsToIdleWithMappedCode() {
         configured()
         provider.start()
-        provider.stop()
-        engine.listener!!.onOpenFailed(RangingErrorMapping.REASON_UNSUPPORTED)
+
+        hub.onError(10, "license is invalid")
         flush()
-        assertTrue(delegate.reports.isEmpty())
+
         assertEquals(Phase.IDLE, provider.phase)
+        assertFalse(provider.isRunning)
+        assertEquals(listOf(SdkErrorCode.INVALID_KEY), delegate.codes())
+        assertNull(engine.current)
+
+        // 다시 시작할 수 있다.
+        provider.start()
+        assertEquals(2, engine.starts)
     }
 
-    /** 수신 점검의 hasFix 는 일시정지로 지워지지 않는다. */
-    @Test fun pauseDoesNotClearDiagnosticFix() {
-        startOpened()
-        fix(1.0, 1.0, 0)
-        provider.pause()
-        assertTrue(provider.positioningDiagnostic!!.hasFix)
+    /** 스캔 시작 제한(13)도 시작 단계 실패다 — E3007 로 올리고 IDLE. */
+    @Test fun scanThrottleAtStartIsFloorNotDetectedAndIdle() {
+        configured()
+        provider.start()
+
+        hub.onError(13, "scan started too frequently")
+        flush()
+
+        assertEquals(Phase.IDLE, provider.phase)
+        assertEquals(listOf(SdkErrorCode.FLOOR_NOT_DETECTED), delegate.codes())
     }
 
-    @Test fun fixWhilePausedCountsForDiagnostic() {
-        startOpened()
+    /** 8(아직 정지 중) — 코드는 올리지 않고, 그 정지가 끝나면 조용히 다시 띄운다. */
+    @Test fun stoppingRejectionRetriesAfterOnStopped() {
+        configured()
+        provider.start()
+        val enters = delegate.enters.size
+
+        hub.onError(8, "still stopping")
+        flush()
+        assertTrue("8 은 호출 순서 문제 — 코드로 올리지 않는다", delegate.reports.isEmpty())
+        assertEquals(Phase.STOPPING, provider.phase)
+        assertTrue("가동 의사는 유지된다", provider.isRunning)
+
+        hub.onStopped()
+        flush()
+        assertEquals(2, engine.starts)
+        assertEquals(Phase.STARTING, provider.phase)
+        assertTrue(provider.isRunning)
+        assertEquals("재시도는 입장 트리거를 다시 쏘지 않는다", enters, delegate.enters.size)
+    }
+
+    /** 2(이미 시작됨) — 엔진이 이미 돌고 있다. 시작된 것으로 친다. */
+    @Test fun alreadyStartedIsTreatedAsStarted() {
+        configured()
+        provider.start()
+
+        hub.onError(2, "already started")
+        flush()
+
+        assertEquals(Phase.SEARCHING, provider.phase)
+        assertTrue(provider.isRunning)
+        assertTrue(delegate.reports.isEmpty())
+    }
+
+    /** 엔진 start 가 동기로 던지면(권한 SecurityException) E2003 · IDLE. */
+    @Test fun securityExceptionOnStartIsE2003() {
+        engine.throwOnStart = SecurityException("no RANGING")
+        configured()
+
+        provider.start()
+        flush()
+
+        assertEquals(Phase.IDLE, provider.phase)
+        assertFalse(provider.isRunning)
+        assertEquals(listOf(SdkErrorCode.PERMISSION_DENIED), delegate.codes())
+    }
+
+    // MARK: - 구역 재적재
+
+    /** 재적재 = 엔진 stop → onStopped → 다시 start. 가동·일시정지는 그대로, 입장 트리거는 다시 안 쏜다. */
+    @Test fun reloadGeofencesRestartsTheEngineQuietly() {
+        tracking()
         provider.pause()
-        fix(1.0, 1.0, 0)
-        assertTrue(provider.positioningDiagnostic!!.hasFix)
-        assertTrue(delegate.positions.isEmpty())
+        val first = hub
+
+        provider.reloadGeofences()
+        assertEquals(1, engine.stops)
+        assertTrue("재적재 중에도 가동 중으로 보여야 한다", provider.isRunning)
+        assertTrue(logs.any { it.first == LogLevel.WARN && it.second == SdkLocalized.t("uwb.geofenceReload") })
+
+        first.onStopped()
+        flush()
+
+        assertEquals(2, engine.starts)
+        assertNotSame("새 기동은 새 리스너(세대)", first, engine.current)
+        assertTrue(provider.isRunning)
+        assertTrue("일시정지는 재적재에 풀리지 않는다", provider.isPaused)
+        assertEquals(Phase.STARTING, provider.phase)
+        assertEquals(listOf("b-1"), delegate.enters)
+        assertFalse("재적재는 스스로 멈춘 것이 아니다", logs.any { it.second == SdkLocalized.t("uwb.stoppedSelf") })
+        assertTrue(delegate.reports.isEmpty())
+    }
+
+    /** 측위 중이 아니면 재적재는 할 일이 없다 — 다음 start 가 어차피 새로 읽는다. */
+    @Test fun reloadGeofencesIsIgnoredWhenNotRunning() {
+        configured()
+        provider.reloadGeofences()
+        assertEquals(0, engine.stops)
+        assertEquals(0, engine.starts)
+    }
+
+    /** 재적재 중에 stop 이 오면 stop 이 이긴다 — 다시 띄우지 않는다. */
+    @Test fun stopDuringReloadWins() {
+        tracking()
+        val first = hub
+        provider.reloadGeofences()
+        provider.stop()
+
+        first.onStopped()
+        flush()
+
+        assertEquals(1, engine.starts)
+        assertEquals(Phase.IDLE, provider.phase)
+        assertFalse(provider.isRunning)
+    }
+
+    // MARK: - 존 주입
+
+    /** 빈 존 목록도 그대로 반영한다 — 지운 구역에서 시책이 계속 발화하면 안 된다. */
+    @Test fun emptyZoneListIsApplied() {
+        tracking()
+        provider.apply(PositioningConfig(zones = emptyList()))
+
+        hub.onAreaEvent(14, "정육 코너", "IN")
+        flush()
+
+        assertTrue(delegate.zones.isEmpty())
+        assertEquals(listOf(SdkErrorCode.ZONE_MAPPING_FAILED), delegate.codes())
+    }
+
+    /** 앵커 없는 config(존만 폴링)는 등록 로케이터 수를 지우지 않는다. */
+    @Test fun anchorsAreKeptWhenConfigHasNone() {
+        configured()
+        provider.apply(PositioningConfig(zones = listOf(zoneA)))
+
+        assertEquals(2, provider.positioningDiagnostic.registeredCount)
     }
 }
