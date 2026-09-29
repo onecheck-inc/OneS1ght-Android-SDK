@@ -23,6 +23,12 @@ commonsMath3 = "3.6.1" # must match the engine POM
 jtsCore = "1.18.2" # must match the engine POM
 slf4jApi = "1.7.31" # must match the engine POM
 
+# Maven Central(Sonatype Central Portal) 배포 — 서명·POM·소스/javadoc jar·업로드를 한 플러그인이 맡는다.
+# 0.37.0 = AGP 9 · Gradle 9 대응 최신 정식판(플러그인 API 9.0.0 기준 빌드).
+mavenPublish = "0.37.0"
+# javadoc jar 를 Dokka(HTML)로 만든다 — AGP 9 내장 Kotlin 과 함께 동작하는 2.x.
+dokka = "2.2.0"
+
 [libraries]
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerializationJson" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
@@ -41,3 +47,5 @@ geoplan-engine-slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4
 [plugins]
 android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+maven-publish = { id = "com.vanniktech.maven.publish", version.ref = "mavenPublish" }
+dokka = { id = "org.jetbrains.dokka", version.ref = "dokka" }
