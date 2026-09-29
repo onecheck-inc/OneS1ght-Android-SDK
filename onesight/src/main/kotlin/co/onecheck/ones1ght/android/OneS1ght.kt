@@ -37,6 +37,7 @@ package co.onecheck.ones1ght.android
 //
 
 import android.content.Context
+import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.annotation.MainThread
 import co.onecheck.ones1ght.android.model.Building
@@ -91,8 +92,9 @@ public enum class PermissionStatus {
 }
 
 /**
- * 측위에 필요한 최소 API 레벨 — Android 17. 측위 엔진의 최소 사양이고 패키지 minSdk 도 같다
- * (그래서 설치된 기기에서 OS_VERSION_TOO_LOW 는 실제로 나오지 않는다 — iOS 와 모양을 맞추려고 남겨 둔다).
+ * 측위에 필요한 최소 API 레벨 — Android 17. 측위 엔진의 최소 사양이다. 패키지 minSdk 는 26 이라
+ * ("설치는 넓게, 측위는 지원 OS 에서만" — iOS 의 패키지 18 · 측위 27 과 같은 모양) 그 사이 기기에서는
+ * deviceAvailability=OS_VERSION_TOO_LOW · permissions()=UNSUPPORTED · begin()=OsVersionTooLow(E2001) 다.
  */
 internal const val MIN_POSITIONING_SDK: Int = 37
 
@@ -605,8 +607,18 @@ public object OneS1ght {
     /** 영속 저장소·앱 생명주기. 운영은 SharedPreferences·ProcessLifecycleOwner. */
     internal var platformFactory: (Context) -> Pair<KeyValueStore, AppLifecycle?> = defaultPlatformFactory
 
-    private val defaultBuiltInProviderFactory: (Context) -> PositioningProvider =
-        { ctx -> createBuiltInProvider(ctx, dispatcher, System::currentTimeMillis) }
+    /**
+     * 내장 provider(측위 엔진) 생성. begin() 이 이미 OS 를 걸렀지만 그 판정은 주입 가능한 [deviceCapability]
+     * 를 거친다 — 엔진 클래스를 로드하는 이 자리에서는 실제 `SDK_INT` 로 한 번 더 막는다(API 37 미만에서
+     * 엔진을 건드리면 android.ranging 이 없어 NoClassDefFoundError 다).
+     */
+    private val defaultBuiltInProviderFactory: (Context) -> PositioningProvider = { ctx ->
+        if (Build.VERSION.SDK_INT >= MIN_POSITIONING_SDK) {
+            createBuiltInProvider(ctx, dispatcher, System::currentTimeMillis)
+        } else {
+            throw SdkError.OsVersionTooLow()
+        }
+    }
 
     /**
      * 공간 조회의 (콘솔 주소, 공간 서비스 주소). 운영은 null — 공간 조회는 기본 주소로 나간다
