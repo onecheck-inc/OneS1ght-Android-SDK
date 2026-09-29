@@ -23,6 +23,9 @@ dependencyResolutionManagement {
         if (hasGeoplanEngineCreds) {
             maven {
                 url = uri(geoplanNexusUrl!!)
+                // 엔진 저장소가 http 로 제공된다 — 이 저장소 하나에만 허용하고, 엔진 그룹만 여기서 찾는다.
+                isAllowInsecureProtocol = geoplanNexusUrl.startsWith("http://")
+                content { includeGroup("kr.geoplan.android.lib") }
                 credentials {
                     username = geoplanNexusUser
                     password = geoplanNexusPassword
