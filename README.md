@@ -36,13 +36,24 @@ Add the dependency to your app module's `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("co.onecheck.ones1ght:android:0.0.1")
+    implementation("com.ones1ght.sdk:android:0.0.2")
 }
 ```
 
-> ⚠️ The distribution repository is **not finalized yet** — the coordinates above are
-> correct, but where to resolve them from is provisional. Ask your OneS1ght contact for
-> the current repository before wiring this into a CI build.
+The SDK is published to **Maven Central** — no extra repository is needed. New Android
+projects already list it; if yours does not, make sure `settings.gradle.kts` has:
+
+```kotlin
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+```
+
+> Upgrading from 0.0.1? Only the coordinates changed (`co.onecheck.ones1ght:android` →
+> `com.ones1ght.sdk:android`). Package names and APIs are the same — no code changes.
 
 The library's own manifest declares `RANGING`, `ACCESS_FINE_LOCATION`,
 `ACCESS_COARSE_LOCATION` and `INTERNET` —
@@ -435,6 +446,14 @@ OneS1ght.onDebugLog = DebugLogListener { level, message -> Log.d("OneS1ght", "[$
 ```
 
 ⚠️ Leave this unset in production.
+
+---
+
+## License
+
+The OneS1ght SDK is proprietary software licensed to OneS1ght customers under their
+service agreement with OneCheck Inc. See [LICENSE](LICENSE) for the full terms.
+Third-party components bundled with or used by the SDK remain under their own licenses.
 
 ---
 

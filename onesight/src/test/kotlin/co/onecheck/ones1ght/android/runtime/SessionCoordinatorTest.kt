@@ -8,6 +8,7 @@ package co.onecheck.ones1ght.android.runtime
 //  포팅 원본: SessionCoordinatorTests.swift (+ 존 전송 재시도·층 지정·배경 전환 보강).
 //
 
+import co.onecheck.ones1ght.android.OneS1ght
 import co.onecheck.ones1ght.android.SdkError
 import co.onecheck.ones1ght.android.internal.SdkJson
 import co.onecheck.ones1ght.android.model.Coordinates
@@ -698,7 +699,7 @@ class SessionCoordinatorTest {
         val logs = routes.requests.first { it.path == "/api/sdk/v1/logs" }
         val obj = SdkJson.parseToJsonElement(logs.body).jsonObject
         assertEquals("Android", obj["platform_name"]?.jsonPrimitive?.content)
-        assertEquals("0.0.1", obj["sdk_version"]?.jsonPrimitive?.content)
+        assertEquals(OneS1ght.SDK_VERSION, obj["sdk_version"]?.jsonPrimitive?.content)
         val entry = obj["entries"]!!.jsonArray.map { it.jsonObject }.first { it["code"]?.jsonPrimitive?.content == "E4001" }
         assertEquals("ERROR", entry["level"]?.jsonPrimitive?.content)
         assertEquals("ctx=1", entry["message"]?.jsonPrimitive?.content)

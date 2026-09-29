@@ -1,6 +1,6 @@
 {
   "platform": "android",
-  "sdkVersion": "0.0.1",
+  "sdkVersion": "0.0.2",
   "language": "kotlin",
   "requirements": {
     "positioning": {
@@ -31,7 +31,7 @@
         {
           "path": "app/build.gradle.kts",
           "language": "kotlin",
-          "code": "dependencies {\n    implementation(\"co.onecheck.ones1ght:android:0.0.1\")\n}"
+          "code": "// settings.gradle.kts 의 repositories 에 mavenCentral() 이 있으면 된다 — 별도 저장소는 필요 없다.\ndependencies {\n    implementation(\"com.ones1ght.sdk:android:0.0.2\")\n}"
         },
         {
           "path": "app/src/main/AndroidManifest.xml",
@@ -40,9 +40,9 @@
         }
       ],
       "notes": [
-        "배포 저장소는 담당자 안내"
+        "Maven Central 에 배포된다 — 새 안드로이드 프로젝트 기본값(google() · mavenCentral())이면 저장소를 따로 추가하지 않는다."
       ],
-      "warning": "좌표(co.onecheck.ones1ght:android:0.0.1)만으로는 저장소가 정해지지 않았다 — 어느 저장소에서 받을지는 담당자에게 별도로 안내받는다."
+      "warning": "0.0.1 의 좌표 co.onecheck.ones1ght:android 는 쓰지 않는다 — 0.0.2 부터 com.ones1ght.sdk:android 다(패키지·코드는 그대로)."
     },
     {
       "id": "permission",

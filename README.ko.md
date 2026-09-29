@@ -36,13 +36,24 @@ SDK가 실제로 동작하려면 키와 공간 설정이 먼저 준비되어야 
 
 ```kotlin
 dependencies {
-    implementation("co.onecheck.ones1ght:android:0.0.1")
+    implementation("com.ones1ght.sdk:android:0.0.2")
 }
 ```
 
-> ⚠️ 배포 저장소는 **아직 확정되지 않았습니다** — 위 좌표는 맞지만 어느 저장소에서
-> 받아올지는 정해지지 않았습니다. CI 빌드에 넣기 전에 담당자에게 현재 저장소 주소를
-> 확인하세요.
+SDK 는 **Maven Central** 에 배포됩니다 — 저장소를 따로 추가할 필요가 없습니다. 새 안드로이드
+프로젝트에는 이미 들어 있고, 없다면 `settings.gradle.kts` 에 다음이 있는지 확인하세요.
+
+```kotlin
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+```
+
+> 0.0.1 에서 올라오나요? 좌표만 바뀌었습니다(`co.onecheck.ones1ght:android` →
+> `com.ones1ght.sdk:android`). 패키지 이름과 API 는 같아 코드는 고칠 것이 없습니다.
 
 라이브러리 자체 매니페스트가 `RANGING` · `ACCESS_FINE_LOCATION` · `ACCESS_COARSE_LOCATION` ·
 `INTERNET` 권한을
@@ -433,6 +444,14 @@ OneS1ght.onDebugLog = DebugLogListener { level, message -> Log.d("OneS1ght", "[$
 ```
 
 ⚠️ 운영에서는 등록하지 않는 것을 권합니다.
+
+---
+
+## 라이선스
+
+OneS1ght SDK 는 OneCheck Inc. 와 서비스 계약을 맺은 OneS1ght 고객에게 사용이 허락되는
+독점 소프트웨어입니다. 전체 조건은 [LICENSE](LICENSE) 를 보세요. SDK 에 포함되거나 SDK 가 쓰는
+제3자 구성요소는 각자의 라이선스를 따릅니다.
 
 ---
 
