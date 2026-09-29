@@ -20,8 +20,8 @@ androidxActivity = "1.9.3"             # core 1.13 · stdlib 1.8 대 (1.13 은 c
 # 측위 엔진(gpa-dltdoa 2.1.0)의 전이 의존. 엔진 POM 에 적힌 버전과 같아야 한다
 # (어긋나면 링크 단계에서 NoSuchMethodError 등으로 깨질 수 있다).
 commonsMath3 = "3.6.1" # must match the engine POM
-jtsCore = "1.20.0" # must match the engine POM
-slf4jApi = "2.0.20" # must match the engine POM
+jtsCore = "1.18.2" # must match the engine POM
+slf4jApi = "1.7.31" # must match the engine POM
 
 [libraries]
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerializationJson" }

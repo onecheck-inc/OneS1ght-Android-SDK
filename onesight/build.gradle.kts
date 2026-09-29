@@ -117,7 +117,11 @@ if (hasGeoplanEngineCreds) {
         }
     }
 
-    val engineClassesJar = layout.buildDirectory.file("geoplanEngine/extracted/classes.jar")
+    // 엔진 AAR 은 classes.jar 외에 libs/ 아래 내부 라이브러리 jar(측위 필터 등)를 함께 싣는다 —
+    // 둘 다 실어야 런타임에 클래스가 빠지지 않는다. 이름은 엔진 판마다 바뀔 수 있어 패턴으로 잡는다.
+    val engineJars = engineExtractedDir.map { dir ->
+        dir.asFileTree.matching { include("classes.jar", "libs/*.jar") }
+    }
 
     // 엔진 AAR 의 proguard.txt 가 있으면 우리 consumer-rules.pro 와 합쳐 별도 머지본으로
     // 내보낸다(레포에 커밋된 consumer-rules.pro 원본은 건드리지 않는다). 이 머지본이
@@ -147,10 +151,12 @@ if (hasGeoplanEngineCreds) {
     }
 
     dependencies {
-        implementation(files(engineClassesJar).builtBy(extractEngineAar))
+        implementation(files(engineJars).builtBy(extractEngineAar))
         // 전이 의존은 엔진 POM 에 적힌 버전 그대로 implementation 한다
         // (gradle/libs.versions.toml). Maven Central 공개 좌표라 고객 빌드에
         // 엔진 저장소가 노출되지는 않는다.
+        // 엔진 POM 의 androidx.appcompat·material 은 싣지 않는다 — 엔진 바이트코드가 참조하지 않는
+        // UI 라이브러리다(2.1.0 기준 javap 로 확인: commons-math3·jts-core·slf4j-api 만 참조).
         implementation(libs.geoplan.engine.commons.math3)
         implementation(libs.geoplan.engine.jts.core)
         implementation(libs.geoplan.engine.slf4j.api)
