@@ -175,5 +175,9 @@ class SnippetsTest {
 
         val positioning = req?.get("positioning")?.jsonObject
         assertEquals("Android 17 (API 37)+", positioning?.get("os")?.jsonPrimitive?.contentOrNull)
+
+        // 설치는 넓게(minSdk 26), 측위는 Android 17+ — onesight/build.gradle.kts 의 minSdk 와 같아야 한다.
+        val pkg = req?.get("package")?.jsonObject
+        assertEquals("Android 8.0 (API 26)+", pkg?.get("os")?.jsonPrimitive?.contentOrNull)
     }
 }

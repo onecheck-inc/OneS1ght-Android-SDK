@@ -16,7 +16,7 @@
 | 項目 | 要件 |
 |---|---|
 | 測位 | **Android 17 (API 37) 以上** ・ UWB **DL-TDoA** 対応端末 ・ Bluetooth LE(フロア検出) |
-| パッケージ導入 | **Android 17 (API 37) 以上**(`minSdk 37` — 測位エンジンの最小要件)。UWB 非搭載端末でもアプリは正常に動作し、測位のみ無効になります |
+| パッケージ導入 | **Android 8.0 (API 26) 以上**(`minSdk 26`)。Android 17 未満や UWB 非搭載端末でもアプリは正常に動作し、測位のみ無効になります(`OS_VERSION_TOO_LOW` / `E2001`) |
 | ビルド環境 | `compileSdk` / `targetSdk` 37、JVM target 17 |
 | 言語 | Java 8+ / Kotlin 1.9+ のアプリで利用可能 |
 
@@ -36,7 +36,7 @@ SDK が実際に動作するには、キーと空間設定が先に用意され�
 
 ```kotlin
 dependencies {
-    implementation("com.ones1ght.sdk:android:0.0.3")
+    implementation("com.ones1ght.sdk:android:0.0.4")
 }
 ```
 
@@ -53,9 +53,13 @@ dependencyResolutionManagement {
 }
 ```
 
-アプリモジュールの `minSdk` は **37 以上**が必要です — それより低いとマニフェストのマージに失敗します。
+アプリモジュールの `minSdk` は **26 以上**であれば導入できます。測位そのものは Android 17(API 37) 以上でのみ
+動作します — それ未満では `deviceAvailability` が `OS_VERSION_TOO_LOW`、`permissions(activity)` は
+ダイアログなしで `UNSUPPORTED`、`begin()` は `SdkError.OsVersionTooLow`(`E2001`)になります。初期化・空間取得・
+プロフィールなどそれ以外の機能は、すべての対応 OS で動作します。
 
-> 0.0.2 から更新する場合: `minSdk` を 37 に上げてください。`permissions(activity)` は
+> 0.0.3 から更新する場合: 変更は不要です — アプリの `minSdk` を 26 以上の値に戻して構いません。
+> 0.0.2 から更新する場合: `permissions(activity)` は
 > `BLUETOOTH_SCAN` も一緒に要求し、`setFloorMap` は任意になりました — [CHANGELOG](CHANGELOG.md) 参照。
 > 0.0.1 から更新する場合: 座標も変わっています(`co.onecheck.ones1ght:android` →
 > `com.ones1ght.sdk:android`)。パッケージ名は同じです。

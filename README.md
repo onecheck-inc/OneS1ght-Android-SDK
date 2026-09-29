@@ -17,7 +17,7 @@ over BLE and judges zones itself) and (with two platform-forced exceptions, see
 | Item | Requirement |
 |---|---|
 | Positioning | **Android 17 (API 37)+** · UWB **DL-TDoA** capable device · Bluetooth LE (floor detection) |
-| Package | **Android 17 (API 37)+** (`minSdk 37` — the positioning engine's minimum). On devices without UWB the app runs normally; only positioning stays inactive |
+| Package | **Android 8.0 (API 26)+** (`minSdk 26`). Below Android 17, or on devices without UWB, the app runs normally; only positioning stays inactive (`OS_VERSION_TOO_LOW` / `E2001`) |
 | Build | `compileSdk` / `targetSdk` 37, JVM target 17 |
 | Language | Works from Java 8+ / Kotlin 1.9+ apps |
 
@@ -37,7 +37,7 @@ Add the dependency to your app module's `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("com.ones1ght.sdk:android:0.0.3")
+    implementation("com.ones1ght.sdk:android:0.0.4")
 }
 ```
 
@@ -53,9 +53,13 @@ dependencyResolutionManagement {
 }
 ```
 
-Your app module needs `minSdk = 37` or higher — the manifest merge fails below that.
+Your app module needs `minSdk = 26` or higher. Positioning itself runs only on Android 17 (API 37)+ —
+below that `deviceAvailability` is `OS_VERSION_TOO_LOW`, `permissions(activity)` returns `UNSUPPORTED`
+without a prompt, and `begin()` throws `SdkError.OsVersionTooLow` (`E2001`). Everything else
+(initialize, spaces, profiles) works on every supported OS.
 
-> Upgrading from 0.0.2? Raise `minSdk` to 37. `permissions(activity)` now also asks for
+> Upgrading from 0.0.3? Nothing to change — you may lower your app's `minSdk` back (26+).
+> Upgrading from 0.0.2? `permissions(activity)` now also asks for
 > `BLUETOOTH_SCAN`, and `setFloorMap` became optional — see [CHANGELOG](CHANGELOG.md).
 > Upgrading from 0.0.1? The coordinates also changed (`co.onecheck.ones1ght:android` →
 > `com.ones1ght.sdk:android`); package names are the same.
