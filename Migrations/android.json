@@ -1,6 +1,6 @@
 {
   "platform": "android",
-  "currentVersion": "0.0.2",
+  "currentVersion": "0.0.3",
   "_readme": [
     "판올림마다 이 파일에 한 칸을 더한다. 비어 있으면 MCP 가 '변경 없음' 이라고 답할 근거가 없어",
     "에이전트가 추측으로 코드를 고치게 된다 — 그게 이 파일이 존재하는 이유다.",
@@ -20,6 +20,30 @@
           "file": "app/build.gradle.kts",
           "before": "implementation(\"co.onecheck.ones1ght:android:0.0.1\")",
           "after": "implementation(\"com.ones1ght.sdk:android:0.0.2\")"
+        }
+      ]
+    },
+    {
+      "from": "0.0.2",
+      "to": "0.0.3",
+      "breaking": true,
+      "summary": "측위 엔진이 통합 엔진으로 바뀌었다 — 층을 BLE 로 스스로 찾고 구역 진출입까지 판정한다(iOS 와 같은 구조). 앱 minSdk 가 37(Android 17) 이상이어야 하고, 측위 권한에 BLUETOOTH_SCAN 이 더해졌다. setFloorMap 은 선택이 됐다. 공개 API 시그니처는 그대로다.",
+      "action": "① 앱 모듈 build.gradle(.kts) 의 minSdk 를 37 이상으로 올린다(37 미만이면 매니페스트 병합이 실패한다). ② 의존성 좌표를 com.ones1ght.sdk:android:0.0.3 으로 바꾼다. ③ 권한은 OneS1ght.permissions(activity) 가 BLUETOOTH_SCAN 까지 함께 요청하므로 이 함수를 쓰고 있으면 고칠 것이 없다 — 권한을 앱이 직접 요청하고 있었다면 android.permission.BLUETOOTH_SCAN 을 요청 목록에 더한다(매니페스트 선언은 라이브러리가 병합한다). ④ setFloorMap 은 지우지 않아도 된다 — 구역 이벤트(진입·이탈·시책)를 쓰면 계속 부른다. 좌표만 쓰는 앱은 생략할 수 있다. ⑤ 새로 올라오는 로그 코드 E3007(층 미탐지)·E3008(엔진 층≠콘솔 층)·E3009(구역 이름 매핑 실패)·E4004(영역 판정 실패)를 onDebugLog/콘솔 로그 분석기에서 처리하는 곳이 있으면 추가한다(예외로 던지지는 않는다).",
+      "changes": [
+        {
+          "file": "app/build.gradle.kts",
+          "before": "minSdk = 27",
+          "after": "minSdk = 37"
+        },
+        {
+          "file": "app/build.gradle.kts",
+          "before": "implementation(\"com.ones1ght.sdk:android:0.0.2\")",
+          "after": "implementation(\"com.ones1ght.sdk:android:0.0.3\")"
+        },
+        {
+          "file": "(권한을 앱이 직접 요청하는 경우만)",
+          "before": "arrayOf(Manifest.permission.RANGING, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)",
+          "after": "arrayOf(Manifest.permission.RANGING, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.BLUETOOTH_SCAN)"
         }
       ]
     }

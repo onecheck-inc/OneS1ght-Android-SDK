@@ -2,73 +2,33 @@ package co.onecheck.ones1ght.android.positioning
 
 //
 //  AndroidDeviceCapability.kt
-//  [DeviceCapability] 의 실기기 구현 — OS 버전과 RangingManager 의 DL-TDoA 지원 여부.
+//  [DeviceCapability] 의 실기기 구현 — OS 버전과 측위 엔진의 UWB 하드웨어 판정.
 //
-//  · API 37 미만은 칩을 묻지 않는다(물을 API 가 없다) — OneS1ght 가 OS 를 먼저 본다.
-//  · 칩 조회는 registerCapabilitiesCallback 의 첫 응답 하나로 판정한다. 5초 안에 안 오면 false.
-//  · 답과 **시간 초과(=미지원)** 는 프로세스 수명 동안 기억한다([ChipAnswerCache]) — 시간 초과를
-//    기억하지 않으면 동기 판정이 읽을 때마다 메인을 5초씩 막는다. Context 없음·조회 예외는 곧바로
-//    끝나 막지 않으므로 "모름" 으로 두고 다음에 다시 묻는다.
-//  · 콜백 실행기는 호출 스레드(바인더)다 — 메인이 아니다. 동기 조회(deviceAvailability)가 메인에서
-//    결과를 기다려도 교착이 없다.
+//  · 판정은 엔진이 공개한 그대로다: API 37 이상 && UWB 칩 있음(시스템 기능 조회 — 동기, 기다리지 않는다).
+//  · 칩은 있어도 DL-TDoA 를 못 하는 기기가 있다 — 그건 엔진이 start 때 능력 콜백으로 확인하고
+//    오류 12 로 알린다(E2002 로 매핑). 여기서 미리 물을 방법은 동기로는 없다.
 //
 
 import android.content.Context
 import android.os.Build
-import android.ranging.RangingCapabilities
-import android.ranging.RangingManager
-import androidx.annotation.RequiresApi
-import kotlinx.coroutines.suspendCancellableCoroutine
-import java.util.concurrent.Executor
-import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.coroutines.resume
 
 internal class AndroidDeviceCapability(
     /** 지금 아는 applicationContext — initialize·permissions 가 채운다. */
     private val contextProvider: () -> Context?,
+    /** 엔진 판정 — 기본은 내장 엔진. */
+    private val hardware: (Context) -> Boolean = { IntelligenceHubEngine(it).hardwareAvailable },
 ) : DeviceCapability {
 
     override val sdkInt: Int
         get() = Build.VERSION.SDK_INT
 
-    private val answer = ChipAnswerCache(TIMEOUT_MS)
-
-    override val cachedDlTdoa: Boolean?
-        get() = answer.known
-
-    override suspend fun supportsDlTdoa(): Boolean {
-        answer.known?.let { return it }
-        if (Build.VERSION.SDK_INT < MIN_RANGING_SDK) return false
-        val context = contextProvider() ?: return false // initialize 전 — 모름(기억하지 않는다)
-        return answer.get { queryDlTdoa(context) }
-    }
-
-    /** 첫 능력 응답의 DL-TDoA 여부. 조회 자체가 실패하면 null(모름). */
-    @RequiresApi(MIN_RANGING_SDK)
-    private suspend fun queryDlTdoa(context: Context): Boolean? {
-        val manager = context.getSystemService(RangingManager::class.java) ?: return false
-        return suspendCancellableCoroutine { cont ->
-            val answered = AtomicBoolean(false)
-            val callback = object : RangingManager.RangingCapabilitiesCallback {
-                override fun onRangingCapabilities(capabilities: RangingCapabilities) {
-                    if (!answered.compareAndSet(false, true)) return
-                    runCatching { manager.unregisterCapabilitiesCallback(this) }
-                    cont.resume(capabilities.uwbCapabilities?.isDlTdoaSupported == true)
-                }
-            }
-            cont.invokeOnCancellation {
-                if (answered.compareAndSet(false, true)) runCatching { manager.unregisterCapabilitiesCallback(callback) }
-            }
-            try {
-                manager.registerCapabilitiesCallback(Executor { it.run() }, callback)
-            } catch (e: RuntimeException) {
-                if (answered.compareAndSet(false, true)) cont.resume(null)
-            }
-        }
+    override fun hasUwbHardware(): Boolean {
+        if (sdkInt < MIN_ENGINE_SDK) return false
+        val context = contextProvider() ?: return false
+        return runCatching { hardware(context) }.getOrDefault(false)
     }
 
     private companion object {
-        const val MIN_RANGING_SDK = 37
-        const val TIMEOUT_MS = 5_000L
+        const val MIN_ENGINE_SDK = 37
     }
 }

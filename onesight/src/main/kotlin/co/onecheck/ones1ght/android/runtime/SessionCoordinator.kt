@@ -347,7 +347,10 @@ internal class SessionCoordinator(
         if (floor == null || buildingId == null) {
             floorState = null
             currentFloor = null
-            provider?.apply(PositioningConfig()) // 엔진에서 층 설정 해제
+            // 엔진에서 층 설정 해제 — 존·로케이터뿐 아니라 콘솔 층 ID 도 비운다. 안 비우면 provider 가 해제한
+            // 뒤에도 옛 층으로 엔진 층을 대조(E3008)하고, 엔진 층이 없을 때 구역 이벤트를 옛 층으로 보낸다.
+            provider?.apply(buildingId = "", floorId = "")
+            provider?.apply(PositioningConfig())
             restartLiveStreamIfFloorChanged(previousFloor)
             return
         }

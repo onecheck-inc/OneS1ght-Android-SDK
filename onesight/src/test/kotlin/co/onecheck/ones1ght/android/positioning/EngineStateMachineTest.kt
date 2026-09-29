@@ -57,14 +57,39 @@ class EngineStateMachineTest {
         assertEquals(Phase.SEARCHING, sm.phase)
     }
 
-    @Test fun onFirstFixMovesToTracking() {
+    @Test fun onTrackingStartedMovesToTracking() {
         val sm = Recorder().machine()
         sm.start()
         sm.onOpened()
 
-        sm.onFirstFix()
+        sm.onTrackingStarted()
 
         assertEquals(Phase.TRACKING, sm.phase)
+    }
+
+    /** 층을 잃으면 다시 탐색 — 가동은 그대로다. */
+    @Test fun onTrackingStoppedMovesBackToSearching() {
+        val sm = Recorder().machine()
+        sm.start()
+        sm.onOpened()
+        sm.onTrackingStarted()
+
+        sm.onTrackingStopped()
+
+        assertEquals(Phase.SEARCHING, sm.phase)
+        assertTrue(sm.isRunning)
+    }
+
+    /** 내려가는 중에 늦게 온 층 통지는 상태를 되살리지 않는다. */
+    @Test fun lateTrackingStartedWhileStoppingIsIgnored() {
+        val sm = Recorder().machine()
+        sm.start()
+        sm.onOpened()
+        sm.stop()
+
+        sm.onTrackingStarted()
+
+        assertEquals(Phase.STOPPING, sm.phase)
     }
 
     @Test fun stopClosesSessionAndMovesToStopping() {

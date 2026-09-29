@@ -6,7 +6,8 @@
 
 Indoor location intelligence SDK. Add it to your app to collect visit and movement data
 through UWB (DL-TDoA) indoor positioning, and receive zone enter / exit / dwell events
-on device. Same server contract and (with three platform-forced exceptions, see
+on device. Same server contract, the same positioning structure (the engine finds the floor
+over BLE and judges zones itself) and (with two platform-forced exceptions, see
 [CHANGELOG](CHANGELOG.md)) the same public API as the iOS SDK.
 
 ---
@@ -15,8 +16,8 @@ on device. Same server contract and (with three platform-forced exceptions, see
 
 | Item | Requirement |
 |---|---|
-| Positioning | **Android 17 (API 37)+** · UWB **DL-TDoA** capable device |
-| Package | Android 8.1 (API 27)+ — the app runs normally on unsupported devices, only the SDK stays inactive |
+| Positioning | **Android 17 (API 37)+** · UWB **DL-TDoA** capable device · Bluetooth LE (floor detection) |
+| Package | **Android 17 (API 37)+** (`minSdk 37` — the positioning engine's minimum). On devices without UWB the app runs normally; only positioning stays inactive |
 | Build | `compileSdk` / `targetSdk` 37, JVM target 17 |
 | Language | Works from Java 8+ / Kotlin 1.9+ apps |
 
@@ -36,7 +37,7 @@ Add the dependency to your app module's `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("com.ones1ght.sdk:android:0.0.2")
+    implementation("com.ones1ght.sdk:android:0.0.3")
 }
 ```
 
@@ -52,11 +53,15 @@ dependencyResolutionManagement {
 }
 ```
 
-> Upgrading from 0.0.1? Only the coordinates changed (`co.onecheck.ones1ght:android` →
-> `com.ones1ght.sdk:android`). Package names and APIs are the same — no code changes.
+Your app module needs `minSdk = 37` or higher — the manifest merge fails below that.
 
-The library's own manifest declares `RANGING`, `ACCESS_FINE_LOCATION`,
-`ACCESS_COARSE_LOCATION` and `INTERNET` —
+> Upgrading from 0.0.2? Raise `minSdk` to 37. `permissions(activity)` now also asks for
+> `BLUETOOTH_SCAN`, and `setFloorMap` became optional — see [CHANGELOG](CHANGELOG.md).
+> Upgrading from 0.0.1? The coordinates also changed (`co.onecheck.ones1ght:android` →
+> `com.ones1ght.sdk:android`); package names are the same.
+
+The library's own manifest declares `RANGING`, `BLUETOOTH_SCAN`, `ACCESS_FINE_LOCATION`,
+`ACCESS_COARSE_LOCATION`, `INTERNET`, `ACCESS_NETWORK_STATE` and `CHANGE_NETWORK_STATE` —
 these are merged into your app automatically. You do not add them yourself.
 
 ---
@@ -110,15 +115,13 @@ when (OneS1ght.deviceAvailability) {
 }
 ```
 
-This never throws and makes no network call. Read it **after `initialize`** — the chip
-check needs the app context that `initialize` (or `permissions(activity)`) hands over.
-Read before that on Android 17+, it cannot tell and answers `DEVICE_NOT_SUPPORTED`
-(with a WARN in `onDebugLog`).
+This never throws, makes no network call and never waits. Read it **after `initialize`** —
+the UWB check needs the app context that `initialize` (or `permissions(activity)`) hands
+over. Read before that, it cannot tell and answers `DEVICE_NOT_SUPPORTED` (with a WARN in
+`onDebugLog`).
 
-`initialize` starts the chip check in the background, and the answer is remembered for the
-life of the process (a chip that never answers is remembered as not supported after 5
-seconds). Reads after that return immediately; only a read that races that very first
-check waits for it, for up to 5 seconds.
+It checks that the device has a UWB chip. The rare device that has the chip but not DL-TDoA
+support is caught when positioning starts, and logged as `E2002`.
 
 ---
 
@@ -145,16 +148,17 @@ OneS1ght.permissions(activity, new Callback<PermissionStatus>() {
 });
 ```
 
-`permissions(activity)` requests `RANGING` + `ACCESS_FINE_LOCATION` together through
+`permissions(activity)` requests `RANGING` (UWB) + `ACCESS_FINE_LOCATION` + `BLUETOOTH_SCAN`
+(nearby devices — the engine detects the floor over BLE) together through
 `ActivityResultRegistry`, so it is safe to call any time after `onCreate`. It also asks for
 `ACCESS_COARSE_LOCATION`, because Android 12+ only offers precise location when approximate
 location is requested alongside it.
 
-⚠️ Positioning needs **precise** location. If the user picks "Approximate" in the system
-prompt, the result is `DENIED`.
+⚠️ Positioning needs **precise** location and **nearby devices**. If the user picks
+"Approximate" or refuses nearby devices, the result is `DENIED`.
 
 ⚠️ If `deviceAvailability != AVAILABLE`, this returns `UNSUPPORTED` immediately with no
-system prompt. If `RANGING` and precise location are already granted, it returns `AUTHORIZED`
+system prompt. If all three are already granted, it returns `AUTHORIZED`
 immediately, also with no prompt. Otherwise the request times out after 30 seconds and
 resolves to `DENIED`.
 
@@ -199,7 +203,7 @@ not take effect.
 
 ---
 
-## Step 5: Select Space (required)
+## Step 5: Select Space (optional)
 
 ```kotlin
 val buildings = OneS1ght.buildings()
@@ -208,13 +212,15 @@ val floors = OneS1ght.floors(buildings[0].id)
 OneS1ght.setFloorMap(floors[0], buildingId = buildings[0].id)
 ```
 
-`setFloorMap` fetches locators, the UWB session ID and zones, then injects them into the
-positioning pipeline. Calling it again while running switches floors — the session stays.
+The positioning engine finds the floor by itself over BLE, the same as iOS — you can
+`begin()` without a floor and coordinates still come out (`E3001` WARN is logged once; that
+is the normal path). If no floor is found within 20 seconds, `E3007` is logged.
 
-⚠️ **Unlike iOS, Android does not discover the floor by itself.** The iOS engine finds
-the floor from locators advertising over BLE; the Android pipeline has no equivalent
-path. If you `begin()` without calling `setFloorMap` first, positioning runs but produces
-no coordinates, and `E3001` (WARN) is logged once. Calling `setFloorMap` is not optional.
+`setFloorMap` fetches the floor's locators, UWB session ID and zones. Call it when you use
+**zone events**: the engine reports zone entry/exit by area **name**, and the SDK matches that
+name to a console zone of the selected floor to get the zone id it sends to the server
+(`E3009` when a name has no match). If the floor the engine detects differs from the one you
+set, `E3008` is logged. Calling it again while running switches floors — the session stays.
 
 ### Drawing the map
 
@@ -274,7 +280,7 @@ session.begin(new Callback<Void>() {
 });
 ```
 
-`floorSession()` always returns the same instance — the UWB radio, judgement engine and
+`floorSession()` always returns the same instance — the UWB radio, positioning engine and
 coordinate buffer are one per device, so multiple sessions would physically collide.
 
 ⚠️ **Call `begin()` after the permission is granted.** Without the permission, `begin()`
@@ -300,7 +306,7 @@ session.isPaused
 | Zone enter/exit | stop | stop |
 | Upload to server | stop | flush, then stop |
 | Engine · floor · locators | **kept** | released |
-| Cost of coming back | instant | locators found from scratch |
+| Cost of coming back | instant | floor and locators found from scratch |
 
 Use `pause()` for "stop showing my position for a moment". `end()` is for leaving the
 space. Resuming clears the judgement state, so the first zone event after `resume()`
@@ -391,8 +397,9 @@ Every failure carries a code. Include it when contacting support.
 
 | Symptom | Codes | First check |
 |---|---|---|
-| App runs but no coordinates | `E3001` · `E3003` · `E4002` | Floor set (`setFloorMap`)? → UWB session? → locator placement |
-| Zone events never fire | `E3004` | Are zones registered in Console? Were they there **when positioning started**? |
+| App runs but no coordinates | `E3007` · `E2003` · `E4002` | Floor found over BLE (nearby devices allowed, Bluetooth on)? → locator placement |
+| Zone events never fire | `E3009` · `E3004` | Floor set (`setFloorMap`)? Do console zone names match the installed areas? |
+| Data lands on another floor | `E3008` | The floor set in the app vs. the floor the engine detected |
 | Fails on specific devices | `E2001` · `E2002` | Android 17 / UWB DL-TDoA capable? |
 | Permission prompt never returns | `E2003` | Denied once — guide to Settings |
 | 401 right after integration | `E1002` | Key status and environment (production/development) |
@@ -408,33 +415,24 @@ Every failure carries a code. Include it when contacting support.
 | `E2001` | Android version too low |
 | `E2002` | Device does not support UWB |
 | `E2003` | Positioning permission denied |
-| `E3001` | No floor set — **WARN, this is expected until `setFloorMap` is called** |
+| `E3001` | No floor set — **WARN, expected: the engine finds the floor over BLE** |
 | `E3002` | No locators on floor |
 | `E3003` | No UWB session on floor |
 | `E3004` | No zones on floor |
 | `E3006` | Locator lookup failed (map still renders) |
+| `E3007` | Floor not detected over BLE within 20 s — also raised when the device rate-limits BLE scan starts (context `engine=13`; starting again after a moment clears it) |
+| `E3008` | Engine floor differs from the floor set in the app |
+| `E3009` | Engine area name matches no console zone — event not sent |
 | `E4001` | UWB session failed |
 | `E4002` | No position fix |
 | `E4003` | Some locators not received — **WARN, positioning continues** |
-| `E4004` | Zone judgement failed for one sample |
+| `E4004` | Zone judgement failed in the positioning engine |
 | `E5001` | Network failure |
 | `E5002` | Server error |
 | `E5003` | Payload mismatch |
 | `E5004` | Forbidden resource |
 | `E5005` | Response decoding failed |
 | `E5006` | Pending coordinates dropped |
-
-Codes `E3007` and `E3008` exist for the automatic BLE floor-detection path (on iOS, the
-engine finds and tracks the floor from locator advertisements). They are reserved but not
-raised by the Android SDK, since your app selects the floor itself through `setFloorMap` —
-there is no automatic detection step to fail.
-
-Code `E3009` exists for a different thing: mapping an engine-reported area **name** to a
-console zone. On iOS the positioning engine judges zone entry/exit against its own
-geofences and reports them by name, so the SDK has to match that name back to a console
-zone id — `E3009` fires when it can't. It is also reserved but not raised on Android,
-because zone judgement runs on-device directly against the zone geometry fetched from the
-console — there is no separate name to match.
 
 Errors are also uploaded to the Console log analyzer, where tenant administrators can see
 them without touching the app.

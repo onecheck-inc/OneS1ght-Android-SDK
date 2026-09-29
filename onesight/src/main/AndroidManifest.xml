@@ -1,6 +1,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 서버 통신(OneS1ght 서버 · 측위 엔진 라이선스·지오펜스). 측위 엔진 매니페스트가 요구하는 세 가지. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <!-- 측위 런타임 권한 — OneS1ght.permissions(activity) 가 한 번에 요청한다.
+         UWB(RANGING) · 층 탐지 BLE 스캔(BLUETOOTH_SCAN) · 정밀 위치(FINE, COARSE 는 Android 12+ 규칙상 함께 묻는다).
+         BLUETOOTH_SCAN 에 neverForLocation 을 달지 않는다 — 엔진이 BLE 스캔 결과로 층을 고른다. -->
     <uses-permission android:name="android.permission.RANGING" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 </manifest>

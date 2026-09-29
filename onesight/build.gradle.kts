@@ -18,8 +18,9 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        minSdk = 27
-        // consumerProguardFiles 는 아래 gpa-dltdoa 분기(계정 있음/없음)에서 등록한다 —
+        // 측위 엔진의 최소 사양 그대로 — 엔진이 API 37(Android 17)의 android.ranging 을 쓴다.
+        minSdk = 37
+        // consumerProguardFiles 는 아래 엔진 분기(계정 있음/없음)에서 등록한다 —
         // 계정이 있으면 consumer-rules.pro 를 그대로 쓰지 않고 엔진 proguard.txt 와
         // 합친 파일 하나로 대체한다(둘 다 등록하면 consumer-rules.pro 내용이 두 번 실린다).
     }
@@ -72,13 +73,17 @@ kotlin {
 }
 
 // ---------------------------------------------------------------------------
-// gpa-dltdoa 엔진 의존 전환
+// 측위 엔진(통합 엔진 gpa-ihub + 그 하위 gpa-prm · gpa-dltdoa) 의존 전환
 //
 // ~/.gradle/gradle.properties 에 geoplanNexusUrl/User/Password 셋 다 있으면 실제
-// 엔진 AAR 을 받아 classes.jar 를 fat-aar 방식으로 싣는다(고객 빌드에는 엔진
-// 저장소가 절대 나오지 않는다). 없으면 컴파일 전용 스텁(:engine-stub) 을 쓴다.
+// 엔진 AAR 3개를 받아 각각의 classes.jar(+ libs/*.jar)를 fat-aar 방식으로 싣는다(고객 빌드에는
+// 엔진 저장소가 절대 나오지 않는다). 없으면 컴파일 전용 스텁(:engine-stub) 을 쓴다.
 // 어느 쪽이든 assembleRelease 는 계정 없이는 실패해야 한다 — 스텁이 실린 release
 // AAR 이 배포되는 사고를 막기 위해서다.
+//
+// 세 AAR 모두 res/ 가 없고 R.txt 가 비어 있다(1.1.0 · 2.0.0 · 2.1.0 기준 확인) — 클래스만 실으면 된다.
+// 엔진 매니페스트의 권한은 우리 매니페스트(src/main/AndroidManifest.xml)가 같은 것을 선언한다.
+// gpa-prm 매니페스트의 usesCleartextTraffic 은 싣지 않는다 — 엔진 서버 통신은 https 뿐이다.
 // ---------------------------------------------------------------------------
 
 val geoplanNexusUrl = providers.gradleProperty("geoplanNexusUrl").orNull
@@ -106,46 +111,75 @@ if (hasGeoplanEngineCreds) {
     }
 
     dependencies {
+        // 통합 엔진이 하위 두 엔진(판정 · DL-TDoA)을 런타임 의존으로 부른다 — POM 에 적힌 판 그대로.
+        add(geoplanEngine.name, "kr.geoplan.android.lib:gpa-ihub:1.1.0")
+        add(geoplanEngine.name, "kr.geoplan.android.lib:gpa-prm:2.0.0")
         add(geoplanEngine.name, "kr.geoplan.android.lib:gpa-dltdoa:2.1.0")
     }
 
+    // 풀기 결과: jars/<AAR 이름>.jar(각 AAR 의 classes.jar — 이름이 셋 다 같아 AAR 이름으로 바꾼다)
+    //          + jars/<libs 안 jar 이름>(측위 필터 등 내부 라이브러리) · rules/<AAR 이름>.txt(proguard.txt 가 있으면)
     val engineExtractedDir = layout.buildDirectory.dir("geoplanEngine/extracted")
     val extractEngineAar = tasks.register("extractGeoplanEngineAar") {
         val outputDir = engineExtractedDir
         outputs.dir(outputDir)
         doLast {
-            val aarFile = geoplanEngine.singleFile // 여기(실행 시점)에서만 resolve
-            copy {
-                from(zipTree(aarFile))
-                into(outputDir.get())
+            val out = outputDir.get().asFile
+            out.deleteRecursively()
+            val jarsDir = File(out, "jars").apply { mkdirs() }
+            val rulesDir = File(out, "rules").apply { mkdirs() }
+            // 여기(실행 시점)에서만 resolve
+            for (aar in geoplanEngine.files.sortedBy { it.name }) {
+                val base = aar.name.removeSuffix(".aar")
+                val tmp = File(out, "tmp/$base")
+                copy {
+                    from(zipTree(aar))
+                    into(tmp)
+                }
+                // 리소스가 생기면 fat 방식으로는 못 싣는다 — 조용히 빠뜨리지 않고 멈춘다.
+                val res = File(tmp, "res")
+                if (res.exists() && res.walkTopDown().any { it.isFile }) {
+                    throw GradleException("$base 에 res/ 가 생겼다 — fat 방식으로 실을 수 없다(빌드 방식 재검토 필요)")
+                }
+                // 이름이 겹치면 덮어쓰지 않고 멈춘다 — 조용히 덮으면 엔진 하나의 클래스가 통째로 빠진다.
+                fun addJar(src: File, name: String) {
+                    val dest = File(jarsDir, name)
+                    if (dest.exists()) {
+                        throw GradleException("엔진 jar 이름 충돌: $name ($base) — 두 엔진 AAR 이 같은 이름의 jar 를 싣는다")
+                    }
+                    src.copyTo(dest)
+                }
+                File(tmp, "classes.jar").takeIf { it.exists() }?.let { addJar(it, "$base.jar") }
+                File(tmp, "libs").listFiles { f -> f.name.endsWith(".jar") }?.sortedBy { it.name }?.forEach {
+                    addJar(it, it.name)
+                }
+                File(tmp, "proguard.txt").takeIf { it.exists() }?.copyTo(File(rulesDir, "$base.txt"), overwrite = true)
             }
+            File(out, "tmp").deleteRecursively()
         }
     }
 
-    // 엔진 AAR 은 classes.jar 외에 libs/ 아래 내부 라이브러리 jar(측위 필터 등)를 함께 싣는다 —
-    // 둘 다 실어야 런타임에 클래스가 빠지지 않는다. 이름은 엔진 판마다 바뀔 수 있어 패턴으로 잡는다.
-    val engineJars = engineExtractedDir.map { dir ->
-        dir.asFileTree.matching { include("classes.jar", "libs/*.jar") }
-    }
+    // 엔진 jar 전부 — classes.jar 3개 + 내부 라이브러리 jar. 이름은 판마다 바뀔 수 있어 패턴으로 잡는다.
+    val engineJars = engineExtractedDir.map { dir -> dir.asFileTree.matching { include("jars/*.jar") } }
 
     // 엔진 AAR 의 proguard.txt 가 있으면 우리 consumer-rules.pro 와 합쳐 별도 머지본으로
     // 내보낸다(레포에 커밋된 consumer-rules.pro 원본은 건드리지 않는다). 이 머지본이
     // consumer-rules.pro 자리를 그대로 대체한다 — 둘 다 등록하면 내용이 두 번 실린다.
+    // (1.1.0 · 2.0.0 · 2.1.0 에는 proguard.txt 가 없다 — 생기면 자동으로 실린다.)
     val mergedConsumerRules = layout.buildDirectory.file("geoplanEngine/merged-consumer-rules.pro")
     val mergeEngineProguardRules = tasks.register("mergeGeoplanEngineProguardRules") {
         dependsOn(extractEngineAar)
         val ownRules = file("consumer-rules.pro")
-        val engineRules = layout.buildDirectory.file("geoplanEngine/extracted/proguard.txt")
+        val engineRulesDir = engineExtractedDir.map { it.dir("rules") }
         inputs.file(ownRules)
         outputs.file(mergedConsumerRules)
         doLast {
             val merged = mergedConsumerRules.get().asFile
             merged.parentFile.mkdirs()
             merged.writeText(ownRules.readText())
-            val engineRulesFile = engineRules.get().asFile
-            if (engineRulesFile.exists()) {
-                merged.appendText("\n# --- gpa-dltdoa engine consumer rules ---\n")
-                merged.appendText(engineRulesFile.readText())
+            engineRulesDir.get().asFile.listFiles()?.sortedBy { it.name }?.forEach {
+                merged.appendText("\n# --- ${it.nameWithoutExtension} engine consumer rules ---\n")
+                merged.appendText(it.readText())
             }
         }
     }
@@ -160,8 +194,13 @@ if (hasGeoplanEngineCreds) {
         // 전이 의존은 엔진 POM 에 적힌 버전 그대로 implementation 한다
         // (gradle/libs.versions.toml). Maven Central 공개 좌표라 고객 빌드에
         // 엔진 저장소가 노출되지는 않는다.
-        // 엔진 POM 의 androidx.appcompat·material 은 싣지 않는다 — 엔진 바이트코드가 참조하지 않는
-        // UI 라이브러리다(2.1.0 기준 javap 로 확인: commons-math3·jts-core·slf4j-api 만 참조).
+        // 싣지 않는 것 — 엔진 바이트코드가 참조하지 않는 UI 라이브러리다(javap 로 확인):
+        //   gpa-prm 2.0.0 의 androidx.constraintlayout · gpa-dltdoa 2.1.0 의 androidx.appcompat · material.
+        // okhttp 는 우리 것(4.12.0 ≥ 엔진 4.9.1, 같은 4.x)을 함께 쓴다. androidx.annotation 은 주석 전용이라
+        // 런타임에 필요 없고 androidx.activity 가 이미 가져온다.
+        implementation(libs.geoplan.engine.androidx.core)
+        implementation(libs.geoplan.engine.gson)
+        implementation(libs.geoplan.engine.jts.vividsolutions)
         implementation(libs.geoplan.engine.commons.math3)
         implementation(libs.geoplan.engine.jts.core)
         implementation(libs.geoplan.engine.slf4j.api)

@@ -17,11 +17,16 @@ androidxLifecycleProcess = "2.8.7"     # stdlib 1.x 대 (2.11.0 은 2.1.20)
 # 하한 선언일 뿐이라 고객 앱이 더 새 activity 를 쓰면 그쪽으로 올라간다.
 androidxActivity = "1.9.3"             # core 1.13 · stdlib 1.8 대 (1.13 은 core 1.18 → stdlib 2.1.20)
 
-# 측위 엔진(gpa-dltdoa 2.1.0)의 전이 의존. 엔진 POM 에 적힌 버전과 같아야 한다
-# (어긋나면 링크 단계에서 NoSuchMethodError 등으로 깨질 수 있다).
-commonsMath3 = "3.6.1" # must match the engine POM
-jtsCore = "1.18.2" # must match the engine POM
-slf4jApi = "1.7.31" # must match the engine POM
+# 측위 엔진(gpa-ihub 1.1.0 → gpa-prm 2.0.0 · gpa-dltdoa 2.1.0)의 전이 의존. 엔진 POM 에 적힌 버전과
+# 같아야 한다(어긋나면 링크 단계에서 NoSuchMethodError 등으로 깨질 수 있다).
+# 전부 순수 Java 라 kotlin-stdlib 를 끌어오지 않는다. androidx.core 는 하한 선언이다 — androidx.activity 가
+# 이미 더 새 판(1.13, stdlib 1.8 대)을 가져오므로 실제로는 그쪽으로 올라간다.
+engineAndroidxCore = "1.10.1" # gpa-ihub POM
+gson = "2.10.1" # gpa-ihub POM
+jtsVividsolutions = "1.13" # gpa-prm POM (com.vividsolutions — jts-core 의 옛 좌표, 패키지가 달라 둘 다 필요)
+commonsMath3 = "3.6.1" # gpa-dltdoa POM
+jtsCore = "1.18.2" # gpa-dltdoa POM
+slf4jApi = "1.7.31" # gpa-dltdoa POM
 
 # Maven Central(Sonatype Central Portal) 배포 — 서명·POM·소스/javadoc jar·업로드를 한 플러그인이 맡는다.
 # 0.37.0 = AGP 9 · Gradle 9 대응 최신 정식판(플러그인 API 9.0.0 기준 빌드).
@@ -40,6 +45,9 @@ kotlin-metadata-jvm = { module = "org.jetbrains.kotlin:kotlin-metadata-jvm", ver
 junit = { module = "junit:junit", version.ref = "junit" }
 androidx-lifecycle-process = { module = "androidx.lifecycle:lifecycle-process", version.ref = "androidxLifecycleProcess" }
 androidx-activity = { module = "androidx.activity:activity", version.ref = "androidxActivity" }
+geoplan-engine-androidx-core = { module = "androidx.core:core", version.ref = "engineAndroidxCore" }
+geoplan-engine-gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
+geoplan-engine-jts-vividsolutions = { module = "com.vividsolutions:jts", version.ref = "jtsVividsolutions" }
 geoplan-engine-commons-math3 = { module = "org.apache.commons:commons-math3", version.ref = "commonsMath3" }
 geoplan-engine-jts-core = { module = "org.locationtech.jts:jts-core", version.ref = "jtsCore" }
 geoplan-engine-slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4jApi" }

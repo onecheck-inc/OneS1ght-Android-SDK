@@ -1,26 +1,27 @@
 {
   "platform": "android",
-  "sdkVersion": "0.0.2",
+  "sdkVersion": "0.0.3",
   "language": "kotlin",
   "requirements": {
     "positioning": {
       "os": "Android 17 (API 37)+",
-      "device": "UWB DL-TDoA 지원 기기"
+      "device": "UWB 지원 기기"
     },
     "package": {
-      "os": "Android 8.1 (API 27)+"
+      "os": "Android 17 (API 37)+"
     },
     "build": {
       "compileSdk": "37"
     }
   },
   "notes": [
-    "measured: 안드로이드는 위치·측위 권한을 OneS1ght.permissions(activity) 한 번으로 같이 요청한다 — iOS 처럼 CoreLocation 을 앱이 먼저 따로 받을 필요가 없다.",
-    "iOS 는 BLE 로 엔진이 층을 스스로 찾지만, 안드로이드는 그 경로가 없다. setFloorMap 으로 층을 지정하는 것이 건너뛸 수 없는 필수 단계다 — 지정하지 않으면 좌표가 나오지 않는다(E3001, WARN).",
+    "measured: 안드로이드는 측위 권한(UWB·위치·근처 기기)을 OneS1ght.permissions(activity) 한 번으로 같이 요청한다 — iOS 처럼 CoreLocation 을 앱이 먼저 따로 받을 필요가 없다.",
+    "패키지 최소 사양이 측위 최소 사양과 같다 — minSdk 37(Android 17). 앱 minSdk 가 37 미만이면 매니페스트 병합에서 막힌다.",
+    "층은 엔진이 BLE 로 스스로 찾는다. 층을 지정하지 않은 채 begin() 해도 좌표가 나온다 — E3001(층 미지정)은 오류가 아니라 WARN 이다. 다만 구역 이벤트(진입·이탈·시책)는 그 층의 콘솔 구역이 있어야 zone_id 로 옮겨지므로, 구역을 쓰면 setFloorMap 으로 층을 지정한다(안 하면 E3009).",
     "identify 없이 측위를 시작하면 데이터가 어디에도 귀속되지 않는다 (E1004).",
     "안드로이드의 UWB 도 포그라운드 전용이다. 백그라운드에서는 측위가 멈추고 복귀 시 재개된다.",
     "좌표 버퍼는 메모리에 있어 앱이 강제 종료되면 미전송분이 사라진다 (E5006).",
-    "pause() 는 엔진을 끄지 않는다. 잠깐 멈추는 데 end() 를 쓰면 로케이터를 처음부터 다시 찾는다."
+    "pause() 는 엔진을 끄지 않는다. 잠깐 멈추는 데 end() 를 쓰면 층과 로케이터를 처음부터 다시 찾는다."
   ],
   "steps": [
     {
@@ -31,25 +32,25 @@
         {
           "path": "app/build.gradle.kts",
           "language": "kotlin",
-          "code": "// settings.gradle.kts 의 repositories 에 mavenCentral() 이 있으면 된다 — 별도 저장소는 필요 없다.\ndependencies {\n    implementation(\"com.ones1ght.sdk:android:0.0.2\")\n}"
+          "code": "// settings.gradle.kts 의 repositories 에 mavenCentral() 이 있으면 된다 — 별도 저장소는 필요 없다.\n// 앱 minSdk 는 37(Android 17) 이상이어야 한다 — SDK 최소 사양이다.\ndependencies {\n    implementation(\"com.ones1ght.sdk:android:0.0.3\")\n}"
         },
         {
           "path": "app/src/main/AndroidManifest.xml",
           "language": "xml",
-          "code": "<!-- 라이브러리 매니페스트가 RANGING · ACCESS_FINE_LOCATION · ACCESS_COARSE_LOCATION · INTERNET 권한을 자동으로 병합한다.\n     앱에서 따로 선언할 필요는 없다. -->\n<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\">\n    <application>\n        <!-- ... -->\n    </application>\n</manifest>"
+          "code": "<!-- 라이브러리 매니페스트가 RANGING · BLUETOOTH_SCAN · ACCESS_FINE_LOCATION · ACCESS_COARSE_LOCATION ·\n     INTERNET · ACCESS_NETWORK_STATE · CHANGE_NETWORK_STATE 권한을 자동으로 병합한다.\n     앱에서 따로 선언할 필요는 없다. -->\n<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\">\n    <application>\n        <!-- ... -->\n    </application>\n</manifest>"
         }
       ],
       "notes": [
         "Maven Central 에 배포된다 — 새 안드로이드 프로젝트 기본값(google() · mavenCentral())이면 저장소를 따로 추가하지 않는다."
       ],
-      "warning": "0.0.1 의 좌표 co.onecheck.ones1ght:android 는 쓰지 않는다 — 0.0.2 부터 com.ones1ght.sdk:android 다(패키지·코드는 그대로)."
+      "warning": "0.0.1 의 좌표 co.onecheck.ones1ght:android 는 쓰지 않는다 — 0.0.2 부터 com.ones1ght.sdk:android 다(패키지·코드는 그대로). 0.0.3 부터 앱 minSdk 가 37 이상이어야 한다."
     },
     {
       "id": "permission",
       "title": "측위 권한 요청",
       "order": 2,
       "language": "kotlin",
-      "code": "// RANGING + ACCESS_FINE_LOCATION(+ 함께 묻는 ACCESS_COARSE_LOCATION)을 한 번에 요청한다.\n// 대략 위치만 허용하면 DENIED 다 — 측위에는 정밀 위치가 필요하다.\n// activityResultRegistry 를 쓰므로 onCreate 이후 아무 때나 불러도 된다.\nwhen (OneS1ght.permissions(activity)) {\n    PermissionStatus.AUTHORIZED  -> { /* 측위 시작 가능 */ }\n    PermissionStatus.DENIED      -> showSettingsGuide()      // 30초 무응답도 DENIED\n    PermissionStatus.UNSUPPORTED -> showUnsupportedNotice()\n}",
+      "code": "// RANGING + ACCESS_FINE_LOCATION + BLUETOOTH_SCAN(+ 함께 묻는 ACCESS_COARSE_LOCATION)을 한 번에 요청한다.\n// 대략 위치만 허용하거나 근처 기기(BLE)를 거부하면 DENIED 다 — 측위에는 정밀 위치와 BLE 스캔(층 탐지)이 필요하다.\n// activityResultRegistry 를 쓰므로 onCreate 이후 아무 때나 불러도 된다.\nwhen (OneS1ght.permissions(activity)) {\n    PermissionStatus.AUTHORIZED  -> { /* 측위 시작 가능 */ }\n    PermissionStatus.DENIED      -> showSettingsGuide()      // 30초 무응답도 DENIED\n    PermissionStatus.UNSUPPORTED -> showUnsupportedNotice()\n}",
       "files": [
         {
           "path": "JavaExample.java",
@@ -57,7 +58,7 @@
           "code": "OneS1ght.permissions(activity, new Callback<PermissionStatus>() {\n    @Override public void onSuccess(PermissionStatus status) {\n        if (status == PermissionStatus.AUTHORIZED) { /* 측위 시작 가능 */ }\n    }\n    @Override public void onError(Throwable error) { }\n});"
         }
       ],
-      "warning": "deviceAvailability != AVAILABLE 이면 시스템 팝업 없이 곧바로 UNSUPPORTED 다. 이미 둘 다 허용돼 있으면 팝업 없이 AUTHORIZED 다."
+      "warning": "deviceAvailability != AVAILABLE 이면 시스템 팝업 없이 곧바로 UNSUPPORTED 다. 이미 셋 다 허용돼 있으면 팝업 없이 AUTHORIZED 다."
     },
     {
       "id": "initialize",
@@ -94,7 +95,7 @@
     },
     {
       "id": "selectFloor",
-      "title": "공간 선택 (필수) — 안드로이드는 층을 스스로 찾지 않는다",
+      "title": "공간 선택 (선택) — 구역 이벤트를 쓰면 층을 지정한다",
       "order": 5,
       "language": "kotlin",
       "code": "val buildings = OneS1ght.buildings()\nval floors = OneS1ght.floors(buildings[0].id)\n\nOneS1ght.setFloorMap(floors[0], buildingId = buildings[0].id)",
@@ -103,7 +104,7 @@
         "E3002",
         "E3003"
       ],
-      "warning": "iOS 는 BLE 로 층을 자동 탐지하지만 안드로이드에는 그 경로가 없다 — setFloorMap 을 부르지 않으면 좌표가 나오지 않는다(E3001, WARN). 건너뛸 수 없는 단계다.",
+      "warning": "건너뛰어도 좌표는 나온다 — 엔진이 BLE 로 층을 찾으므로 층 없이 begin() 하는 것이 정상 경로다(E3001 WARN 이 한 번 남는다). 구역 이벤트는 그 층의 콘솔 구역으로 옮겨지므로, 구역·시책을 쓰면 이 단계를 부른다. 엔진이 찾은 층과 다르면 E3008 이 남는다.",
       "expectedLog": "[I3001] Floor set — building=... floor=... locators=N zones=M"
     },
     {
@@ -129,12 +130,14 @@
       "throws": [
         "E1001",
         "E1004",
+        "E1007",
         "E2001",
         "E2002",
         "E2003",
-        "E3001"
+        "E3001",
+        "E3007"
       ],
-      "warning": "floorSession() 은 항상 같은 인스턴스를 돌려준다. UWB 라디오·판정 엔진·좌표 버퍼가 기기당 하나뿐이다.",
+      "warning": "floorSession() 은 항상 같은 인스턴스를 돌려준다. UWB 라디오·측위 엔진·좌표 버퍼가 기기당 하나뿐이다. 20초 안에 층을 못 찾으면 E3007(WARN)이 남는다 — 층 BLE 비콘·근처 기기 권한을 확인한다.",
       "expectedLog": "[I4001] Positioning started — visitor=v-20260928-001"
     },
     {
@@ -144,7 +147,7 @@
       "language": "kotlin",
       "code": "OneS1ght.floorSession().end()   // 잔여 좌표 flush + 타이머 정리",
       "expectedLog": "[I4002] Positioning ended — visitor=... points=N",
-      "warning": "end() 는 엔진까지 끈다 — 층과 로케이터를 잃고, 다음 begin() 은 로케이터를 처음부터 찾는다. 잠깐 멈추는 것이라면 pause() 를 쓴다."
+      "warning": "end() 는 엔진까지 끈다 — 층과 로케이터를 잃고, 다음 begin() 은 층부터 다시 찾는다. 잠깐 멈추는 것이라면 pause() 를 쓴다."
     },
     {
       "id": "pause",
@@ -160,14 +163,14 @@
       "order": 10,
       "language": "kotlin",
       "code": "val session = OneS1ght.floorSession()\n\nsession.onConfigChanged = ConfigChangeListener { change ->\n    // 콘솔에서 구역·도면·시책이 바뀌면 온다 — 측위 중에만 붙어 있다\n    reloadOverlay(change)\n}",
-      "warning": "구역 집합이 바뀌면 판정기가 재시작되어 잠깐 좌표가 끊긴다. 그 간극을 「신호 끊김」으로 처리하는 UI 가 있다면 유예를 그보다 길게 둘 것."
+      "warning": "구역 집합이 바뀌면 엔진이 구역을 다시 읽느라 잠깐 재시작되어 좌표가 끊긴다. 그 간극을 「신호 끊김」으로 처리하는 UI 가 있다면 유예를 그보다 길게 둘 것."
     },
     {
       "id": "deviceCheck",
       "title": "기기 지원 분기 (선택)",
       "order": 11,
       "language": "kotlin",
-      "code": "// 네트워크를 타지 않는다. initialize 다음에 읽는다 — 그 전(Android 17+)에는 판단할 수 없어 DEVICE_NOT_SUPPORTED 다.\nwhen (OneS1ght.deviceAvailability) {\n    DeviceAvailability.AVAILABLE            -> { }\n    DeviceAvailability.OS_VERSION_TOO_LOW   -> showNotice(\"Android 17 이상이 필요합니다\")\n    DeviceAvailability.DEVICE_NOT_SUPPORTED -> hidePositioningFeatures()\n}"
+      "code": "// 네트워크를 타지 않고 기다리지도 않는다. initialize 다음에 읽는다 — 그 전에는 판단할 수 없어 DEVICE_NOT_SUPPORTED 다.\nwhen (OneS1ght.deviceAvailability) {\n    DeviceAvailability.AVAILABLE            -> { }\n    DeviceAvailability.OS_VERSION_TOO_LOW   -> showNotice(\"Android 17 이상이 필요합니다\")\n    DeviceAvailability.DEVICE_NOT_SUPPORTED -> hidePositioningFeatures()\n}"
     },
     {
       "id": "debugLog",

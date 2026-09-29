@@ -16,7 +16,8 @@ package co.onecheck.ones1ght.android
 //  사용 (호스트 앱):
 //    // ① 앱 시작 시 — 키 검증 + 테넌트 설정 수신 (기기 게이트는 여기 없다 — ④ begin() 이 담당)
 //    OneS1ght.initialize(applicationContext, "ock_…")
-//    // ② 공간 선택 — 필수. 이걸 안 하면 좌표가 나오지 않는다
+//    // ② 공간 선택 — 선택. 측위 엔진이 BLE 로 층을 스스로 찾아 좌표는 지정 없이도 나온다.
+//    //    구역 이벤트(진입·이탈·시책)를 받으려면 그 층을 지정한다 — 구역 매핑에 그 층의 콘솔 존이 필요하다
 //    val buildings = OneS1ght.buildings()
 //    val floors = OneS1ght.floors(buildings[0].id)
 //    OneS1ght.setFloorMap(floors[0], buildingId = buildings[0].id)
@@ -58,14 +59,11 @@ import co.onecheck.ones1ght.android.runtime.LogLevel
 import co.onecheck.ones1ght.android.runtime.SdkLocalized
 import co.onecheck.ones1ght.android.runtime.SessionCoordinator
 import co.onecheck.ones1ght.android.space.SpaceServiceClient
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 /** 측위 가능 여부 — 사유 포함. 앱이 사전 안내 UI 를 분기할 때 쓴다. */
@@ -76,7 +74,7 @@ public enum class DeviceAvailability {
     /** Android 17(API 37) 미만 — "OS 업데이트 후 사용 가능" 안내. */
     OS_VERSION_TOO_LOW,
 
-    /** UWB(DL-TDoA) 미지원 기기. */
+    /** UWB 미지원 기기. */
     DEVICE_NOT_SUPPORTED,
 }
 
@@ -92,13 +90,16 @@ public enum class PermissionStatus {
     UNSUPPORTED,
 }
 
-/** 측위(DL-TDoA 레인징)에 필요한 최소 API 레벨 — Android 17. */
+/**
+ * 측위에 필요한 최소 API 레벨 — Android 17. 측위 엔진의 최소 사양이고 패키지 minSdk 도 같다
+ * (그래서 설치된 기기에서 OS_VERSION_TOO_LOW 는 실제로 나오지 않는다 — iOS 와 모양을 맞추려고 남겨 둔다).
+ */
 internal const val MIN_POSITIONING_SDK: Int = 37
 
 public object OneS1ght {
 
     /** SDK 버전 (verify 등 서버 요청에 실림). */
-    public const val SDK_VERSION: String = "0.0.2"
+    public const val SDK_VERSION: String = "0.0.3"
 
     // MARK: - 콜백
 
@@ -121,17 +122,16 @@ public object OneS1ght {
         get() = coordinator?.isPrepared ?: false
 
     /**
-     * 이 기기에서 측위가 가능한가 + 불가 사유. 던지지 않고 네트워크를 타지 않는다.
+     * 이 기기에서 측위가 가능한가 + 불가 사유. 던지지 않고 네트워크를 타지 않으며 기다리지도 않는다.
      * OS 버전을 먼저 본다 — 구 OS 에 칩 미지원을 잘못 알리지 않기 위해서다.
      *
-     * **initialize() 다음에 읽는다.** 칩 조회에는 앱 Context 가 필요한데, SDK 가 그것을 받는 곳은
-     * initialize(또는 permissions(activity)) 뿐이다. 그 전에 읽으면 API 37 미만은 그대로
-     * [DeviceAvailability.OS_VERSION_TOO_LOW], 그 이상은 판단할 수 없어
-     * [DeviceAvailability.DEVICE_NOT_SUPPORTED] 이고 onDebugLog 에 WARN 이 한 번 남는다.
+     * 판정은 측위 엔진과 같다: Android 17(API 37) 이상 && UWB 칩 있음(시스템 기능 조회).
+     * 칩은 있어도 DL-TDoA 를 못 하는 드문 기기는 여기서 가를 수 없다 — begin() 뒤 엔진이 확인해
+     * E2002 로 남긴다.
      *
-     * 칩 조회는 initialize() 가 미리 띄워 두고(permissions() 는 그 조회를 직접 기다려 받는다), 답(시간 초과 = 미지원 포함)은 프로세스
-     * 수명 동안 기억한다. 그래서 보통은 기다리지 않는다. 예열이 끝나기 전에 읽은 첫 한 번만 답을
-     * 기다린다(최대 5초 — 그동안 부른 스레드가 멈춘다).
+     * **initialize() 다음에 읽는다.** 칩 조회에는 앱 Context 가 필요한데, SDK 가 그것을 받는 곳은
+     * initialize(또는 permissions(activity)) 뿐이다. 그 전에 읽으면 판단할 수 없어
+     * [DeviceAvailability.DEVICE_NOT_SUPPORTED] 이고 onDebugLog 에 WARN 이 한 번 남는다.
      */
     @JvmStatic
     public val deviceAvailability: DeviceAvailability
@@ -139,30 +139,8 @@ public object OneS1ght {
             val capability = deviceCapability
             if (capability.sdkInt < MIN_POSITIONING_SDK) return DeviceAvailability.OS_VERSION_TOO_LOW
             if (appContext == null) return unknownBeforeInitialize()
-            // 아는 답이 있으면 막지 않는다. ⚠️ 진행 중인 예열을 여기서 기다리면 안 된다 — 예열은 코어
-            // (메인) 디스패처 위에서 도는데 메인을 runBlocking 으로 막고 그걸 기다리면 교착이다.
-            val supported = capability.cachedDlTdoa ?: runBlocking { capability.supportsDlTdoa() }
-            return if (supported) DeviceAvailability.AVAILABLE else DeviceAvailability.DEVICE_NOT_SUPPORTED
+            return if (capability.hasUwbHardware()) DeviceAvailability.AVAILABLE else DeviceAvailability.DEVICE_NOT_SUPPORTED
         }
-
-    /**
-     * 칩 조회를 미리 띄운다(기다리지 않는다) — 뒤의 동기 [deviceAvailability] 가 메인을 막지 않게.
-     * 코어 디스패처 위에서 돌며, 조회는 시스템 콜백을 기다리는 동안 스레드를 놓아 준다.
-     */
-    private fun warmDeviceCapability() {
-        val capability = deviceCapability
-        if (capability.sdkInt < MIN_POSITIONING_SDK || appContext == null) return
-        if (capability.cachedDlTdoa != null) return
-        CoroutineScope(SupervisorJob() + dispatcher).launch {
-            try {
-                capability.supportsDlTdoa()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // 예열 실패는 무시한다 — 다음 판정이 다시 묻는다.
-            }
-        }
-    }
 
     @Volatile
     private var warnedEarlyAvailability = false
@@ -181,15 +159,6 @@ public object OneS1ght {
     public val isDeviceAvailable: Boolean
         get() = deviceAvailability == DeviceAvailability.AVAILABLE
 
-    /** suspend 경로용 판정 — 칩 조회를 막지 않고 기다린다. */
-    internal suspend fun availability(): DeviceAvailability {
-        val capability = deviceCapability
-        if (capability.sdkInt < MIN_POSITIONING_SDK) return DeviceAvailability.OS_VERSION_TOO_LOW
-        if (appContext == null) return unknownBeforeInitialize()
-        val supported = capability.cachedDlTdoa ?: capability.supportsDlTdoa()
-        return if (supported) DeviceAvailability.AVAILABLE else DeviceAvailability.DEVICE_NOT_SUPPORTED
-    }
-
     // MARK: - 콘솔 제공 값
 
     /**
@@ -203,10 +172,11 @@ public object OneS1ght {
     // MARK: - 권한
 
     /**
-     * 측위 권한(RANGING + ACCESS_FINE_LOCATION)을 한 번에 확인·요청한다.
+     * 측위 권한(RANGING + ACCESS_FINE_LOCATION + BLUETOOTH_SCAN, 그리고 함께 묻는 ACCESS_COARSE_LOCATION)을
+     * 한 번에 확인·요청한다. 대략 위치만 허용(정밀 거부)이나 근처 기기(BLE) 거부는 DENIED 다.
      *
      * - 이 기기에서 측위가 불가하면 팝업 없이 [PermissionStatus.UNSUPPORTED].
-     * - 이미 둘 다 허용돼 있으면 팝업 없이 [PermissionStatus.AUTHORIZED].
+     * - 이미 셋 다 허용돼 있으면 팝업 없이 [PermissionStatus.AUTHORIZED].
      * - 아니면 시스템 팝업을 띄운다. 30초 안에 답이 없으면 보수적으로 [PermissionStatus.DENIED].
      *
      * `activityResultRegistry` 를 쓰므로 onCreate 이후 아무 때나 불러도 된다.
@@ -215,8 +185,6 @@ public object OneS1ght {
     @JvmSynthetic
     public suspend fun permissions(activity: ComponentActivity): PermissionStatus {
         if (appContext == null) appContext = activity.applicationContext
-        // 칩 조회 예열은 따로 띄우지 않는다 — 아래 판정(availability)이 바로 그 조회를 기다려(막지
-        // 않고) 받고, 답은 capability 가 기억한다. 따로 띄우면 같은 조회가 두 번 나간다.
         return permissionsWith { PositioningPermission.request(activity) }
     }
 
@@ -228,7 +196,7 @@ public object OneS1ght {
 
     /** 기기 판정 → 요청. 요청 자체는 주입받는다(JVM 테스트는 Activity 를 만들 수 없다). */
     internal suspend fun permissionsWith(request: suspend () -> PermissionStatus): PermissionStatus = onCore {
-        if (availability() != DeviceAvailability.AVAILABLE) PermissionStatus.UNSUPPORTED else request()
+        if (deviceAvailability != DeviceAvailability.AVAILABLE) PermissionStatus.UNSUPPORTED else request()
     }
 
     /**
@@ -265,7 +233,6 @@ public object OneS1ght {
         // 기기 게이트는 여기 두지 않는다 — initialize 는 "키·설정" 이고 begin() 이 "측위" 다.
         val app = context.applicationContext ?: context
         appContext = app
-        warmDeviceCapability() // 기다리지 않는다 — 뒤의 동기 deviceAvailability 가 메인을 막지 않게
 
         // ① 키가 바뀌었으면 세션 재구성 — "새 키로 initialize = 새 키로 시작".
         val stored = storedKey
@@ -399,8 +366,12 @@ public object OneS1ght {
     // MARK: - 층 지정
 
     /**
-     * 측위·판정에 쓸 층을 지정한다. 호출할 때마다 갱신되고, null 이면 비운다.
-     * 로케이터·sessionId·존을 받아 엔진에 주입한다 — 가동 중이면 즉시 층 전환.
+     * 지도·대조에 쓸 층을 지정한다(선택). 호출할 때마다 갱신되고, null 이면 비운다.
+     *
+     * 측위 엔진은 BLE 로 층을 스스로 찾는다 — 지정하지 않아도 좌표는 나온다(서버로는 엔진이 찾은
+     * 층이 실린다). 구역 이벤트는 엔진이 영역 **이름**으로 주므로, 그 층의 콘솔 존이 있어야 zone_id 로
+     * 옮겨진다 — 구역 이벤트·시책을 쓰려면 층을 지정한다(없으면 E3009). 엔진이 찾은 층과 다르면
+     * E3008 로 알린다. 가동 중이면 즉시 반영된다.
      * [buildingId] 를 생략하면 직전에 지정한 건물을 쓴다.
      */
     @JvmSynthetic
@@ -616,12 +587,12 @@ public object OneS1ght {
             dispatcherOverride = value
         }
 
-    private val defaultDeviceCapability: DeviceCapability by lazy { AndroidDeviceCapability { appContext } }
+    private val defaultDeviceCapability: DeviceCapability by lazy { AndroidDeviceCapability(contextProvider = { appContext }) }
 
     @Volatile
     private var deviceCapabilityOverride: DeviceCapability? = null
 
-    /** 기기 판정. 운영은 RangingManager 조회, 테스트는 가짜. */
+    /** 기기 판정. 운영은 OS 버전 + 측위 엔진의 UWB 하드웨어 조회, 테스트는 가짜. */
     internal var deviceCapability: DeviceCapability
         get() = deviceCapabilityOverride ?: defaultDeviceCapability
         set(value) {

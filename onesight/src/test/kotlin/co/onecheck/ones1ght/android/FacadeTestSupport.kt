@@ -36,25 +36,14 @@ import java.util.concurrent.CopyOnWriteArrayList
 /** 기기 판정 가짜 — sdkInt·지원 여부를 테스트가 정한다. */
 internal class FakeDeviceCapability(
     override var sdkInt: Int = 37,
-    supported: Boolean = true,
+    @Volatile var supported: Boolean = true,
 ) : DeviceCapability {
+    /** 칩을 물은 횟수 — OS 미달·Context 없음이면 묻지도 않는다는 것을 확인한다. */
     @Volatile var queries: Int = 0
 
-    /** 바꾸면 기억한 답도 잊는다 — 테스트가 판정을 뒤집어 보는 경우. */
-    @Volatile var supported: Boolean = supported
-        set(value) {
-            field = value
-            known = null
-        }
-
-    /** 실기기 구현처럼 한 번 물은 답을 기억한다. */
-    @Volatile private var known: Boolean? = null
-
-    override val cachedDlTdoa: Boolean? get() = known
-
-    override suspend fun supportsDlTdoa(): Boolean {
+    override fun hasUwbHardware(): Boolean {
         queries += 1
-        return supported.also { known = it }
+        return supported
     }
 }
 

@@ -593,6 +593,9 @@ class SessionCoordinatorTest {
         assertNull(c.floorState)
         assertNull(c.currentFloor)
         assertEquals("층을 비우면 엔진 설정도 비운다", PositioningConfigEmpty, provider.appliedConfig)
+        // 콘솔 층 ID 도 비운다 — 안 그러면 provider 가 옛 층으로 엔진 층을 대조(E3008)하고 이벤트를 귀속한다.
+        assertEquals("", provider.appliedFloorId)
+        assertEquals("", provider.appliedBuildingId)
         c.stop()
     }
 

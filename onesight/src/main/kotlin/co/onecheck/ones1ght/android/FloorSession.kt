@@ -4,11 +4,11 @@ package co.onecheck.ones1ght.android
 //  FloorSession.kt
 //  측위 세션 — 앱이 측위를 켜고 끄고 이벤트를 받는 인스턴스.
 //
-//  · 층은 setFloorMap 이 이미 잡아 두었으므로 만들 때 인자가 없다.
-//  · **싱글턴** — UWB 라디오·판정 엔진·좌표 버퍼가 기기당 하나뿐이라
+//  · 층은 측위 엔진이 BLE 로 찾는다(setFloorMap 은 선택) — 만들 때 인자가 없다.
+//  · **싱글턴** — UWB 라디오·측위 엔진·좌표 버퍼가 기기당 하나뿐이라
 //    세션이 여럿이면 물리적으로 충돌한다. floorSession() 은 항상 같은 인스턴스를 준다.
 //  · 가동 중 setFloorMap 을 다시 부르면 이 세션이 새 층으로 갈아탄다(재생성 불필요).
-//  · 이벤트는 여기 리스너로만 나간다(Ruling 1) — 내장 provider·판정 엔진의 훅은 내부 전용이다.
+//  · 이벤트는 여기 리스너로만 나간다(Ruling 1) — 내장 provider·판정기의 훅은 내부 전용이다.
 //  · 내장 provider 는 한 번만 만들고 계속 쓴다. 그 안의 코루틴 스코프가 프로세스 수명이라
 //    begin 마다 새로 만들면 새는 만큼 쌓인다(iOS 가 hub 를 재사용하는 것과 같다).
 //
@@ -69,7 +69,7 @@ public class FloorSession internal constructor() {
     /**
      * 측위 시작 (매장 진입 시) — 내장 UWB 측위를 쓴다.
      *
-     * 순서: Android 17 미만 → [SdkError.OsVersionTooLow] · 기기 미지원 → [SdkError.DeviceNotSupported]
+     * 순서: Android 17 미만 → [SdkError.OsVersionTooLow] · UWB 칩 없음 → [SdkError.DeviceNotSupported]
      * → 내장 provider 재사용 → (준비 안 됐으면 준비, 됐으면 키 재조회 재시도) → 가동.
      *
      * @throws SdkError.NotInitialized · SdkError.NotIdentified · SdkError.DeviceNotSupported · SdkError.OsVersionTooLow
@@ -79,7 +79,7 @@ public class FloorSession internal constructor() {
         // 기기를 막는 곳은 여기 하나뿐이다 — initialize 는 기기를 보지 않는다.
         val capability = OneS1ght.deviceCapability
         if (capability.sdkInt < MIN_POSITIONING_SDK) throw SdkError.OsVersionTooLow()
-        if (!capability.supportsDlTdoa()) throw SdkError.DeviceNotSupported()
+        if (!capability.hasUwbHardware()) throw SdkError.DeviceNotSupported()
         val context = OneS1ght.appContext
         if (OneS1ght.coordinatorRef == null || context == null) throw SdkError.NotInitialized()
 
@@ -152,7 +152,11 @@ public class FloorSession internal constructor() {
 
     /**
      * 가동 공통 경로 — 주입 provider 도 같은 대우를 받는다.
-     * (iOS 는 여기서 엔진 라이선스를 넣지만 안드로이드 엔진에는 라이선스가 없다 — Ruling 9.)
+     *
+     * ⚠️ **측위 엔진 라이선스는 여기서 SDK 가 넣는다.** 호스트 앱이 넣을 일이 아니다 — 고객은
+     *    OneS1ght 하나만 붙이고, 그 아래에서 어떤 엔진이 도는지도 그 엔진이 무슨 키를 요구하는지도
+     *    알 필요가 없다. 라이선스의 유일한 출처는 콘솔 `/config` 다(없으면 E1007).
+     *    iOS 와 달리 키 재조회(순단 회복) **뒤에** 넣는다 — 방금 받아 온 키가 이번 begin 에 바로 쓰인다.
      */
     private suspend fun start(provider: PositioningProvider) {
         val coordinator = OneS1ght.coordinatorRef ?: throw SdkError.NotInitialized()
@@ -163,6 +167,7 @@ public class FloorSession internal constructor() {
             // 재호출로는 다시 못 붙는다. 여기서 따로 재시도한다.
             coordinator.retryKeyResolutionIfNeeded()
         }
+        if (provider is UwbPositioningProvider) provider.license = coordinator.positioningLicense.orEmpty()
         coordinator.start(provider)
     }
 

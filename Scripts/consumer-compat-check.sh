@@ -27,6 +27,8 @@
 #        SKIP_BUILD=1 Scripts/consumer-compat-check.sh   (AAR·클래스패스를 이미 만든 단계에서)
 #        PUBLISHED=1 Scripts/consumer-compat-check.sh    (mavenLocal 의 배포본으로 검사)
 #        PUBLISHED=1 CONSUMER_SDK_VERSION=0.0.2 Scripts/consumer-compat-check.sh   (받을 버전 지정)
+#        MINIFIED=1 Scripts/consumer-compat-check.sh     (mavenLocal 배포본을 minifyEnabled 앱으로 빌드 —
+#                                                        R8 뒤에도 엔진 응답 모델이 원래 이름으로 남는지)
 #
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -42,6 +44,136 @@ AAR="$ROOT/onesight/build/outputs/aar/onesight-debug.aar"
 step() { printf '▸ %s\n' "$1"; }
 ok()   { printf '  ✓ %s\n' "$1"; }
 die()  { printf '  ✗ %s\n' "$1" >&2; exit 1; }
+
+# --- 축소(R8) 모드 (MINIFIED=1) -------------------------------------------------------------------
+# 고객 앱이 minifyEnabled 로 빌드해도 SDK·엔진이 살아남는가 — "컴파일된다" 와 별개의 질문이다.
+# 엔진은 서버 응답을 Gson 으로 public 필드 POJO 에 바로 푼다. R8 이 그 필드 이름을 바꾸거나 지우면
+# 컴파일·실행은 되는데 층·구역만 조용히 비어 버린다. 그래서 mavenLocal 배포본에 기대는 일회용 앱을
+# minifyEnabled=true 로 실제 빌드하고, 출력 dex 에 그 클래스·필드가 원래 이름 그대로 있는지 대조한다.
+# 먼저 ./gradlew :onesight:publishToMavenLocal.
+if [[ "${MINIFIED:-}" == "1" ]]; then
+    SDK_VERSION="${CONSUMER_SDK_VERSION:-$(Scripts/sdk-version.sh)}"
+    COORD="com.ones1ght.sdk:android:$SDK_VERSION"
+    LOCAL_DIR="$HOME/.m2/repository/com/ones1ght/sdk/android/$SDK_VERSION"
+    [[ -f "$LOCAL_DIR/android-$SDK_VERSION.aar" ]] || die "mavenLocal 에 $COORD 가 없다 — 먼저 ./gradlew :onesight:publishToMavenLocal"
+    SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+    if [[ -z "$SDK_DIR" && -f local.properties ]]; then SDK_DIR=$(sed -n 's/^sdk\.dir=//p' local.properties | tail -1); fi
+    [[ -d "$SDK_DIR" ]] || die "Android SDK 를 찾지 못함 — ANDROID_HOME 또는 local.properties sdk.dir"
+    DEXDUMP=$(ls -d "$SDK_DIR"/build-tools/*/dexdump 2>/dev/null | sort -V | tail -1)
+    [[ -x "$DEXDUMP" ]] || die "build-tools 의 dexdump 를 찾지 못함"
+    AGP=$(sed -n 's/^agp = "\(.*\)"/\1/p' gradle/libs.versions.toml)
+    COMPILE_SDK=$(sed -n 's/^[[:space:]]*compileSdk[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' onesight/build.gradle.kts | head -1)
+    MIN="$ROOT/onesight/build/consumer-compat/minified"
+
+    step "minifyEnabled 앱으로 $COORD 빌드 (AGP $AGP · R8)"
+    rm -rf "$MIN"; mkdir -p "$MIN/src/main/java/consumer"
+    echo "sdk.dir=$SDK_DIR" > "$MIN/local.properties"
+    printf 'android.useAndroidX=true\norg.gradle.jvmargs=-Xmx2048m\n' > "$MIN/gradle.properties"
+    cat > "$MIN/settings.gradle.kts" <<KTS
+pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+dependencyResolutionManagement {
+    repositories {
+        mavenLocal { content { includeGroup("com.ones1ght.sdk") } }
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = "onesight-minified-consumer"
+KTS
+    cat > "$MIN/build.gradle.kts" <<KTS
+plugins { id("com.android.application") version "$AGP" }
+android {
+    namespace = "consumer.minified"
+    compileSdk = $COMPILE_SDK
+    defaultConfig { applicationId = "consumer.minified"; minSdk = 37; targetSdk = $COMPILE_SDK }
+    buildTypes { release { isMinifyEnabled = true; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt")) } }
+    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+}
+dependencies { implementation("$COORD") }
+KTS
+    cat > "$MIN/src/main/AndroidManifest.xml" <<'XML'
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:name="consumer.App" />
+</manifest>
+XML
+    cat > "$MIN/src/main/java/consumer/App.java" <<'JAVA'
+package consumer;
+
+import android.app.Application;
+import co.onecheck.ones1ght.android.Callback;
+import co.onecheck.ones1ght.android.OneS1ght;
+
+/** 고객 앱처럼 SDK 공개 API 만 부른다 — 엔진은 SDK 안쪽에서만 쓰인다. */
+public final class App extends Application {
+    @Override public void onCreate() {
+        super.onCreate();
+        OneS1ght.initialize(this, "ock_minified", new Callback<Void>() {
+            @Override public void onSuccess(Void r) {
+                OneS1ght.identify("pf_minified");
+                OneS1ght.floorSession().begin(new Callback<Void>() {
+                    @Override public void onSuccess(Void r2) {}
+                    @Override public void onError(Throwable e) {}
+                });
+            }
+            @Override public void onError(Throwable e) {}
+        });
+    }
+}
+JAVA
+    ./gradlew -q -p "$MIN" assembleRelease > "$MIN/build.log" 2>&1 || { tail -40 "$MIN/build.log" >&2; die "minifyEnabled 앱 빌드 실패(R8)"; }
+    APK=$(ls "$MIN"/build/outputs/apk/release/*.apk | head -1)
+    [[ -f "$APK" ]] || die "APK 없음"
+    ok "R8 빌드 통과 — $(basename "$APK")"
+
+    step "R8 출력 dex 에서 엔진 응답 모델(Gson)·진입점이 원래 이름으로 남았는지"
+    rm -rf "$MIN/dex" "$MIN/engine"; mkdir -p "$MIN/dex" "$MIN/engine"
+    unzip -q -o "$APK" 'classes*.dex' -d "$MIN/dex"
+    for d in "$MIN"/dex/*.dex; do "$DEXDUMP" -l plain "$d"; done > "$MIN/dexdump.txt" 2>/dev/null
+    # 기대값 = 배포본 AAR 에 실린 엔진 jar 의 실제 선언(필드 이름)
+    unzip -q -o "$LOCAL_DIR/android-$SDK_VERSION.aar" 'libs/*.jar' -d "$MIN/engine"
+    for j in "$MIN"/engine/libs/*.jar; do unzip -q -o "$j" -d "$MIN/engine/classes"; done
+    python3 - "$MIN/dexdump.txt" "$MIN/engine/classes" "$MIN/build/outputs/mapping/release/mapping.txt" <<'PY' || die "R8 가 엔진 응답 모델을 지웠거나 이름을 바꿨다 — consumer-rules.pro 확인"
+import pathlib, re, subprocess, sys
+dump, root = pathlib.Path(sys.argv[1]).read_text(), pathlib.Path(sys.argv[2])
+# dexdump: 클래스 descriptor → 필드 이름 집합
+dex = {}
+cur = None
+for line in dump.splitlines():
+    m = re.match(r"\s*Class descriptor\s*:\s*'L(.+);'", line)
+    if m:
+        cur = m.group(1); dex[cur] = set(); continue
+    m = re.match(r"\s*name\s*:\s*'(.+)'", line)
+    if m and cur is not None:
+        dex[cur].add(m.group(1))
+targets = sorted(p for p in root.rglob("*.class")
+                 if re.search(r"ihub/internal/(floor/FloorInfra|webapi/Geofences)(\$|\.class)", str(p)))
+targets += [root / "kr/geoplan/android/lib/ihub/IntelligenceHub.class"]
+if len(targets) < 3:
+    print("엔진 응답 모델 클래스를 못 찾음", file=sys.stderr); sys.exit(1)
+bad = 0
+for p in targets:
+    name = str(p.relative_to(root))[:-len(".class")]
+    out = subprocess.run(["javap", "-p", str(p)], capture_output=True, text=True).stdout
+    fields = {re.sub(r"[;\s]+$", "", l).split()[-1] for l in out.splitlines()[1:]
+              if l.startswith("  ") and "(" not in l and l.strip() not in ("}", "static {};")}
+    have = dex.get(name)
+    if have is None:
+        print(f"  ✗ {name} — dex 에 없음(지워졌거나 이름이 바뀜)", file=sys.stderr); bad += 1; continue
+    missing = sorted(fields - have)
+    if missing:
+        print(f"  ✗ {name} — 필드 {missing} 없음/이름 바뀜", file=sys.stderr); bad += 1; continue
+    print(f"  ✓ {name.split('/')[-1]} — 필드 {len(fields)}개 원래 이름")
+# SDK 자신은 고객 앱 R8 이 이름을 줄여도 된다(공개 API 를 앱이 부르므로 살아남는다) — 매핑에 있으면 된다.
+mapping = pathlib.Path(sys.argv[3]).read_text()
+if not re.search(r"^co\.onecheck\.ones1ght\.android\.OneS1ght -> ", mapping, re.M):
+    print("  ✗ SDK 진입점(OneS1ght)이 R8 출력에 없다", file=sys.stderr); bad += 1
+else:
+    print("  ✓ SDK 진입점 OneS1ght 포함")
+sys.exit(1 if bad else 0)
+PY
+    echo "축소(R8) 호환 검사 통과 — 배포본 $COORD."
+    exit 0
+fi
 
 # --- 1. 빌드 ---------------------------------------------------------------------------------
 if [[ "${PUBLISHED:-}" == "1" ]]; then

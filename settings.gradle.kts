@@ -6,7 +6,7 @@ pluginManagement {
     }
 }
 
-// gpa-dltdoa 엔진 저장소는 계정(geoplanNexusUrl/User/Password)이 셋 다 있을 때만 추가한다.
+// 측위 엔진(gpa-ihub · gpa-prm · gpa-dltdoa) 저장소는 계정(geoplanNexusUrl/User/Password)이 셋 다 있을 때만 추가한다.
 // repositoriesMode 가 PREFER_SETTINGS 라 프로젝트(onesight/build.gradle.kts)에서 저장소를
 // 추가해도 무시되므로, 반드시 여기(settings)에서 등록해야 실제로 쓰인다.
 val geoplanNexusUrl = providers.gradleProperty("geoplanNexusUrl").orNull
