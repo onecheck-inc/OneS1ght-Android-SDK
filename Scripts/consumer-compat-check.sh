@@ -9,7 +9,8 @@
 #    (b) Java   — javac --release 8. Callback 판을 부른다.
 #    둘 다 classes.jar + android.jar(compileOnly) + api 의존만 클래스패스에 둔다.
 #    initialize → identify → buildings → floors → setFloorMap → floorSession().begin → 리스너 → end,
-#    permissions(activity), 그리고 기본 구현 멤버를 오버라이드하지 않은 PositioningProvider 구현으로 begin(provider).
+#    permissions(activity), 그리고 기본 구현 멤버를 오버라이드하지 않은 PositioningProvider 구현으로 begin(provider),
+#    앱이 직접 만든 UwbPositioningProvider(상태 StateFlow·게터·훅·진단)로 begin(provider)(0.0.5~).
 # 3. 하나라도 실패하면 0 이 아닌 값으로 끝난다.
 #
 # kotlinc 는 GitHub 릴리스 zip 을 받아 캐시에 푼다(전역 설치 없음, sha256 대조):
@@ -350,8 +351,16 @@ import co.onecheck.ones1ght.android.TriggersListener
 import co.onecheck.ones1ght.android.ZoneListener
 import co.onecheck.ones1ght.android.model.Building
 import co.onecheck.ones1ght.android.model.Floor
+import co.onecheck.ones1ght.android.positioning.EngineErrorListener
+import co.onecheck.ones1ght.android.positioning.FloorDetectedListener
 import co.onecheck.ones1ght.android.positioning.PositioningProvider
 import co.onecheck.ones1ght.android.positioning.PositioningProviderDelegate
+import co.onecheck.ones1ght.android.positioning.ProviderChangeListener
+import co.onecheck.ones1ght.android.positioning.RawAreaEventListener
+import co.onecheck.ones1ght.android.positioning.UwbPositioningProvider
+import co.onecheck.ones1ght.android.positioning.ZoneEventListener
+import co.onecheck.ones1ght.android.runtime.LogLevel
+import kotlinx.coroutines.flow.StateFlow
 
 /** 필수 멤버만 구현 — 기본 구현이 있는 pause·resume·apply 등은 오버라이드하지 않는다. */
 class KotlinProvider : PositioningProvider {
@@ -392,7 +401,30 @@ suspend fun kotlinFlow(context: Context): String {
     custom.pause(); custom.resume()
     session.begin(custom)
     session.end()
-    return "running=$running version=${OneS1ght.SDK_VERSION}"
+    return "running=$running version=${OneS1ght.SDK_VERSION} ${kotlinUwbProvider(context)}"
+}
+
+/** 앱이 직접 만든 측위 provider — 상태 흐름·게터·훅·진단(0.0.5~). */
+suspend fun kotlinUwbProvider(context: Context): String {
+    if (!UwbPositioningProvider.isSupported(context)) return "unsupported"
+    val provider = UwbPositioningProvider(context)
+    provider.onFloorDetected = FloorDetectedListener { floorId -> println(floorId) }
+    provider.onEngineError = EngineErrorListener { code, message -> println("$code $message") }
+    provider.onRawAreaEvent = RawAreaEventListener { floorId, name, inOut, atMs -> println("$floorId $name $inOut $atMs") }
+    provider.onZoneEvent = ZoneEventListener { event -> println(event.label) }
+    provider.onLog = DebugLogListener { level, message -> println("$level $message") }
+    provider.onChange = ProviderChangeListener { p -> println(p.phase) }
+    val phase: StateFlow<UwbPositioningProvider.PositioningPhase> = provider.phaseFlow
+    val position = provider.latestPositionFlow.value
+    provider.note(LogLevel.INFO, "consumer")
+    provider.startDetection()
+    OneS1ght.floorSession().begin(provider)
+    val d = provider.diagnostic
+    val line = "${phase.value} ${provider.isDetecting} ${provider.isRunning} ${provider.isPaused} $position " +
+        "${provider.detectedFloorId} ${provider.measurementCount} ${provider.log.size} ${d.registered} ${d.canPosition} ${d.summary}"
+    OneS1ght.floorSession().end()
+    provider.stopDetection()
+    return line
 }
 KT
 
@@ -423,6 +455,8 @@ import co.onecheck.ones1ght.android.model.Building;
 import co.onecheck.ones1ght.android.model.Floor;
 import co.onecheck.ones1ght.android.positioning.PositioningProvider;
 import co.onecheck.ones1ght.android.positioning.PositioningProviderDelegate;
+import co.onecheck.ones1ght.android.positioning.UwbPositioningProvider;
+import co.onecheck.ones1ght.android.runtime.LogLevel;
 import java.util.List;
 
 /** Java 8 앱이 쓰는 모양 그대로 — 정적 호출 + Callback 판 + 람다 리스너. Kotlin 타입(Unit·Function·Continuation)을 쓰지 않는다. */
@@ -501,6 +535,31 @@ public final class JavaConsumer {
                     @Override public void onSuccess(Void r3) {}
                     @Override public void onError(Throwable e) {}
                 });
+            }
+            @Override public void onError(Throwable e) {}
+        });
+    }
+
+    /** 앱이 직접 만든 측위 provider — 게터·훅·진단 + Callback 판 begin(provider)(0.0.5~). */
+    public static void javaUwbProvider(Context context) {
+        if (!UwbPositioningProvider.isSupported(context)) return;
+        final UwbPositioningProvider provider = new UwbPositioningProvider(context);
+        provider.setOnFloorDetected(floorId -> System.out.println(floorId));
+        provider.setOnEngineError((code, message) -> System.out.println(code + " " + message));
+        provider.setOnRawAreaEvent((floorId, name, inOut, atMs) -> System.out.println(floorId + name + inOut + atMs));
+        provider.setOnZoneEvent(event -> System.out.println(event.getLabel()));
+        provider.setOnLog((level, message) -> System.out.println(level + " " + message));
+        provider.setOnChange(p -> System.out.println(p.getPhase()));
+        provider.note(LogLevel.INFO, "consumer");
+        provider.startDetection();
+        OneS1ght.floorSession().begin(provider, new Callback<Void>() {
+            @Override public void onSuccess(Void r) {
+                UwbPositioningProvider.AnchorDiagnostic d = provider.getDiagnostic();
+                System.out.println(provider.getPhase() + " " + provider.isDetecting() + " " + provider.isRunning() + " "
+                    + provider.isPaused() + " " + provider.getLatestPosition() + " " + provider.getDetectedFloorId() + " "
+                    + provider.getMeasurementCount() + " " + provider.getLog().size() + " " + d.getRegistered() + " "
+                    + d.getCanPosition() + " " + d.getSummary());
+                provider.stopDetection();
             }
             @Override public void onError(Throwable e) {}
         });
