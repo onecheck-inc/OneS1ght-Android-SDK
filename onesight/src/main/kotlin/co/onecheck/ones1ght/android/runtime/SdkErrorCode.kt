@@ -52,7 +52,7 @@ public interface SdkCode {
 }
 
 /**
- * SDK 가 남기는 에러의 식별 코드 — 26개.
+ * SDK 가 남기는 에러의 식별 코드 — 27개.
  *
  * ⚠️ E1005·E1006·E3005 는 결번이다(각각 0.1.17 까지의 키 폴백 코드, v0.1.15 이전 "도면
  * 없는 층" 코드) — 과거 로그의 의미가 바뀌면 안 되므로 번호를 재사용하지 않는다.
@@ -94,6 +94,13 @@ public enum class SdkErrorCode(
 
     /** 사용자가 측위 권한을 거부했다. 앱에서 재요청 불가 — 설정 앱으로 안내해야 한다. */
     PERMISSION_DENIED("E2003", SdkLogLevel.WARN, "측위 권한 거부"),
+
+    /**
+     * Bluetooth 가 **꺼져 있다**(권한은 허용). 빠른 설정에서 켜면 풀린다 — 권한 거부(E2003)와 할 일이
+     * 달라 코드를 나눴다(0.0.6~, iOS 0.1.24 와 같다). 엔진은 둘 다 오류 3 으로 주고 메시지
+     * (`powered off`)로만 가른다.
+     */
+    BLUETOOTH_OFF("E2004", SdkLogLevel.WARN, "Bluetooth 꺼짐"),
 
     // 3xxx — 공간·설정
 

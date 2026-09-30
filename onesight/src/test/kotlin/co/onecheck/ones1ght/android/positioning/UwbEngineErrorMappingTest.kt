@@ -22,7 +22,39 @@ class UwbEngineErrorMappingTest {
 
     private fun code(hub: Int): SdkErrorCode? = UwbPositioningProvider.sdkCode(hub)
 
-    /** 권한 계열 셋(BT 불가·위치 불가·매니페스트 선언 누락)은 모두 E2003 이다 — 할 일이 같다. */
+    /**
+     * Bluetooth 꺼짐은 권한 거부와 할 일이 달라(켜면 풀린다) E2004 로 따로 간다 — 엔진은 둘 다 오류 3 이고
+     * 문장으로만 갈린다(엔진 1.1.0 이 실제로 만드는 문장 그대로).
+     */
+    @Test fun bluetoothPoweredOffIsNotPermissionDenied() {
+        assertEquals(SdkErrorCode.BLUETOOTH_OFF, UwbPositioningProvider.sdkCode(3, "bluetooth unavailable: powered off"))
+        assertEquals("대소문자 무관", SdkErrorCode.BLUETOOTH_OFF, UwbPositioningProvider.sdkCode(3, "Bluetooth unavailable: Powered Off"))
+        assertEquals(
+            "권한 쪽은 그대로 E2003",
+            SdkErrorCode.PERMISSION_DENIED,
+            UwbPositioningProvider.sdkCode(3, "bluetooth unavailable: permission required — app must request BLUETOOTH_SCAN and wait for user response"),
+        )
+        assertEquals(
+            "미지원 어댑터도 E2003(종전과 같다)",
+            SdkErrorCode.PERMISSION_DENIED,
+            UwbPositioningProvider.sdkCode(3, "bluetooth unavailable: unsupported on this device"),
+        )
+        assertEquals("문장이 없으면 종전대로 E2003", SdkErrorCode.PERMISSION_DENIED, UwbPositioningProvider.sdkCode(3, "bluetooth unavailable"))
+    }
+
+    /** "powered off" 는 오류 3 에서만 뜻이 있다 — 다른 번호의 매핑은 문장과 무관하다. */
+    @Test fun poweredOffTextDoesNotLeakIntoOtherCodes() {
+        val text = "bluetooth unavailable: powered off"
+        assertEquals(SdkErrorCode.PERMISSION_DENIED, UwbPositioningProvider.sdkCode(7, text))
+        assertEquals(SdkErrorCode.PERMISSION_DENIED, UwbPositioningProvider.sdkCode(9, text))
+        assertEquals(SdkErrorCode.FLOOR_NOT_DETECTED, UwbPositioningProvider.sdkCode(13, text))
+        assertNull(UwbPositioningProvider.sdkCode(2, text))
+        for (hub in listOf(1, 4, 5, 6, 10, 11, 12)) {
+            assertEquals("엔진 $hub", code(hub), UwbPositioningProvider.sdkCode(hub, text))
+        }
+    }
+
+    /** 권한 계열 셋(BT 불가·위치 불가·매니페스트 선언 누락)은 모두 E2003 이다 — 할 일이 같다(꺼짐 문장이 없으면). */
     @Test fun permissionFamilyMapsToPermissionDenied() {
         assertEquals(SdkErrorCode.PERMISSION_DENIED, code(3))
         assertEquals(SdkErrorCode.PERMISSION_DENIED, code(7))

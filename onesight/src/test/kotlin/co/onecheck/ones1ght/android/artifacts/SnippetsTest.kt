@@ -22,7 +22,7 @@ import java.io.File
  * "어? 이건 아닌데" 하고 걸러 주는 단계가 없다. 한 글자 틀리면 그대로 심긴다.
  *
  * ⚠️ 에러 코드 존재 검사([referencedErrorCodesExist])는 `SdkErrorCode`(병행 작업 중이라 이
- * 태스크에서는 참조하지 않는다)를 쓰지 않고, 사양서 §7 의 26개 E-코드를 하드코딩한
+ * 태스크에서는 참조하지 않는다)를 쓰지 않고, 사양서 §7 의 27개 E-코드를 하드코딩한
  * [KNOWN_ERROR_CODES] 와 대조한다. `SdkErrorCode` enum 이 만들어지면
  * `SdkErrorCode.entries.map { it.code }` 로 교체할 것.
  */
@@ -33,11 +33,11 @@ class SnippetsTest {
         private val repoRoot = File(System.getProperty("user.dir")!!).parentFile
         private val snippetFile = File(repoRoot, "Snippets/android.json")
 
-        // 사양서 §7 — SdkErrorCode 26개(E1005·E1006·E3005 는 폐기돼 재사용하지 않는다).
+        // 사양서 §7 — SdkErrorCode 27개(E1005·E1006·E3005 는 폐기돼 재사용하지 않는다).
         // SdkErrorCode enum 이 생기면 그 값으로 교체할 것.
         private val KNOWN_ERROR_CODES = setOf(
             "E1001", "E1002", "E1003", "E1004", "E1007",
-            "E2001", "E2002", "E2003",
+            "E2001", "E2002", "E2003", "E2004",
             "E3001", "E3002", "E3003", "E3004", "E3006", "E3007", "E3008", "E3009",
             "E4001", "E4002", "E4003", "E4004",
             "E5001", "E5002", "E5003", "E5004", "E5005", "E5006",
