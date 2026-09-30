@@ -21,6 +21,9 @@ concurrency:
 jobs:
   rc:
     runs-on: ubuntu-latest
+    env:
+      # 단계 if: 에서는 secrets 를 읽을 수 없어(워크플로 파일이 무효가 된다) 작업 env 로 먼저 옮긴다.
+      HAS_NEXUS: ${{ secrets.GEOPLAN_NEXUS_URL != '' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -32,7 +35,7 @@ jobs:
       - uses: android-actions/setup-android@v3
       - run: sdkmanager "platforms;android-37.0"
       - name: Nexus 계정 설정 (있으면 — 엔진 어댑터 컴파일용)
-        if: ${{ secrets.GEOPLAN_NEXUS_URL != '' }}
+        if: env.HAS_NEXUS == 'true'
         env:
           GEOPLAN_NEXUS_URL: ${{ secrets.GEOPLAN_NEXUS_URL }}
           GEOPLAN_NEXUS_USER: ${{ secrets.GEOPLAN_NEXUS_USER }}
