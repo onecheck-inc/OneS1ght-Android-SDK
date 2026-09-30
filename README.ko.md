@@ -36,7 +36,7 @@ SDK가 실제로 동작하려면 키와 공간 설정이 먼저 준비되어야 
 
 ```kotlin
 dependencies {
-    implementation("com.ones1ght.sdk:android:0.0.5")
+    implementation("com.ones1ght.sdk:android:0.0.6")
 }
 ```
 
@@ -57,6 +57,8 @@ dependencyResolutionManagement {
 `UNSUPPORTED`, `begin()` 이 `SdkError.OsVersionTooLow`(`E2001`)입니다. 초기화·공간 조회·프로필 등
 나머지는 모든 지원 OS 에서 동작합니다.
 
+> 0.0.5 에서 올라오나요? 고칠 것이 없습니다 — Bluetooth 꺼짐이 `E2003`(측위 권한 거부) 대신 `E2004` 로 남습니다
+> (`onDebugLog` 에서 `E2003` 으로 꺼짐을 판단했다면 `E2004` 도 보세요 — [CHANGELOG](CHANGELOG.md)).
 > 0.0.4 에서 올라오나요? 고칠 것이 없습니다 — 0.0.5 는 API 를 더하기만 했습니다(앱이 측위 provider 를 직접
 > 만들어 상태를 지켜볼 수 있게 됨 — [CHANGELOG](CHANGELOG.md)).
 > 0.0.3 에서 올라오나요? 고칠 것이 없습니다 — 앱 `minSdk` 를 다시 낮춰도 됩니다(26 이상).
@@ -415,11 +417,12 @@ initialize ─→ begin ─→ [UWB 좌표] ─┬─→ onPosition            (
 
 | 증상 | 코드 | 첫 확인 |
 |---|---|---|
-| 앱은 도는데 좌표가 안 나온다 | `E3007` · `E2003` · `E4002` | BLE 로 층을 찾았는지(근처 기기 허용·블루투스 켬) → 로케이터 배치 |
+| 앱은 도는데 좌표가 안 나온다 | `E3007` · `E2004` · `E2003` · `E4002` | BLE 로 층을 찾았는지(근처 기기 허용·블루투스 켬) → 로케이터 배치 |
 | 존 이벤트가 안 뜬다 | `E3009` · `E3004` | 층 지정(`setFloorMap`) 여부, 콘솔 존 이름이 현장 영역과 맞는지 |
 | 데이터가 다른 층에 쌓인다 | `E3008` | 앱에서 지정한 층과 엔진이 찾은 층 |
 | 특정 기기에서만 안 된다 | `E2001` · `E2002` | Android 17 / UWB DL-TDoA 지원 기기인지 |
 | 권한 팝업이 다시 안 뜬다 | `E2003` | 이미 거부됨 — 설정 앱 유도 |
+| Bluetooth 를 끈 채 켰다 | `E2004` | 빠른 설정에서 Bluetooth 켜기 → 측위 다시 시작 |
 | 연동 직후 401 | `E1002` | 키 상태·환경(production/development) |
 | 콘솔에 데이터가 안 보인다 | `E5001` · `E5006` | 네트워크 → 배치 주기 |
 
@@ -433,6 +436,7 @@ initialize ─→ begin ─→ [UWB 좌표] ─┬─→ onPosition            (
 | `E2001` | Android 버전 미달 |
 | `E2002` | UWB 미지원 기기 |
 | `E2003` | 측위 권한 거부 |
+| `E2004` | Bluetooth 꺼짐 |
 | `E3001` | 층 미지정 — **WARN, 정상: 엔진이 BLE 로 층을 찾는다** |
 | `E3002` | 층에 로케이터 없음 |
 | `E3003` | 층에 UWB 세션 없음 |

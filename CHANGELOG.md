@@ -9,6 +9,30 @@
 
 ---
 
+## [0.0.6] — 2026-09-30
+
+**Bluetooth 꺼짐을 권한 거부와 나눠 `E2004` 로 남깁니다 — iOS 0.1.24 와 같습니다.**
+예전엔 Bluetooth 를 끈 것도 `E2003` 「측위 권한 거부」로 올라갔습니다. 권한은 설정 앱에서 풀어야 하고, 꺼짐은
+빠른 설정에서 켜면 풀려 안내가 달라야 해 나눴습니다. 공개 API·권한·동작은 그대로입니다
+([`Migrations/android.json`](Migrations/android.json) 0.0.5→0.0.6).
+
+```kotlin
+implementation("com.ones1ght.sdk:android:0.0.6")
+```
+
+### 추가
+
+- **`E2004` Bluetooth 꺼짐(`SdkErrorCode.BLUETOOTH_OFF`, WARN).** 측위 엔진은 꺼짐·권한·미지원을 모두 오류 3 으로
+  주고 문장으로만 구분합니다 — 문장에 `powered off` 가 있을 때(시작할 때 꺼져 있었거나, 도는 중에 껐을 때)만
+  `E2004` 이고, 권한(`BLUETOOTH_SCAN`)·미지원은 종전대로 `E2003` 입니다. 서버 로그·`OneS1ght.onDebugLog` 에 `E2004`
+  로 남고, `provider.onEngineError` 는 종전처럼 엔진 원본 번호(3)·문장을 그대로 받습니다.
+  Bluetooth 상태를 SDK 가 따로 묻지 않으므로 **새 권한은 필요 없습니다.**
+
+### 앱에서 할 일
+
+- 없습니다. `onDebugLog` 에서 `E2003` 으로 Bluetooth 꺼짐을 판단하던 코드가 있었다면 `E2004` 도 보세요.
+  `SdkErrorCode` 를 `when` 으로 빠짐없이(else 없이) 가르는 코드는 `BLUETOOTH_OFF` 가지를 더해야 컴파일됩니다.
+
 ## [0.0.5] — 2026-09-29
 
 **앱이 측위 provider 를 직접 만들어 엔진 상태를 지켜볼 수 있습니다 — iOS 0.1.24 와 같은 공개 표면입니다.**
