@@ -485,6 +485,26 @@ class UwbProviderLogicTest {
         assertTrue(logs.any { it.first == LogLevel.WARN && it.second == SdkLocalized.t("uwb.stoppedSelf") })
     }
 
+    /**
+     * 구동 중 Bluetooth 를 끄면 엔진이 오류 3 + `powered off` 를 주고 멈춘다 — E2004(권한 거부 아님).
+     * 앱 훅 onEngineError 는 엔진 원본 번호·문장을 그대로 받는다(iOS 와 같다).
+     */
+    @Test fun bluetoothTurnedOffWhileTrackingIsE2004() {
+        val raw = mutableListOf<Pair<Int, String>>()
+        provider.onEngineError = EngineErrorListener { code, message -> raw += code to message }
+        tracking()
+
+        hub.onError(3, "bluetooth unavailable: powered off")
+        hub.onStopped()
+        flush()
+
+        assertEquals(Phase.IDLE, provider.enginePhase)
+        assertFalse(provider.isRunning)
+        assertEquals(listOf(SdkErrorCode.BLUETOOTH_OFF), delegate.codes())
+        assertEquals("engine=3 bluetooth unavailable: powered off", delegate.reports[0].second)
+        assertEquals(listOf(3 to "bluetooth unavailable: powered off"), raw)
+    }
+
     // MARK: - 시작 단계 오류
 
     /** 시작 단계 실패(onStopped 없이 끝남)는 여기서 되돌린다 — 안 그러면 STARTING 에 고착된다. */
@@ -503,6 +523,34 @@ class UwbProviderLogicTest {
         // 다시 시작할 수 있다.
         provider.start()
         assertEquals(2, engine.starts)
+    }
+
+    /** Bluetooth 를 끈 채 시작하면 시작 단계 실패다 — E2004 로 올리고 IDLE, 켠 뒤 다시 시작할 수 있다. */
+    @Test fun bluetoothOffAtStartIsE2004AndIdle() {
+        configured()
+        provider.start()
+
+        hub.onError(3, "bluetooth unavailable: powered off")
+        flush()
+
+        assertEquals(Phase.IDLE, provider.enginePhase)
+        assertFalse(provider.isRunning)
+        assertEquals(listOf(SdkErrorCode.BLUETOOTH_OFF), delegate.codes())
+
+        provider.start()
+        assertEquals(2, engine.starts)
+    }
+
+    /** 같은 오류 3 이라도 권한이 없으면 E2003 그대로다 — 설정 앱에서 풀어야 한다. */
+    @Test fun bluetoothPermissionAtStartStaysE2003() {
+        configured()
+        provider.start()
+
+        hub.onError(3, "bluetooth unavailable: permission required — app must request BLUETOOTH_SCAN and wait for user response")
+        flush()
+
+        assertEquals(Phase.IDLE, provider.enginePhase)
+        assertEquals(listOf(SdkErrorCode.PERMISSION_DENIED), delegate.codes())
     }
 
     /** 스캔 시작 제한(13)도 시작 단계 실패다 — E3007 로 올리고 IDLE. */

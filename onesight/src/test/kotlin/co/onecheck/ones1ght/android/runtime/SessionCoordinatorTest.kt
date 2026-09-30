@@ -720,6 +720,18 @@ class SessionCoordinatorTest {
         c.stop()
     }
 
+    /** Bluetooth 꺼짐은 E2004(WARN)로 onLog 에 남는다 — E2003(권한 거부)으로 뭉개지지 않는다. */
+    @Test fun bluetoothOffReportIsForwardedAsE2004() = runTest {
+        routeDefaults()
+        val c = makeStarted()
+        val lines = mutableListOf<String>()
+        c.onLog = { _, line -> lines.add(line) }
+        c.onReport(provider, SdkErrorCode.BLUETOOTH_OFF, "engine=3 bluetooth unavailable: powered off")
+        assertEquals("[E2004] Bluetooth 꺼짐 — engine=3 bluetooth unavailable: powered off", lines.last())
+        assertEquals(SdkLogLevel.WARN, SdkErrorCode.BLUETOOTH_OFF.level)
+        c.stop()
+    }
+
     private companion object {
         val PositioningConfigEmpty = co.onecheck.ones1ght.android.positioning.PositioningConfig()
 

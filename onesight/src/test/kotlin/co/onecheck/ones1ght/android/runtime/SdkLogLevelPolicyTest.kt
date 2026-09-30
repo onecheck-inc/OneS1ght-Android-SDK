@@ -39,6 +39,7 @@ class SdkLogLevelPolicyTest {
             SdkErrorCode.OS_VERSION_TOO_LOW, SdkErrorCode.DEVICE_NOT_SUPPORTED,
             SdkErrorCode.POSITIONING_DISABLED, // 테넌트가 일부러 꺼 둔 설정
             SdkErrorCode.PERMISSION_DENIED, // 설정에서 풀 수 있다
+            SdkErrorCode.BLUETOOTH_OFF, // 꺼 둔 것 — 켜면 풀린다
             SdkErrorCode.FLOOR_NOT_SET, // BLE 흐름에서는 정상 경로
             SdkErrorCode.LOCATORS_MISSING, // 아직 설치 전인 층일 수 있다
             SdkErrorCode.SESSION_ID_MISSING,
@@ -74,8 +75,8 @@ class SdkLogLevelPolicyTest {
     @Test fun everyCodeIsClassified() {
         val known = setOf(
             SdkErrorCode.OS_VERSION_TOO_LOW, SdkErrorCode.DEVICE_NOT_SUPPORTED,
-            SdkErrorCode.POSITIONING_DISABLED, SdkErrorCode.PERMISSION_DENIED, SdkErrorCode.FLOOR_NOT_SET,
-            SdkErrorCode.LOCATORS_MISSING, SdkErrorCode.SESSION_ID_MISSING, SdkErrorCode.ZONES_EMPTY,
+            SdkErrorCode.POSITIONING_DISABLED, SdkErrorCode.PERMISSION_DENIED, SdkErrorCode.BLUETOOTH_OFF,
+            SdkErrorCode.FLOOR_NOT_SET, SdkErrorCode.LOCATORS_MISSING, SdkErrorCode.SESSION_ID_MISSING, SdkErrorCode.ZONES_EMPTY,
             SdkErrorCode.NO_POSITION_FIX, SdkErrorCode.FLOOR_NOT_DETECTED, SdkErrorCode.ZONE_MAPPING_FAILED,
             SdkErrorCode.AREA_JUDGE_FAILED, SdkErrorCode.LOCATOR_NOT_RECEIVED, SdkErrorCode.PENDING_DROPPED,
             SdkErrorCode.NOT_INITIALIZED, SdkErrorCode.INVALID_KEY, SdkErrorCode.NOT_IDENTIFIED, SdkErrorCode.KEY_UNAVAILABLE,
@@ -86,8 +87,8 @@ class SdkLogLevelPolicyTest {
         assertTrue("등급이 분류되지 않은 코드: ${missing.map { it.code }}", missing.isEmpty())
     }
 
-    @Test fun has26ErrorCodesAnd7Info() {
-        assertEquals(26, SdkErrorCode.entries.size)
+    @Test fun has27ErrorCodesAnd7Info() {
+        assertEquals(27, SdkErrorCode.entries.size)
         assertEquals(7, SdkInfoCode.entries.size)
     }
 
@@ -97,7 +98,7 @@ class SdkLogLevelPolicyTest {
         listOf("E1005", "E1006", "E3005").forEach { assertFalse(it in codes) }
     }
 
-    /** iOS SdkErrorCode.swift 의 (code, level) 26쌍을 그대로 옮긴 표 — 사양 동일성 가드. */
+    /** iOS SdkErrorCode.swift 의 (code, level) 27쌍을 그대로 옮긴 표 — 사양 동일성 가드. */
     @Test fun codesAndLevelsMatchIos() {
         val ios = mapOf(
             "E1001" to "ERROR",
@@ -108,6 +109,7 @@ class SdkLogLevelPolicyTest {
             "E2001" to "WARN",
             "E2002" to "WARN",
             "E2003" to "WARN",
+            "E2004" to "WARN",
             "E3001" to "WARN",
             "E3002" to "WARN",
             "E3003" to "WARN",

@@ -664,7 +664,7 @@ public class UwbPositioningProvider private constructor(
     private fun handleError(code: Int, message: String) {
         log(LogLevel.ERROR, SdkLocalized.t("uwb.error", code, message, describe(code)))
         onEngineError?.onEngineError(code, message)
-        sdkCode(code)?.let { report(it, "engine=$code $message") }
+        sdkCode(code, message)?.let { report(it, "engine=$code $message") }
         if (machine.phase != Phase.STARTING) return
         when (code) {
             in START_ABORT_CODES -> finishStopped()
@@ -804,6 +804,9 @@ public class UwbPositioningProvider private constructor(
         private const val HUB_ALREADY_STARTED = 2
         private const val HUB_STOPPING = 8
 
+        /** 엔진 오류 3 의 문장 중 "Bluetooth 꺼짐" 을 가르는 구절 — iOS 와 같은 판정. */
+        private const val BLUETOOTH_POWERED_OFF = "powered off"
+
         /**
          * 시작 단계에서 엔진이 스스로 되돌리는(onStopped 없이 끝나는) 오류 — 엔진 1.1.0 기준:
          * 1 라이선스 미등록 · 3 Bluetooth · 7 위치 · 9 설정 누락 · 10 라이선스 거부 · 11 서버 미도달 ·
@@ -818,10 +821,21 @@ public class UwbPositioningProvider private constructor(
          * 13(BLE 스캔 시작이 너무 잦음 — 안드로이드가 앱당 스캔 시작 횟수를 제한한다)은 **E3007(층 미탐지)**
          * 로 올린다. 층은 BLE 스캔으로만 찾으므로 결과가 같다(층을 못 찾아 좌표가 안 나온다). 원인이 스캔
          * 제한이라는 사실은 문맥(`engine=13 …`)에 남는다 — 잠시 뒤 다시 시작하면 풀린다.
+         *
+         * [message] 는 엔진이 같이 준 문장이다. 오류 3 하나로 Bluetooth "꺼짐·권한·미지원" 이 다 오는데,
+         * 꺼짐은 빠른 설정에서 켜면 풀리고 권한은 설정 앱에서 풀어야 해 할 일이 다르다 — 그래서 꺼짐만
+         * 따로 E2004 로 올린다(iOS 0.1.24 와 같다). 엔진 1.1.0 은 꺼짐을 시작 때(어댑터 상태 확인)와 구동 중
+         * (상태 변경 방송) 모두 `bluetooth unavailable: powered off` 로 준다. 권한은
+         * `…: permission required — …`, 미지원은 `…: unsupported on this device` 다.
+         * 어댑터 상태를 SDK 가 따로 묻지 않는다 — 엔진 문장으로 충분하고, 새 권한을 요구하지 않는다.
          */
-        internal fun sdkCode(hubError: Int): SdkErrorCode? = when (hubError) {
+        internal fun sdkCode(hubError: Int, message: String = ""): SdkErrorCode? = when (hubError) {
             1 -> SdkErrorCode.INVALID_KEY // 라이선스 미등록
-            3 -> SdkErrorCode.PERMISSION_DENIED // Bluetooth 불가(꺼짐·권한)
+            3 -> if (message.contains(BLUETOOTH_POWERED_OFF, ignoreCase = true)) {
+                SdkErrorCode.BLUETOOTH_OFF // Bluetooth 꺼짐 — 켜면 풀린다
+            } else {
+                SdkErrorCode.PERMISSION_DENIED // Bluetooth 불가(권한·미지원)
+            }
             4 -> SdkErrorCode.LOCATORS_MISSING // 그 층의 앵커 정보 없음
             5 -> SdkErrorCode.UWB_SESSION_FAILED // DL-TDoA 세션 오류
             6 -> SdkErrorCode.AREA_JUDGE_FAILED // 영역 판정 오류

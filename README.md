@@ -37,7 +37,7 @@ Add the dependency to your app module's `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("com.ones1ght.sdk:android:0.0.5")
+    implementation("com.ones1ght.sdk:android:0.0.6")
 }
 ```
 
@@ -58,6 +58,8 @@ below that `deviceAvailability` is `OS_VERSION_TOO_LOW`, `permissions(activity)`
 without a prompt, and `begin()` throws `SdkError.OsVersionTooLow` (`E2001`). Everything else
 (initialize, spaces, profiles) works on every supported OS.
 
+> Upgrading from 0.0.5? Nothing to change — Bluetooth being off is now logged as `E2004` instead of `E2003`
+> (positioning permission denied). If you checked `E2003` in `onDebugLog` for that, check `E2004` too — see [CHANGELOG](CHANGELOG.md).
 > Upgrading from 0.0.4? Nothing to change — 0.0.5 only adds API (an app can now create the positioning
 > provider itself and observe its state; see [CHANGELOG](CHANGELOG.md)).
 > Upgrading from 0.0.3? Nothing to change — you may lower your app's `minSdk` back (26+).
@@ -419,11 +421,12 @@ Every failure carries a code. Include it when contacting support.
 
 | Symptom | Codes | First check |
 |---|---|---|
-| App runs but no coordinates | `E3007` · `E2003` · `E4002` | Floor found over BLE (nearby devices allowed, Bluetooth on)? → locator placement |
+| App runs but no coordinates | `E3007` · `E2004` · `E2003` · `E4002` | Floor found over BLE (nearby devices allowed, Bluetooth on)? → locator placement |
 | Zone events never fire | `E3009` · `E3004` | Floor set (`setFloorMap`)? Do console zone names match the installed areas? |
 | Data lands on another floor | `E3008` | The floor set in the app vs. the floor the engine detected |
 | Fails on specific devices | `E2001` · `E2002` | Android 17 / UWB DL-TDoA capable? |
 | Permission prompt never returns | `E2003` | Denied once — guide to Settings |
+| Started with Bluetooth off | `E2004` | Turn Bluetooth on in Quick Settings → start positioning again |
 | 401 right after integration | `E1002` | Key status and environment (production/development) |
 | Data missing in Console | `E5001` · `E5006` | Network → batching |
 
@@ -437,6 +440,7 @@ Every failure carries a code. Include it when contacting support.
 | `E2001` | Android version too low |
 | `E2002` | Device does not support UWB |
 | `E2003` | Positioning permission denied |
+| `E2004` | Bluetooth is off |
 | `E3001` | No floor set — **WARN, expected: the engine finds the floor over BLE** |
 | `E3002` | No locators on floor |
 | `E3003` | No UWB session on floor |

@@ -1,6 +1,6 @@
 {
   "platform": "android",
-  "currentVersion": "0.0.5",
+  "currentVersion": "0.0.6",
   "_readme": [
     "판올림마다 이 파일에 한 칸을 더한다. 비어 있으면 MCP 가 '변경 없음' 이라고 답할 근거가 없어",
     "에이전트가 추측으로 코드를 고치게 된다 — 그게 이 파일이 존재하는 이유다.",
@@ -72,6 +72,20 @@
           "file": "app/build.gradle.kts",
           "before": "implementation(\"com.ones1ght.sdk:android:0.0.4\")",
           "after": "implementation(\"com.ones1ght.sdk:android:0.0.5\")"
+        }
+      ]
+    },
+    {
+      "from": "0.0.5",
+      "to": "0.0.6",
+      "breaking": false,
+      "summary": "Bluetooth 꺼짐을 E2003(측위 권한 거부)에서 떼어 새 코드 E2004(Bluetooth 꺼짐, WARN)로 올린다 — iOS 0.1.24 와 같다. 측위 엔진이 오류 3 을 'powered off' 문장과 함께 줄 때만 E2004 이고, 권한·미지원은 그대로 E2003 이다. SdkErrorCode.BLUETOOTH_OFF 가 더해졌다. provider.onEngineError 는 종전처럼 엔진 원본 번호(3)·문장을 그대로 받는다. 공개 API·권한·동작은 그대로다.",
+      "action": "① 의존성 좌표만 com.ones1ght.sdk:android:0.0.6 으로 바꾼다. 코드는 고칠 것이 없다. ② onDebugLog 에서 E2003 으로 Bluetooth 꺼짐을 판단하던 코드가 있었다면 E2004 도 보라. 꺼짐은 빠른 설정에서 켜면 풀리고(다시 시작하면 된다), E2003 은 설정 앱에서 권한을 풀어야 한다. ③ SdkErrorCode 에 when 을 빠짐없이(else 없이) 쓰는 코드가 있다면 BLUETOOTH_OFF 가지를 더한다.",
+      "changes": [
+        {
+          "file": "app/build.gradle.kts",
+          "before": "implementation(\"com.ones1ght.sdk:android:0.0.5\")",
+          "after": "implementation(\"com.ones1ght.sdk:android:0.0.6\")"
         }
       ]
     }
