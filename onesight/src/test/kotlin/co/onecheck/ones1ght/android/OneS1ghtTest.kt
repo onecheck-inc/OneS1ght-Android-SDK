@@ -358,6 +358,22 @@ class OneS1ghtTest {
         h.await { OneS1ght.setFloorMap(null) }
     }
 
+    /**
+     * 감사 SF-A1 — 건물 문맥 없이(건물 인자도, 직전 건물도 없이) 층을 지정하면 조용히 층을 비우지 않고
+     * 문서화된 SdkError(E3001) 로 거절한다. 예전엔 성공 콜백이 오는데 층이 비어 구역 이벤트가 0건이었다.
+     */
+    @Test fun setFloorMapWithoutBuildingContextIsRejected() {
+        initialize()
+        val e = assertThrows<SdkError> {
+            h.await { OneS1ght.setFloorMap(co.onecheck.ones1ght.android.model.Floor("f1", "F1")) }
+        }
+        assertTrue("$e", e is SdkError.BuildingNotSet)
+        assertEquals(co.onecheck.ones1ght.android.runtime.SdkErrorCode.FLOOR_NOT_SET, e.code)
+        assertNull("거절했으면 층 상태를 건드리지 않는다", OneS1ght.floorSession().floor)
+        // 층 해제(null)는 건물이 없어도 된다.
+        h.await { OneS1ght.setFloorMap(null) }
+    }
+
     /** 초기화 전 조회는 NotInitialized, refreshZones·send 는 조용히 빈 값. */
     @Test fun lookupsBeforeInitialize() {
         assertThrows<SdkError.NotInitialized> { h.await { OneS1ght.buildings() } }
