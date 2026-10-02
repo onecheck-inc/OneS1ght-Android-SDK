@@ -37,6 +37,13 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // 테스트 JVM 로캘을 ko 로 고정 — SdkLocalized 기본 언어가 Locale.getDefault() 를 따라, 영어 러너(CI)에서는
+        // 한국어 문구를 기대하는 단언이 깨졌다(2026-10-02 release 0.0.7 실패). 다른 언어 문구는 각 테스트가
+        // SdkLocalized.language 로 직접 지정해 검사한다.
+        unitTests.all {
+            it.systemProperty("user.language", "ko")
+            it.systemProperty("user.country", "KR")
+        }
         // AGP 9 는 라이브러리 모듈의 defaultConfig.targetSdk 를 없앴다(그건 원래도 그 모듈
         // 자신의 테스트에만 적용됐다) — 여기 testOptions 와 아래 lint 로 옮겨졌다.
         targetSdk = 37
