@@ -9,7 +9,11 @@ package co.onecheck.ones1ght.android.runtime
 //  를 주입해 JVM 에서 그대로 돈다.
 //
 
-/** 영속 키·값 저장 계약 (SharedPreferences 자리). */
+/**
+ * 영속 키·값 저장 계약 (SharedPreferences 자리). **SDK 내부 전용이다** — 0.2 에서 internal 로 바뀐다(감사 SF-C1 ·
+ * SP-C6). 공개 API 어디에서도 이 타입을 받지 않으므로 앱이 구현할 일이 없다.
+ */
+@Deprecated("0.2 에서 internal 로 바뀜", level = DeprecationLevel.WARNING)
 public interface KeyValueStore {
     public fun getString(key: String): String?
     public fun putString(key: String, value: String?)
@@ -17,7 +21,9 @@ public interface KeyValueStore {
     public fun putInt(key: String, value: Int)
 }
 
-/** 인메모리 구현 — 테스트, 그리고 실기기 저장이 필요 없는 곳에서 쓴다. */
+/** 인메모리 구현 — SDK 테스트용. 0.2 에서 internal 로 바뀐다(감사 SP-C6 — 테스트용 타입이 배포 AAR 에 공개돼 있었다). */
+@Deprecated("0.2 에서 internal 로 바뀜", level = DeprecationLevel.WARNING)
+@Suppress("DEPRECATION") // 같은 0.2 정리 대상끼리
 public class InMemoryKeyValueStore : KeyValueStore {
     private val strings = mutableMapOf<String, String?>()
     private val ints = mutableMapOf<String, Int>()

@@ -694,12 +694,23 @@ class UwbProviderLogicTest {
         assertEquals(listOf(SdkErrorCode.ZONE_MAPPING_FAILED), delegate.codes())
     }
 
-    /** 앵커 없는 config(존만 폴링)는 등록 로케이터 수를 지우지 않는다. */
-    @Test fun anchorsAreKeptWhenConfigHasNone() {
+    /** 구역만 바꾸는 갱신(applyZones — 코어의 refreshZones)은 등록 로케이터 수를 지우지 않는다. */
+    @Test fun anchorsAreKeptWhenOnlyZonesChange() {
         configured()
-        provider.apply(PositioningConfig(zones = listOf(zoneA)))
+        provider.applyZones(listOf(zoneA))
 
         assertEquals(2, provider.positioningDiagnostic.registeredCount)
+    }
+
+    /**
+     * 감사 SP-C9 — apply(config) 는 그 층의 전부다: 빈 앵커는 「등록 없음」(층 해제 포함). 예전엔 「안 바뀜」으로 보고
+     * 무시해, setFloorMap(null) 뒤에도 옛 등록 수(2)가 남아 수신 점검 문맥이 틀렸다.
+     */
+    @Test fun clearingTheFloorClearsRegisteredAnchors() {
+        configured()
+        provider.apply(PositioningConfig())
+
+        assertEquals(0, provider.positioningDiagnostic.registeredCount)
     }
 
     // MARK: - Fix round 1

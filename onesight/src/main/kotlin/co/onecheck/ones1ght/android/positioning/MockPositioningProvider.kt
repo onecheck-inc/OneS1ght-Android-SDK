@@ -14,6 +14,13 @@ package co.onecheck.ones1ght.android.positioning
 import co.onecheck.ones1ght.android.model.Coordinates
 import co.onecheck.ones1ght.android.model.ZoneEventStatus
 
+/**
+ * 테스트·데모용 가짜 측위 — 콜백을 코드로 쏴서 SDK 파이프라인(좌표 전송·구역 이벤트·자기 정지 처리)을 본다.
+ *
+ * 0.2 에서 internal(또는 별도 테스트 아티팩트)로 바뀐다(감사 SP-C6 · iOS K4 — 테스트용 타입이 배포 AAR 에 공개돼
+ * 있었다). 앱이 가짜 측위가 필요하면 [PositioningProvider] 를 직접 구현한다 — `delegate`·`start()`·`stop()` 만 채우면 된다.
+ */
+@Deprecated("0.2 에서 internal 로 바뀜", level = DeprecationLevel.WARNING)
 public class MockPositioningProvider : PositioningProvider {
 
     override var delegate: PositioningProviderDelegate? = null

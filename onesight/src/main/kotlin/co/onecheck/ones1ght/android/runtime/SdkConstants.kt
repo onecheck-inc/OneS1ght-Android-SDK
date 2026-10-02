@@ -13,6 +13,16 @@ internal object SdkLimits {
     const val MAX_PER_REQUEST: Int = 500
 }
 
+/**
+ * 좌표 서버 전송 주기(Hz) — verify 가 `position_rate_hz` 를 안 주거나 범위 밖이면 접는 값. 공개 `SdkDefaults` 는 0.2 에서
+ * internal 로 바뀌므로(감사 SF-C1) SDK 안에서는 이걸 읽는다 — 값은 같다.
+ */
+internal object PositionRate {
+    const val DEFAULT_HZ: Int = 4
+    const val MIN_HZ: Int = 1
+    const val MAX_HZ: Int = 100
+}
+
 /** 서버로 보내는 플랫폼 이름 — verify·좌표·존 이벤트·로그가 같은 값을 써야 콘솔이 한 기기로 묶는다. */
 internal object SdkPlatform {
     const val NAME: String = "Android"

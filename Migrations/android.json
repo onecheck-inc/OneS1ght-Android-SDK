@@ -6,7 +6,8 @@
     "에이전트가 추측으로 코드를 고치게 된다 — 그게 이 파일이 존재하는 이유다.",
     "changes[] 의 각 항목은 '무엇이 어떻게 바뀌었나' 가 아니라 '코드를 어떻게 고치나' 로 쓴다.",
     "읽는 쪽이 사람이 아니라 코딩 에이전트이고, 그 결과가 고객사 코드에 그대로 들어간다.",
-    "0.0.1 은 첫 공개판이라 올라올 이전 버전이 없다 — 체인은 0.0.1→0.0.2 부터 시작한다."
+    "0.0.1 은 첫 공개판이라 올라올 이전 버전이 없다 — 체인은 0.0.1→0.0.2 부터 시작한다.",
+    "planned[] 는 아직 나오지 않은 판의 계획이다(체인 밖) — 0.0.x 에서 @Deprecated 로 예고한 것을 판올림 때 migrations[] 로 옮긴다."
   ],
   "migrations": [
     {
@@ -86,6 +87,60 @@
           "file": "app/build.gradle.kts",
           "before": "implementation(\"com.ones1ght.sdk:android:0.0.5\")",
           "after": "implementation(\"com.ones1ght.sdk:android:0.0.6\")"
+        }
+      ]
+    }
+  ],
+  "planned": [
+    {
+      "version": "0.2.0",
+      "breaking": true,
+      "summary": "공개 범위 축소·이름 정리 예정(감사 SF-C1·SP-C6·K4·K13·SF-C4). 0.0.x 에서는 깨지 않고 대상에 @Deprecated(WARNING) 경고만 단다 — 아래는 계획이며 판올림 때 migrations[] 로 옮긴다.",
+      "items": [
+        {
+          "api": "co.onecheck.ones1ght.android.network.ApiClient (생성자·apiKey·baseUrl)",
+          "change": "internal 로 바뀐다. 엔드포인트는 이미 internal 이라 이 객체로 할 수 있는 일이 없다. ApiClient.DEFAULT_BASE_URL 은 OneS1ght 쪽으로 옮긴다(iOS OneS1ght.defaultBaseURL 과 같은 자리).",
+          "action": "ApiClient(...) 를 만드는 코드는 지운다 — OneS1ght.initialize(context, sdkKey[, baseUrl]) 가 대신한다. ApiClient.DEFAULT_BASE_URL 을 읽는 코드는 0.2 의 OneS1ght 상수로 바꾼다(기본 주소면 인자를 생략해도 된다)."
+        },
+        {
+          "api": "co.onecheck.ones1ght.android.identity.IdentityStore",
+          "change": "internal 로 바뀐다. 방문 ID 는 SDK 가 begin 마다 스스로 발급한다.",
+          "action": "IdentityStore 를 만들거나 newVisitorId() 를 부르는 코드는 지운다 — 대신할 것이 없다(필요 없다)."
+        },
+        {
+          "api": "co.onecheck.ones1ght.android.runtime.KeyValueStore · InMemoryKeyValueStore",
+          "change": "internal 로 바뀐다. 공개 API 어디에서도 받지 않는 SDK 내부 저장 계약·테스트용 구현이다.",
+          "action": "구현하거나 만드는 코드는 지운다 — 대신할 것이 없다."
+        },
+        {
+          "api": "co.onecheck.ones1ght.android.model.SdkDefaults",
+          "change": "internal 로 바뀐다(서버가 전송 주기를 안 줄 때의 내부 기본값).",
+          "action": "POSITION_RATE_HZ·MIN_RATE_HZ·MAX_RATE_HZ 를 읽는 코드는 값(4·1·100)을 앱에 직접 두거나 지운다."
+        },
+        {
+          "api": "co.onecheck.ones1ght.android.positioning.MockPositioningProvider",
+          "change": "internal(또는 별도 테스트 아티팩트)로 바뀐다 — 테스트용 타입이 배포 AAR 에 공개돼 있었다.",
+          "action": "가짜 측위가 필요하면 PositioningProvider 를 직접 구현한다 — delegate·start()·stop() 만 채우면 되고 나머지는 기본 구현이 있다. simulateZone/simulatePosition 은 delegate?.onZone(...)/onPosition(...) 호출로 옮긴다."
+        },
+        {
+          "api": "UwbPositioningProvider.AnchorDiagnostic",
+          "change": "data class → 일반 class. 같은 값을 두 번 싣는 matched(=received)·canPosition(=hasFix) 를 지운다. 공개 data class 는 필드를 하나 더해도 copy·componentN 이 바뀌어 바이너리 호환이 깨진다.",
+          "action": "matched → received, canPosition → hasFix 로 바꾼다. copy()·구조 분해(val (a, b) = diagnostic)를 쓰면 이름으로 읽게 고친다."
+        },
+        {
+          "api": "ConfigChange.Companion(빈 공개 companion)",
+          "change": "지운다 — SDK 내부 파싱 확장의 받침이었을 뿐이다.",
+          "action": "ConfigChange.Companion 을 직접 참조하는 코드는 없을 것이다 — 있으면 지운다."
+        },
+        {
+          "api": "이름 정리(iOS K13 과 함께) — OneS1ght.permissions(activity) · send() · empty() · getProfile · putProfile · Trigger.type(문자열)",
+          "change": "권한 창을 띄우는 함수·모호한 send/empty·HTTP 동사 이름을 의도가 드러나는 이름으로 바꾸고(iOS 후보: requestPermission · uploadPendingPositions · discardPendingPositions · fetchProfile · replaceProfile), Trigger.type 은 알려진 값을 상수로 연다. 옛 이름은 한 판 동안 deprecated 로 남긴다 — 이름은 사용자 승인 후 확정.",
+          "action": "0.2 에서 deprecated 경고가 뜨는 자리를 경고 문구의 새 이름으로 바꾼다."
+        },
+        {
+          "api": "ApiError.NotFound",
+          "change": "클라이언트가 없는 자원을 찾은 경우를 계약 불일치(E5003)와 가르는 별도 타입·코드를 둔다(감사 SF-C4). 공개 sealed 계층이 바뀌므로 when 으로 ApiError 를 전부 나누는 코드는 새 갈래를 더해야 한다.",
+          "action": "when (e) { is ApiError.… } 로 전부 나누는 곳에 새 하위 타입 갈래를 더한다(else 가 있으면 고칠 것 없음)."
         }
       ]
     }

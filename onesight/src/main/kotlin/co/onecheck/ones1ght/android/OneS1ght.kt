@@ -46,7 +46,6 @@ import co.onecheck.ones1ght.android.model.FloorLocators
 import co.onecheck.ones1ght.android.model.Zone
 import co.onecheck.ones1ght.android.network.ApiClient
 import co.onecheck.ones1ght.android.network.ApiError
-import co.onecheck.ones1ght.android.identity.IdentityStore
 import co.onecheck.ones1ght.android.positioning.AndroidDeviceCapability
 import co.onecheck.ones1ght.android.positioning.DeviceCapability
 import co.onecheck.ones1ght.android.positioning.PositioningPermission
@@ -55,7 +54,6 @@ import co.onecheck.ones1ght.android.positioning.createBuiltInProvider
 import co.onecheck.ones1ght.android.runtime.AndroidAppLifecycle
 import co.onecheck.ones1ght.android.runtime.AndroidKeyValueStore
 import co.onecheck.ones1ght.android.runtime.AppLifecycle
-import co.onecheck.ones1ght.android.runtime.KeyValueStore
 import co.onecheck.ones1ght.android.runtime.LogLevel
 import co.onecheck.ones1ght.android.runtime.SdkLocalized
 import co.onecheck.ones1ght.android.runtime.SessionCoordinator
@@ -553,14 +551,15 @@ public object OneS1ght {
 
     private fun requireCoordinator(): SessionCoordinator = coordinator ?: throw SdkError.NotInitialized()
 
+    @Suppress("DEPRECATION") // IdentityStore — 0.2 에서 internal 로 바뀔 공개 타입, SDK 안에서는 그대로 쓴다
     private fun makeCoordinator(app: Context, sdkKey: String, baseUrl: String): SessionCoordinator {
         val (store, lifecycle) = platformFactory(app)
         val scope = CoroutineScope(SupervisorJob() + dispatcher)
-        val api = ApiClient(sdkKey, baseUrl)
+        val api = ApiClient.create(sdkKey, baseUrl)
         val endpoints = spaceEndpointsOverride
         val c = SessionCoordinator(
             api = api,
-            identity = IdentityStore(store),
+            identity = co.onecheck.ones1ght.android.identity.IdentityStore(store),
             appId = app.packageName,
             scope = scope,
             lifecycle = lifecycle,
@@ -624,11 +623,14 @@ public object OneS1ght {
             deviceCapabilityOverride = value
         }
 
-    private val defaultPlatformFactory: (Context) -> Pair<KeyValueStore, AppLifecycle?> =
+    @Suppress("DEPRECATION") // KeyValueStore — 0.2 에서 internal
+    private val defaultPlatformFactory: (Context) -> Pair<co.onecheck.ones1ght.android.runtime.KeyValueStore, AppLifecycle?> =
         { ctx -> AndroidKeyValueStore(ctx) to AndroidAppLifecycle() }
 
     /** 영속 저장소·앱 생명주기. 운영은 SharedPreferences·ProcessLifecycleOwner. */
-    internal var platformFactory: (Context) -> Pair<KeyValueStore, AppLifecycle?> = defaultPlatformFactory
+    @Suppress("DEPRECATION") // KeyValueStore — 0.2 에서 internal
+    internal var platformFactory: (Context) -> Pair<co.onecheck.ones1ght.android.runtime.KeyValueStore, AppLifecycle?> =
+        defaultPlatformFactory
 
     /**
      * 내장 provider(측위 엔진) 생성. begin() 이 이미 OS 를 걸렀지만 그 판정은 주입 가능한 [deviceCapability]
