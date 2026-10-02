@@ -437,9 +437,9 @@ Every failure carries a code. Include it when contacting support.
 | `E1002` | Invalid or revoked SDK key |
 | `E1003` | Positioning disabled for tenant |
 | `E1004` | No profile attached |
-| `E1007` | Positioning key unavailable from console |
+| `E1007` | Positioning key unavailable from console — or the positioning engine rejected it (context `engine=1`·`engine=10`) |
 | `E2001` | Android version too low |
-| `E2002` | Device does not support UWB |
+| `E2002` | Device does not support UWB (or has no Bluetooth — context `engine=3 … unsupported`) |
 | `E2003` | Positioning permission denied |
 | `E2004` | Bluetooth is off |
 | `E3001` | No building for `setFloorMap(floor)` (`SdkError.BuildingNotSet`) — `begin()` without a floor is normal and is not logged |

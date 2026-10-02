@@ -537,7 +537,7 @@ class UwbProviderLogicTest {
 
         assertEquals(Phase.IDLE, provider.enginePhase)
         assertFalse(provider.isRunning)
-        assertEquals(listOf(SdkErrorCode.INVALID_KEY), delegate.codes())
+        assertEquals(listOf(SdkErrorCode.KEY_UNAVAILABLE), delegate.codes()) // 10 = 측위 키 거부(SP-B9)
         assertNull(engine.current)
 
         // 다시 시작할 수 있다.

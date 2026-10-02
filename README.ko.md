@@ -433,9 +433,9 @@ initialize ─→ begin ─→ [UWB 좌표] ─┬─→ onPosition            (
 | `E1002` | SDK 키 무효 또는 폐기 |
 | `E1003` | 테넌트에서 측위 비활성 |
 | `E1004` | 프로필 미연결 |
-| `E1007` | 콘솔에서 측위 키를 못 구함 |
+| `E1007` | 콘솔에서 측위 키를 못 구함 — 또는 측위 엔진이 그 키를 거부(문맥 `engine=1`·`engine=10`) |
 | `E2001` | Android 버전 미달 |
-| `E2002` | UWB 미지원 기기 |
+| `E2002` | UWB 미지원 기기(Bluetooth 없는 기기 포함 — 문맥 `engine=3 … unsupported`) |
 | `E2003` | 측위 권한 거부 |
 | `E2004` | Bluetooth 꺼짐 |
 | `E3001` | `setFloorMap(floor)` 의 건물 없음(`SdkError.BuildingNotSet`) — 층 없이 `begin()` 하는 것은 정상이라 남지 않는다 |

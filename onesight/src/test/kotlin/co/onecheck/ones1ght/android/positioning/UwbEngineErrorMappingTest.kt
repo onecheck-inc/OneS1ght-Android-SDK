@@ -35,8 +35,8 @@ class UwbEngineErrorMappingTest {
             UwbPositioningProvider.sdkCode(3, "bluetooth unavailable: permission required — app must request BLUETOOTH_SCAN and wait for user response"),
         )
         assertEquals(
-            "미지원 어댑터도 E2003(종전과 같다)",
-            SdkErrorCode.PERMISSION_DENIED,
+            "미지원 어댑터는 미지원 기기 E2002(SP-B9 — 예전엔 E2003)",
+            SdkErrorCode.DEVICE_NOT_SUPPORTED,
             UwbPositioningProvider.sdkCode(3, "bluetooth unavailable: unsupported on this device"),
         )
         assertEquals("문장이 없으면 종전대로 E2003", SdkErrorCode.PERMISSION_DENIED, UwbPositioningProvider.sdkCode(3, "bluetooth unavailable"))
@@ -61,10 +61,13 @@ class UwbEngineErrorMappingTest {
         assertEquals(SdkErrorCode.PERMISSION_DENIED, code(9))
     }
 
-    /** 라이선스 계열은 키 문제다 — 재시도해도 소용없다는 뜻이 담긴 코드로 간다. */
-    @Test fun licenseFamilyMapsToInvalidKey() {
-        assertEquals("라이선스 미등록", SdkErrorCode.INVALID_KEY, code(1))
-        assertEquals("서버가 거부", SdkErrorCode.INVALID_KEY, code(10))
+    /**
+     * 라이선스 계열은 **측위 키**(콘솔이 주는 엔진 라이선스) 문제다 — E1007. SDK 키(ock_) 무효 E1002 가 아니다
+     * (SP-B9 — 예전엔 E1002 라 멀쩡한 SDK 키를 의심하게 했다).
+     */
+    @Test fun licenseFamilyMapsToKeyUnavailable() {
+        assertEquals("라이선스 미등록", SdkErrorCode.KEY_UNAVAILABLE, code(1))
+        assertEquals("서버가 거부", SdkErrorCode.KEY_UNAVAILABLE, code(10))
     }
 
     /** 라이선스 서버에 못 닿은 것은 키 문제가 아니라 통신 문제다 — 재시도가 유효하다. */
