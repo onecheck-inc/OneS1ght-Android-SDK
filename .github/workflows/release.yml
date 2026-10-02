@@ -9,6 +9,11 @@
 #
 # 수동 실행 전용 — GitHub Actions 무료 한도(월 2,000분) 보호를 위해 자동 트리거를 껐다.
 # 되살리려면 on: 에 push: branches: [main] 을 추가한다.
+#
+# ⚠️ main 에서만 돈다(감사 SF-A17). 수동 실행 화면에서 기능 브랜치를 고르면 머지 안 된 커밋에 정식 태그·--latest
+#    Release 가 붙고, MCP 가 그 태그의 스니펫을 고객에게 내보낸다. 작업 if 로 막는다(다른 브랜치면 건너뜀).
+# · 액션은 커밋 SHA 로 고정한다 — 태그(v7 등)는 옮겨질 수 있어, 쓰기 권한(contents: write)을 가진 이 작업에서
+#   받아 오는 코드가 바뀌지 않게. 올릴 때는 SHA 와 주석의 버전을 같이 바꾼다.
 name: release
 
 on:
@@ -23,19 +28,20 @@ concurrency:
 
 jobs:
   release:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
       # 단계 if: 에서는 secrets 를 읽을 수 없어(워크플로 파일이 무효가 된다) 작업 env 로 먼저 옮긴다.
       HAS_NEXUS: ${{ secrets.GEOPLAN_NEXUS_URL != '' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0          # 태그 목록이 필요하다
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
       - run: sdkmanager "platforms;android-37.0"
       - name: Nexus 계정 설정 (있으면 — 엔진 어댑터 컴파일용)
         if: env.HAS_NEXUS == 'true'
