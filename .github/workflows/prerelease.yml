@@ -32,7 +32,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
       - run: sdkmanager "platforms;android-37.0"
       - name: Nexus 계정 설정 (있으면 — 엔진 어댑터 컴파일용)
         if: env.HAS_NEXUS == 'true'
