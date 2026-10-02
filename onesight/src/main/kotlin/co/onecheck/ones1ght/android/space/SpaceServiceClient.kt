@@ -21,13 +21,19 @@ import co.onecheck.ones1ght.android.model.FloorState
 import co.onecheck.ones1ght.android.model.Locator
 import co.onecheck.ones1ght.android.model.Position
 import co.onecheck.ones1ght.android.model.Zone
+import co.onecheck.ones1ght.android.internal.decodeLenientList
 import co.onecheck.ones1ght.android.network.ApiClient
 import co.onecheck.ones1ght.android.network.ApiError
+import co.onecheck.ones1ght.android.network.pathSegment
 import co.onecheck.ones1ght.android.network.performJsonRequest
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.Base64
@@ -62,10 +68,16 @@ internal class SpaceServiceClient(
         .build()
 
     /**
-     * 서버가 준 존 폴리곤에서 점·존을 걸러냈을 때의 진단 문구 — 코어가 받아 화면 로그(WARN)로 남긴다.
-     * 공간 조회는 코어 디스패처에서만 돌므로 같은 스레드에서 불린다.
+     * 서버 값 일부를 버렸을 때의 진단 문구(폴리곤 점·존, 읽을 수 없는 목록 항목) — 코어가 받아 화면 로그(WARN)로
+     * 남긴다. 공간 조회는 코어 디스패처에서만 돌므로 같은 스레드에서 불린다.
      */
-    var onBadPolygon: ((String) -> Unit)? = null
+    var onDataWarning: ((String) -> Unit)? = null
+
+    /**
+     * 같은 이름의 구역을 버렸다 — 엔진은 영역을 **이름**으로만 알려 주므로 같은 이름 두 번째 구역은 매핑될 수
+     * 없다(감사 SF-A12: 예전엔 로그 없이 버려 구역 하나가 원인 없이 사라졌다). 코어가 E3009 로 올린다.
+     */
+    var onDuplicateZoneName: ((name: String, keptId: String, droppedId: String) -> Unit)? = null
 
     // 세션 캐시 — plan 은 정적(층이름 겸 선로딩), 앵커는 전원상태(clusterStatus)가 변할 수 있어 TTL.
     private val planCache = mutableMapOf<String, ConsolePlanResponse>()
@@ -88,7 +100,7 @@ internal class SpaceServiceClient(
         } catch (e: ApiError) {
             return null
         }
-        val out = res.buildings
+        val out = decodeLenientList(res.buildings, ConsoleBuildingDto.serializer(), dropped("building"))
             .filter { !it.buildingId.startsWith("sim-") } // 공간 서비스 미연동 sim 매장 제외
             .map { Building(id = it.buildingId, name = it.name, floorCount = it.floorCount) }
         return out.ifEmpty { null }
@@ -100,12 +112,13 @@ internal class SpaceServiceClient(
      */
     suspend fun floors(buildingId: String): List<Floor> {
         val fromConsole = try {
-            consoleGet<ConsoleFloorsResponse>("/positioning/buildings/$buildingId/floors")
+            consoleGet<ConsoleFloorsResponse>("/positioning/buildings/${pathSegment(buildingId)}/floors")
         } catch (e: ApiError) {
             null
         }
-        if (fromConsole != null && fromConsole.floors.isNotEmpty()) {
-            return fromConsole.floors.map {
+        val consoleFloors = fromConsole?.let { decodeLenientList(it.floors, ConsoleFloorDto.serializer(), dropped("floor")) }
+        if (!consoleFloors.isNullOrEmpty()) {
+            return consoleFloors.map {
                 Floor(id = it.floorId, name = it.name ?: it.floorId.take(8), hasPlan = it.hasPlan ?: false)
             }
         }
@@ -114,14 +127,17 @@ internal class SpaceServiceClient(
         return floors.map { Floor(id = it.floorId, name = it.floorName, hasPlan = it.hasPlan) }
     }
 
-    /** 층 단건 — 도면 이미지까지 채워 반환. 실패 시 이름은 `floorId.take(8)`. */
+    /**
+     * 층 단건 — 도면 이미지까지 채워 반환. 실패 시 이름은 `floorId.take(8)`.
+     * base64 → PNG 바이트 변환은 Default 에서 한다 — 수 MB 도면을 코어(메인)에서 풀면 ANR 이었다(SF-A13).
+     */
     suspend fun loadFloor(buildingId: String, floorId: String): Floor {
         val plan = try {
             consolePlan(buildingId, floorId)
         } catch (e: ApiError) {
             null
         }
-        return makeFloor(floorId, plan, withImage = true)
+        return withContext(Dispatchers.Default) { makeFloor(floorId, plan, withImage = true) }
     }
 
     /**
@@ -143,10 +159,10 @@ internal class SpaceServiceClient(
      * 층은 열려야 한다(도면·존은 앵커와 무관하게 이미 받아 온 것이다).
      */
     suspend fun loadLocators(floorId: String): FloorLocators? {
-        val res = anchorsOrNull(floorId) ?: return null
+        val anchors = anchorsOrNull(floorId) ?: return null
         return FloorLocators(
-            locators = res.anchors.mapNotNull { it.toLocator() },
-            sessionId = res.anchors.firstOrNull()?.sessionId,
+            locators = anchors.mapNotNull { it.toLocator() },
+            sessionId = sessionIdOf(anchors),
         )
     }
 
@@ -166,8 +182,8 @@ internal class SpaceServiceClient(
         FloorState(
             buildingId = buildingId,
             floorId = floorId,
-            sessionId = anchors?.anchors?.firstOrNull()?.sessionId,
-            locators = anchors?.anchors?.mapNotNull { it.toLocator() } ?: emptyList(),
+            sessionId = anchors?.let(::sessionIdOf),
+            locators = anchors?.mapNotNull { it.toLocator() } ?: emptyList(),
             zones = zones,
             hasPlan = planImage != null,
             locatorsFetchFailed = anchors == null,
@@ -210,7 +226,7 @@ internal class SpaceServiceClient(
             return if (res.hasPlan) res.plan?.image else null
         }
         val fallback = try {
-            spaceGet<SpacePlanResponse>("api/m/floors/$floorId/plan")
+            spaceGet<SpacePlanResponse>("api/m/floors/${pathSegment(floorId)}/plan")
         } catch (e: ApiError) {
             null
         }
@@ -220,26 +236,39 @@ internal class SpaceServiceClient(
     /** console 도면 프록시. 층별 캐시. */
     private suspend fun consolePlan(buildingId: String, floorId: String): ConsolePlanResponse {
         planCache[floorId]?.let { return it }
-        val res = consoleGet<ConsolePlanResponse>("/positioning/buildings/$buildingId/floor/$floorId/plan")
+        val res = consoleGet<ConsolePlanResponse>(
+            "/positioning/buildings/${pathSegment(buildingId)}/floor/${pathSegment(floorId)}/plan",
+        )
         planCache[floorId] = res
         return res
     }
 
     // MARK: - 앵커
 
-    /** 앵커 조회 — 실패를 값으로 돌려준다(null = 못 받음). 던지면 층 전체가 무너진다. */
-    private suspend fun anchorsOrNull(floorId: String): AnchorResponse? =
-        try {
+    /**
+     * 앵커 조회 — 실패를 값으로 돌려준다(null = 못 받음). 던지면 층 전체가 무너진다. 앵커는 하나씩 읽는다 —
+     * 하나가 깨져도 나머지로 측위한다(SF-A5).
+     */
+    private suspend fun anchorsOrNull(floorId: String): List<AnchorDto>? {
+        val res = try {
             getAnchorsCached(floorId)
         } catch (e: ApiError) {
-            null
+            return null
         }
+        return decodeLenientList(res.anchors, AnchorDto.serializer(), dropped("anchor"))
+    }
+
+    /**
+     * 층의 UWB 세션 ID — 값이 있는 첫 앵커에서. 첫 앵커만 보면 그 앵커만 세션이 비었을 때 층 전체가 E3003 으로
+     * 측위를 못 했다(감사 SF-A14).
+     */
+    private fun sessionIdOf(anchors: List<AnchorDto>): Int? = anchors.firstNotNullOfOrNull { it.sessionId }
 
     /** 앵커 — 공간 서비스 유일 잔존(콘솔 미제공). TTL [ANCHOR_TTL_MS] 캐시로 층 재방문 시 즉시. */
     private suspend fun getAnchorsCached(floorId: String): AnchorResponse {
         val now = clock()
         anchorCache[floorId]?.let { (at, cached) -> if (now - at < ANCHOR_TTL_MS) return cached }
-        val res = spaceGet<AnchorResponse>("api/m/floors/$floorId/anchors")
+        val res = spaceGet<AnchorResponse>("api/m/floors/${pathSegment(floorId)}/anchors")
         anchorCache[floorId] = now to res
         return res
     }
@@ -255,22 +284,34 @@ internal class SpaceServiceClient(
         }
 
     private suspend fun consoleZones(buildingId: String, floorId: String): List<RawZone> {
-        val res = consoleGet<ConsoleZonesResponse>("/positioning/buildings/$buildingId/floor/$floorId/zones")
-        val seen = mutableSetOf<String>()
-        return res.zones.mapNotNull { z ->
+        val res = consoleGet<ConsoleZonesResponse>(
+            "/positioning/buildings/${pathSegment(buildingId)}/floor/${pathSegment(floorId)}/zones",
+        )
+        // 구역은 하나씩 읽는다 — 하나의 name:null 이 목록 전체를 실패시켜 층이 구역 0개로 열리던 것(SF-A5).
+        val dtos = decodeLenientList(res.zones, ConsoleZoneDto.serializer()) { i, el, reason ->
+            val id = (el as? JsonObject)?.get("zone_id")?.toString() ?: "#$i"
+            onDataWarning?.invoke("zone $id dropped: unreadable ($reason)")
+        }
+        val seen = mutableMapOf<String, String>() // 이름 → 남긴 구역 ID
+        return dtos.mapNotNull { z ->
             val raw = z.polygon
             if (!z.isActive || raw == null) return@mapNotNull null
             // ⚠️ 감사 SF-A2: 점 원소를 확인 없이 it[0]·it[1] 로 읽으면 망가진 점 하나로 IndexOutOfBounds 가
             //    새어 층 전체가 안 열렸다. 나쁜 점만 거르고(iOS S23 과 같은 기준), 3개 미만이 남으면 그 존만 버린다.
             val poly = sanitizePolygon(raw)
             if (poly.size < 3) {
-                onBadPolygon?.invoke("zone ${z.zoneId} (${z.name}) dropped: ${poly.size}/${raw.size} valid polygon points")
+                onDataWarning?.invoke("zone ${z.zoneId} (${z.name}) dropped: ${poly.size}/${raw.size} valid polygon points")
                 return@mapNotNull null
             }
             if (poly.size < raw.size) {
-                onBadPolygon?.invoke("zone ${z.zoneId} (${z.name}): skipped ${raw.size - poly.size} bad polygon points")
+                onDataWarning?.invoke("zone ${z.zoneId} (${z.name}): skipped ${raw.size - poly.size} bad polygon points")
             }
-            if (!seen.add(z.name)) return@mapNotNull null
+            val kept = seen[z.name]
+            if (kept != null) {
+                onDuplicateZoneName?.invoke(z.name, kept, z.zoneId)
+                return@mapNotNull null
+            }
+            seen[z.name] = z.zoneId
             RawZone(
                 id = z.zoneId,
                 name = z.name,
@@ -346,9 +387,17 @@ internal class SpaceServiceClient(
         dwellSeconds = z.dwellSeconds,
     )
 
+    /** 목록 항목을 버렸다는 진단 — [onDataWarning] 으로. */
+    private fun dropped(kind: String): (Int, JsonElement, String) -> Unit = { i, _, reason ->
+        onDataWarning?.invoke("$kind #$i dropped: unreadable ($reason)")
+    }
+
     // MARK: - HTTP
 
-    /** console 공통 GET — `X-SDK-Key` 만 붙인다(사양서 §4.2). [path] 는 "/" 로 시작한다. */
+    /**
+     * console 공통 GET — `X-SDK-Key` 만 붙인다(사양서 §4.2). [path] 는 "/" 로 시작한다. 경로 변수는 부르는 쪽이
+     * [pathSegment] 로 인코딩해 넣는다(SF-A16).
+     */
     private suspend inline fun <reified R> consoleGet(path: String): R {
         val req = Request.Builder()
             .url(consoleBase.trimEnd('/') + path)
@@ -420,7 +469,7 @@ private data class PlanImage(
 
 /** console §6.4 zones 응답. */
 @Serializable
-private data class ConsoleZonesResponse(val zones: List<ConsoleZoneDto>)
+private data class ConsoleZonesResponse(val zones: List<JsonElement>)
 
 @Serializable
 private data class ConsoleZoneDto(
@@ -440,7 +489,7 @@ private data class ConsoleZoneDto(
 
 /** console §6.2 buildings 응답. */
 @Serializable
-private data class ConsoleBuildingsResponse(val buildings: List<ConsoleBuildingDto>)
+private data class ConsoleBuildingsResponse(val buildings: List<JsonElement>)
 
 @Serializable
 private data class ConsoleBuildingDto(
@@ -452,7 +501,7 @@ private data class ConsoleBuildingDto(
 
 /** console §6.3 floors 응답. */
 @Serializable
-private data class ConsoleFloorsResponse(val floors: List<ConsoleFloorDto>)
+private data class ConsoleFloorsResponse(val floors: List<JsonElement>)
 
 /** name·has_plan 은 콘솔 배포 시차를 고려해 옵셔널 — 없던 시절 응답에도 깨지지 않는다. */
 @Serializable
@@ -472,7 +521,7 @@ private data class SpacePlanResponse(val plan: SpacePlanBody)
 private data class SpacePlanBody(val image: PlanImage)
 
 @Serializable
-private data class AnchorResponse(val anchors: List<AnchorDto>)
+private data class AnchorResponse(val anchors: List<JsonElement>)
 
 @Serializable
 private data class AnchorDto(

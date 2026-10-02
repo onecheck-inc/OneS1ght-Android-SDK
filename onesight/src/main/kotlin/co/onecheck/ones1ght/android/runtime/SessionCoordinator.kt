@@ -331,9 +331,23 @@ internal class SessionCoordinator(
 
         positioningLicense = key
         spaceClient = spaceClientFactory(api.apiKey, key).also { c ->
-            // 서버 폴리곤에서 걸러낸 점·존 — 조용히 넘기면 "구역이 안 보인다" 로만 드러난다.
-            c.onBadPolygon = { msg -> log(LogLevel.WARN, msg) }
+            // 서버 값에서 걸러낸 점·존·항목 — 조용히 넘기면 "구역이 안 보인다" 로만 드러난다.
+            c.onDataWarning = { msg -> log(LogLevel.WARN, msg) }
+            c.onDuplicateZoneName = { name, keptId, droppedId -> reportDuplicateZone(name, keptId, droppedId) }
         }
+    }
+
+    /** 이미 알린 같은 이름 구역(버린 구역 ID) — 구역은 폴링으로 자주 다시 받으므로 한 번만 알린다. */
+    private val reportedDuplicateZones = mutableSetOf<String>()
+
+    /**
+     * 같은 이름 구역을 버렸다(감사 SF-A12) — 엔진은 영역을 이름으로만 알려 주므로 그 구역의 이벤트는 매핑될 수
+     * 없다. 매핑 실패와 같은 E3009 로 올린다(관리자가 콘솔에서 이름을 고치면 풀린다).
+     */
+    private fun reportDuplicateZone(name: String, keptId: String, droppedId: String) {
+        if (!reportedDuplicateZones.add(droppedId)) return
+        log(LogLevel.WARN, "zone $droppedId ($name) dropped: duplicate name of $keptId")
+        report(SdkErrorCode.ZONE_MAPPING_FAILED, "duplicate zone name=$name kept=$keptId dropped=$droppedId")
     }
 
     /** 측위 키를 못 구했다는 사실을 남긴다. reason 은 고정 토큰이라 키 값이 실리지 않는다. */

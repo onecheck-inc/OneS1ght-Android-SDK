@@ -31,7 +31,7 @@ class SpaceZonePolygonGuardTest {
         http = OkHttpClient(),
         consoleBase = server.url("/api/sdk/v1").toString().trimEnd('/'),
         spaceHost = server.url("/").toString(),
-    ).also { c -> c.onBadPolygon = { notes += it } }
+    ).also { c -> c.onDataWarning = { notes += it } }
 
     /** 존 응답만 [zonesJson] 으로, 도면은 없음. */
     private fun serve(zonesJson: String) {
