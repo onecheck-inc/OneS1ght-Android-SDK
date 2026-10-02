@@ -536,7 +536,7 @@ public class UwbPositioningProvider private constructor(
         if (!machine.isRunning || !freshStart) return
         log(LogLevel.INFO, SdkLocalized.t("uwb.positioningOn", detectedFloorId?.toString() ?: "-"))
         startFloorWatch()
-        // 입장 트리거 — SDK 가 buildings/floors 로드를 시작하게
+        // 입장 트리거 — 통지만 한다(코어는 이걸로 아무것도 하지 않는다 — 건물·층 조회는 앱의 몫).
         delegate?.onEnter(this, buildingId)
     }
 

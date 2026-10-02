@@ -118,7 +118,7 @@ class ApiClientTest {
         val d = e.detail ?: ""
         assertTrue("어느 응답인지 없다: $d", d.contains("ResVerify"))
         assertTrue("어느 필드인지 없다: $d", d.contains("valid"))
-        assertTrue("사람이 읽을 문장이 아니다: ${e.message}", e.message!!.contains("응답 해석 실패"))
+        assertTrue("사람이 읽을 문장이 아니다: ${e.message}", e.message!!.startsWith("Failed to decode the response (E5005) — "))
     }
 
     // ② config — GET 경로 (예전 GET /positioning/buildings 는 쓰는 곳이 없어 지웠다 — 감사 SF-C2)
@@ -269,6 +269,26 @@ class ApiClientTest {
 
         val e = assertThrowsSuspend<ApiError.Network> { badClient.config() }
         assertEquals(SdkErrorCode.NETWORK, e.code)
+    }
+
+    // 메시지는 영어 + 코드 — Java getMessage() 로 ja/en 고객 로그에 그대로 닿는다(감사 SF-C4, SdkError 와 같은 형식).
+    @Test fun messagesAreEnglishWithCode() {
+        assertEquals("Invalid or revoked SDK key (E1002) — bad key", ApiError.InvalidKey("bad key").message)
+        assertEquals("Invalid or revoked SDK key (E1002)", ApiError.InvalidKey(null).message)
+        assertEquals("Access denied — the resource belongs to another tenant (E5004)", ApiError.Forbidden("").message)
+        assertEquals("Not found (E5003) — z1", ApiError.NotFound("z1").message)
+        assertEquals("Request rejected by the server (E5003)", ApiError.Unprocessable(null).message)
+        assertEquals("Server error HTTP 502 (E5002) — boom", ApiError.Server(502, "boom").message)
+        assertEquals("Network failure: IOException (E5001)", ApiError.Network(java.io.IOException("x")).message)
+        assertEquals("Failed to decode the response (E5005)", ApiError.Decoding(null).message)
+        val all = listOf(
+            ApiError.InvalidKey("d"), ApiError.Forbidden("d"), ApiError.NotFound("d"), ApiError.Unprocessable("d"),
+            ApiError.Server(500, "d"), ApiError.Network(java.io.IOException()), ApiError.Decoding("d"),
+        )
+        for (e in all) {
+            assertTrue("${e.message} 에 코드가 없다", e.message!!.contains("(${e.code.code})"))
+            assertTrue("${e.message} 에 한글", e.message!!.none { it in '\uAC00'..'\uD7A3' })
+        }
     }
 
     // code 매핑 — iOS SdkErrorCode.swift 243-253행과 동일해야 한다.

@@ -33,7 +33,19 @@ internal interface HubEngine {
     /** 비동기 정지 — 끝나면 onStopped. 이미 정지(중)면 아무 일도 없다. */
     fun stop()
 
-    /** 엔진 콜백 — 모양은 엔진 공개 리스너와 1:1. */
+    /**
+     * 엔진 콜백 — 모양은 엔진 공개 리스너와 1:1.
+     *
+     * 계약(엔진 1.1.0 실측·README 기준 — provider 가 이 순서를 전제로 짜여 있다):
+     *  · 콜백은 **엔진 스레드**에서 온다. provider 는 받자마자 코어 디스패처로 넘기고 세대(기동 번호)로 늦은 콜백을 거른다.
+     *  · [start] 뒤에는 [onStarted] 또는 [onError](시작을 접는 번호 — HubError.abortsStart) 중 하나가 온다. 시작 단계
+     *    실패에는 [onStopped] 가 **오지 않는다** — provider 가 스스로 되돌린다.
+     *  · [onStopped] 는 [stop] 뒤, 또는 돌던 엔진이 스스로 멈출 때 한 번 온다(그때는 보통 [onError] 가 먼저 온다).
+     *  · [onTrackingStarted] / [onTrackingStopped] 는 층을 잡고 놓칠 때마다, [onPosition]·[onAreaEvent] 는 층을 잡은
+     *    동안에만 온다.
+     *  · 엔진은 프로세스 싱글턴이라 리스너는 하나만 산다 — 여러 provider 는 HubListenerMux 로 나눠 받는다.
+     *    리스너를 바꾼 뒤에도 앞 기동의 늦은 콜백(특히 onStopped)이 새 리스너에 닿을 수 있다.
+     */
     interface Listener {
         fun onStarted()
         fun onStopped()

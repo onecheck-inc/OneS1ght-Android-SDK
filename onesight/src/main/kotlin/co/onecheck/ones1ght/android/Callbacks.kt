@@ -7,7 +7,8 @@ package co.onecheck.ones1ght.android
 //  · 비동기 결과는 [Callback] 하나 — 값이 없으면 `Callback<Void?>`(Java 에서는 `Callback<Void>`).
 //  · 이벤트는 함수 타입 대신 `fun interface` — Kotlin 은 SAM 변환(`ZoneListener { … }`),
 //    Java 는 람다(`session.setOnZoneEnter(z -> …)`)로 쓴다.
-//  · 전부 메인 스레드에서 불린다.
+//  · 전부 메인 스레드에서 불린다 — 예외 하나: initialize 전에 deviceAvailability 를 읽어 남는 [DebugLogListener]
+//    경고 한 줄은 읽은 스레드에서 불린다.
 //
 
 import co.onecheck.ones1ght.android.model.ConfigChange

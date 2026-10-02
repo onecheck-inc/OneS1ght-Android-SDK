@@ -15,7 +15,7 @@ package co.onecheck.ones1ght.android
 //
 //  사용 (호스트 앱):
 //    // ① 앱 시작 시 — 키 검증 + 테넌트 설정 수신 (기기 게이트는 여기 없다 — ④ begin() 이 담당)
-//    OneS1ght.initialize(applicationContext, "ock_…")
+//    OneS1ght.initialize(applicationContext, "ock_sdk_…")
 //    // ② 공간 선택 — 선택. 측위 엔진이 BLE 로 층을 스스로 찾아 좌표는 지정 없이도 나온다.
 //    //    구역 이벤트(진입·이탈·시책)를 받으려면 그 층을 지정한다 — 구역 매핑에 그 층의 콘솔 존이 필요하다
 //    val buildings = OneS1ght.buildings()
@@ -100,13 +100,14 @@ internal const val MIN_POSITIONING_SDK: Int = 37
 
 public object OneS1ght {
 
-    /** SDK 버전 (verify 등 서버 요청에 실림). */
+    /** SDK 버전 — 서버 로그(`/logs` 의 sdk_version)에 실린다. verify·좌표·존 이벤트에는 실리지 않는다. */
     public const val SDK_VERSION: String = "0.0.6"
 
     // MARK: - 콜백
 
     /**
-     * SDK 내부 활동 로그 (디버그용) — 등급과 글자가 함께 온다. 메인 스레드에서 불린다.
+     * SDK 내부 활동 로그 (디버그용) — 등급과 글자가 함께 온다. 메인 스레드에서 불린다 — 예외 하나:
+     * initialize 전에 [deviceAvailability] 를 읽으면 남는 경고 한 줄은 **읽은 스레드**에서 불린다.
      * initialize 보다 먼저 등록해야 초기화 단계 로그를 놓치지 않는다. 운영에선 미등록 권장.
      */
     @JvmStatic
@@ -221,7 +222,7 @@ public object OneS1ght {
      * ⚠️ 건물·층은 조회하지 않는다 — 공간 선택은 buildings()/setFloorMap() 의 책임이다.
      *
      * @param context applicationContext 만 보관한다.
-     * @param sdkKey OneS1ght 콘솔 발급 키 (ock_). 측위에 필요한 나머지 키는 콘솔에서 받는다.
+     * @param sdkKey OneS1ght 콘솔 발급 키 (`ock_sdk_…`). 측위에 필요한 나머지 키는 콘솔에서 받는다.
      * @param baseUrl 자체 서버를 구축한 고객만. 키 검증·전송뿐 아니라 공간 조회(건물·층·구역·도면)도 이 서버로 간다.
      * @throws ApiError 키 무효(E1002)·네트워크(E5001) 등
      * @throws SdkError.PositioningDisabled 테넌트에서 측위가 꺼져 있다(E1003)
@@ -330,7 +331,10 @@ public object OneS1ght {
         JavaBridge.run(callback) { floors(buildingId) }
     }
 
-    /** 층 단건 — 도면 이미지 포함 (floors() 가 캐시를 데워 두면 추가 왕복 없음). */
+    /**
+     * 층 단건 — 도면 이미지 포함. floors() 는 도면을 받지 않는다(목록 경량화) — 같은 층을 직전 10분 안에 floor()·
+     * setFloorMap 으로 받았으면 그 도면이 캐시에서 바로 온다(콘솔이 도면 변경을 알리면 버린다).
+     */
     @JvmSynthetic
     public suspend fun floor(buildingId: String, floorId: String): Floor =
         onCore { requireCoordinator().floor(buildingId, floorId) }
