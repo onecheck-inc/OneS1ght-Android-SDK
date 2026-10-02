@@ -165,25 +165,15 @@ public object SdkDefaults {
 
 // MARK: - 요청 (SDK → 서버)
 
-/** verify 의 client 블록 — 필수는 profile_id 뿐, 나머지는 "가진 것만"(생략 시 서버 기존값 보존). */
-@Serializable
-internal data class ClientInfo(
-    @SerialName("profile_id") val profileId: String,
-    @SerialName("device_model") val deviceModel: String? = null,
-    @SerialName("os_name") val osName: String? = null,
-    @SerialName("os_version") val osVersion: String? = null,
-    @SerialName("app_version") val appVersion: String? = null,
-    @SerialName("sdk_version") val sdkVersion: String? = null,
-    @SerialName("device_language") val deviceLanguage: String? = null,
-    val attributes: Map<String, String>? = null,
-)
-
-/** POST /auth/verify — 키 검증 + 클라 등록(초기화 1회). */
+/**
+ * POST /auth/verify — 키 검증 + 클라 등록(초기화 1회).
+ *
+ * 서버 계약의 `client` 블록(기기 정보)은 보내지 않는다 — 늘 null 이라 생략되던 죽은 필드였다(감사 SF-C2 · iOS K8).
+ */
 @Serializable
 internal data class ReqVerify(
     @SerialName("platform_name") val platformName: String,
     @SerialName("app_id") val appId: String? = null,
-    val client: ClientInfo? = null,
 )
 
 /** POST /events/zone — 존 입장/체류/퇴장(판정 시마다). */
@@ -332,30 +322,6 @@ internal data class ResSdkConfig(
     @SerialName("google_map_key") val googleMapKey: String? = null,
     @SerialName("geo_sdk_key") val geoSdkKey: String? = null,
     @SerialName("geo_base_url") val geoBaseUrl: String? = null,
-)
-
-/** GET /positioning/buildings 응답의 층 항목. */
-@Serializable
-internal data class FloorRef(
-    @SerialName("floor_id") val floorId: String,
-    val name: String,
-)
-
-/** GET /positioning/buildings 응답의 건물 항목. */
-@Serializable
-internal data class BuildingRef(
-    @SerialName("building_id") val buildingId: String,
-    val name: String,
-    @SerialName("store_id") val storeId: Int? = null,
-    /** 서버가 생략 가능 → provider 하드코딩 floorId 폴백. */
-    val floors: List<FloorRef>? = null,
-)
-
-/** GET /positioning/buildings 응답. */
-@Serializable
-internal data class ResBuildings(
-    @SerialName("synced_at") val syncedAt: String,
-    val buildings: List<BuildingRef>,
 )
 
 /** POST /events/zone 응답. 시책은 하나씩 읽는다 — 하나가 깨져도 나머지 시책은 앱에 간다(SF-A5). */

@@ -25,18 +25,6 @@ class DtosTest {
         assertTrue(res.positioningEnabled)
     }
 
-    @Test fun decodeResBuildings() {
-        val json = """
-            { "synced_at": "2026-07-16T09:00:00Z",
-              "buildings": [
-                { "building_id": "b-uuid", "name": "금정역 skv1", "store_id": 3,
-                  "floors": [ { "floor_id": "f-uuid", "name": "f-uuid" } ] } ] }
-        """.trimIndent()
-        val res = SdkJson.decodeFromString<ResBuildings>(json)
-        assertEquals("금정역 skv1", res.buildings.first().name)
-        assertEquals("f-uuid", res.buildings.first().floors?.first()?.floorId)
-    }
-
     @Test fun decodeResZoneEventWithTriggers() {
         val json = """
             { "accepted": true, "event_id": "evt_a1b2c3",
@@ -72,23 +60,9 @@ class DtosTest {
     }
 
     @Test fun encodeReqVerifyOmitsNilFields() {
-        val req = ReqVerify(
-            platformName = "Android",
-            appId = null,
-            client = ClientInfo(
-                profileId = "A",
-                deviceModel = null,
-                osName = null,
-                osVersion = null,
-                appVersion = null,
-                sdkVersion = null,
-                deviceLanguage = null,
-                attributes = null,
-            ),
-        )
+        val req = ReqVerify(platformName = "Android", appId = null)
         val obj = SdkJson.parseToJsonElement(SdkJson.encodeToString(req)).jsonObject
-        val client = obj["client"]?.jsonObject
-        assertEquals(1, client?.size)
+        assertEquals(setOf("platform_name"), obj.keys) // client 블록은 보내지 않는다(감사 SF-C2)
         assertNull(obj["app_id"])
     }
 

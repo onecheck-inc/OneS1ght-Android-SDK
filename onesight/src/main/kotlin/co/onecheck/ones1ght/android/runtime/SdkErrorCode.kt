@@ -216,3 +216,23 @@ public enum class SdkInfoCode(
 
     override val level: SdkLogLevel get() = SdkLogLevel.INFO
 }
+
+/** 코드의 세기 → 화면 로그 등급. report 한 줄의 등급이 코드의 세기와 같게(iOS `serverLevel.logLevel`). */
+@JvmSynthetic // 최상위 internal 함수는 이름이 망글링되지 않아 Java 에 보인다
+internal fun SdkLogLevel.toLogLevel(): LogLevel = when (this) {
+    SdkLogLevel.ERROR -> LogLevel.ERROR
+    SdkLogLevel.WARN -> LogLevel.WARN
+    SdkLogLevel.INFO -> LogLevel.INFO
+}
+
+/**
+ * 코드 요약의 현재 언어 판 — 화면 로그(onDebugLog)용. 문구는 `code.<코드>` 키(ko·ja·en)에 있다.
+ *
+ * [SdkCode.summary] 는 공개 값이라 그대로 두지만 한국어 고정이다 — 화면 줄에 그대로 쓰면 en/ja 고객 로그에 한국어가
+ * 섞였다(감사 SP-C8). 키가 없으면(패키징 사고) [SdkCode.summary] 로 떨어진다.
+ */
+@JvmSynthetic // 최상위 internal 함수는 이름이 망글링되지 않아 Java 에 보인다
+internal fun localizedSummary(code: SdkCode): String {
+    val key = "code.${code.code}"
+    return if (SdkLocalized.table.containsKey(key)) SdkLocalized.t(key) else code.summary
+}

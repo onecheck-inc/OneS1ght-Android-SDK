@@ -87,7 +87,7 @@ class SpaceEndpointResolutionTest {
         stub("""{ "geo_sdk_key": "gsk_x", "geo_base_url": "$geoHere" }""")
         val c = coordinator()
         c.prepare()
-        val locators = c.locators("b-1", "14")
+        val locators = c.locators("14")
         assertEquals(1, locators.locators.size)
         assertTrue(routes.paths().toString(), routes.paths().contains("/api/m/floors/14/anchors"))
     }

@@ -681,7 +681,8 @@ class SessionCoordinatorTest {
 
         c.report(SdkErrorCode.UWB_SESSION_FAILED, "ctx=1")
 
-        assertEquals(LogLevel.LOG to "[E4001] UWB 세션 실패 — ctx=1", lines.last())
+        // 등급은 코드의 세기(E4001 = ERROR), 문구는 현재 언어의 코드 요약(감사 K9 · SP-C8)
+        assertEquals(LogLevel.ERROR to "[E4001] ${localizedSummary(SdkErrorCode.UWB_SESSION_FAILED)} — ctx=1", lines.last())
         // ERROR 는 즉시 flush — /logs 로 코드와 문맥만 간다(요약 문구는 안 간다)
         eventually { routes.count("/logs") - routes.count("/positioning/logs") > 0 }
         val logs = routes.requests.first { it.path == "/api/sdk/v1/logs" }

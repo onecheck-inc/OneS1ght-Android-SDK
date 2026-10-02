@@ -155,7 +155,12 @@ class SdkConfigResolutionTest {
         val levels = mutableListOf<Pair<LogLevel, String>>()
         c.onLog = { level, line -> levels.add(level to line) }
         c.prepare()
-        assertTrue(levels.contains(LogLevel.ERROR to SdkLocalized.t("coord.keyUnavailable")))
+        // 코드 줄 하나에 번역 문구가 실린다 — 같은 사건이 두 줄로 찍히지 않는다(감사 K9).
+        val e1007 = levels.filter { it.second.contains("[E1007]") }
+        assertEquals(1, e1007.size)
+        assertEquals(LogLevel.ERROR, e1007.single().first)
+        assertTrue(e1007.single().second.startsWith("[E1007] " + SdkLocalized.t("coord.keyUnavailable")))
+        assertTrue(levels.none { it.second == SdkLocalized.t("coord.keyUnavailable") })
     }
 
     // MARK: - I3: 콘솔 키로 만든 SpaceServiceClient 가 주입된 경로를 타는가
@@ -191,7 +196,7 @@ class SdkConfigResolutionTest {
         assertEquals(emptyList<Any>(), c.floors("B"))
         assertEquals(emptyList<Any>(), c.zones("B", "F"))
         try {
-            c.locators("B", "F")
+            c.locators("F")
             org.junit.Assert.fail("notInitialized여야 함")
         } catch (e: co.onecheck.ones1ght.android.SdkError.NotInitialized) {
             // 기대한 경로

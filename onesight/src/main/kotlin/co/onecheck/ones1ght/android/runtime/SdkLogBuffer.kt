@@ -22,7 +22,7 @@ import kotlinx.coroutines.launch
 
 internal class SdkLogBuffer(
     private val threshold: Int = 50,
-    private val maxBatch: Int = 500,
+    private val maxBatch: Int = SdkLimits.MAX_PER_REQUEST,
     private val hardLimit: Int = 2000,
     private val send: suspend (List<SdkLogEntry>) -> Boolean,
     private val scope: CoroutineScope,
