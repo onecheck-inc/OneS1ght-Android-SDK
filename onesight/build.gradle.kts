@@ -1,6 +1,7 @@
 import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
 import com.vanniktech.maven.publish.JavadocJar
 import com.vanniktech.maven.publish.SourcesJar
+import java.security.MessageDigest
 import org.gradle.api.artifacts.Configuration
 import org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
@@ -121,11 +122,23 @@ if (hasGeoplanEngineCreds) {
         add(geoplanEngine.name, "kr.geoplan.android.lib:gpa-dltdoa:2.1.0")
     }
 
+    // 엔진 AAR 무결성 고정(sha256) — 공급사 저장소에서 받은 AAR 을 우리 서명본에 그대로 싣기 때문에,
+    // 받는 중 바꿔치기·저장소 쪽 덮어쓰기가 있으면 풀기 전에 빌드를 멈춘다. 전체 verification-metadata 는
+    // 모든 의존성을 막으므로 쓰지 않고, 엔진 AAR 3개만 여기서 대조한다.
+    // 엔진 판을 올리면 위 dependencies 와 이 표를 함께 고친다(`shasum -a 256 <AAR>` 값).
+    val engineAarSha256 = mapOf(
+        "gpa-ihub-1.1.0.aar" to "f8e55a1e239b54bfad399698f4bb1c57741618147adf35c4730c1917a9225d2d",
+        "gpa-prm-2.0.0.aar" to "c1ce0dbcaf44762165a415f2daa7a02b5f482e4a95e3617623ff22c37241f729",
+        "gpa-dltdoa-2.1.0.aar" to "48263fd40b3083b9599cc0b83206da09610625bb306e40c7a1a6207e2e58f964",
+    )
+
     // 풀기 결과: jars/<AAR 이름>.jar(각 AAR 의 classes.jar — 이름이 셋 다 같아 AAR 이름으로 바꾼다)
     //          + jars/<libs 안 jar 이름>(측위 필터 등 내부 라이브러리) · rules/<AAR 이름>.txt(proguard.txt 가 있으면)
     val engineExtractedDir = layout.buildDirectory.dir("geoplanEngine/extracted")
     val extractEngineAar = tasks.register("extractGeoplanEngineAar") {
         val outputDir = engineExtractedDir
+        // 해시 표가 바뀌면(엔진 판 올림) 다시 풀고 다시 대조한다.
+        inputs.property("engineAarSha256", engineAarSha256)
         outputs.dir(outputDir)
         doLast {
             val out = outputDir.get().asFile
@@ -133,7 +146,34 @@ if (hasGeoplanEngineCreds) {
             val jarsDir = File(out, "jars").apply { mkdirs() }
             val rulesDir = File(out, "rules").apply { mkdirs() }
             // 여기(실행 시점)에서만 resolve
-            for (aar in geoplanEngine.files.sortedBy { it.name }) {
+            val engineAars = geoplanEngine.files.sortedBy { it.name }
+            // 해시 대조 — 표에 없는 AAR(판이 바뀐 경우 포함)·표에 있는데 안 받아진 AAR·해시 불일치 모두 멈춘다.
+            val resolvedNames = engineAars.map { it.name }.toSet()
+            val missing = engineAarSha256.keys - resolvedNames
+            if (missing.isNotEmpty()) {
+                throw GradleException("엔진 AAR 이 받아지지 않았다: ${missing.sorted()} — 판을 바꿨다면 engineAarSha256 표도 고친다")
+            }
+            for (aar in engineAars) {
+                val expected = engineAarSha256[aar.name]
+                    ?: throw GradleException("엔진 AAR ${aar.name} 의 sha256 이 고정돼 있지 않다 — engineAarSha256 표에 더한다")
+                val digest = MessageDigest.getInstance("SHA-256")
+                aar.inputStream().use { input ->
+                    val buf = ByteArray(1 shl 16)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        digest.update(buf, 0, n)
+                    }
+                }
+                val actual = digest.digest().joinToString("") { "%02x".format(it) }
+                if (actual != expected) {
+                    throw GradleException(
+                        "엔진 AAR ${aar.name} 해시 불일치(기대 $expected, 실제 $actual) — 받은 파일이 바뀌었다. " +
+                            "공급사에 판 변경 여부를 확인하기 전엔 싣지 않는다",
+                    )
+                }
+            }
+            for (aar in engineAars) {
                 val base = aar.name.removeSuffix(".aar")
                 val tmp = File(out, "tmp/$base")
                 copy {
