@@ -20,7 +20,7 @@ class SdkConfigFetchTest {
 
     @Before
     fun setUp() {
-        client = ApiClient("ock_sdk_x", server.url("/api/sdk/v1").toString().trimEnd('/'))
+        client = ApiClient.create("ock_sdk_x", server.url("/api/sdk/v1").toString().trimEnd('/'))
     }
 
     @Test fun decodesEveryKey() = runTest {

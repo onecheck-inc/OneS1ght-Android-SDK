@@ -90,11 +90,9 @@ public class UwbPositioningProvider private constructor(
 
     /**
      * 등록 로케이터 vs 수신 — 엔진이 앵커별 상태를 주지 않아 "좌표가 나오면 전부 수신, 아니면 아직 모름" 으로만
-     * 답한다. 모르는 것을 고장으로 칠하지 않는다 — [missing] 은 항상 비어 있다.
-     *
-     * ⚠️ 0.2 에서 data class → 일반 class 로 바뀐다(감사 SP-C6): 공개 data class 는 필드를 하나 더해도 copy·componentN
-     * 이 바뀌어 바이너리 호환이 깨진다. copy()·구조 분해(val (a, b) = …)에 기대지 말고 이름으로 읽는다. 같은 값을
-     * 두 번 싣는 [matched]·[canPosition] 은 0.2 에서 지운다.
+     * 답한다. 모르는 것을 고장으로 칠하지 않는다 — [missing] 은 항상 비어 있다. 필드 구성은 iOS `AnchorDiagnostic` 과 같다
+     * (iOS #55 가 사양 — [matched]·[canPosition] 은 iOS 에도 그대로 있어 지우지 않는다). copy()·구조 분해(val (a, b) = …)
+     * 보다 이름으로 읽기를 권한다 — 필드가 늘면 componentN 순서가 바뀔 수 있다.
      */
     public data class AnchorDiagnostic(
         /** 콘솔에 등록된 로케이터 주소(오름차순) — [apply] (config) 로 받은 것. */
@@ -102,7 +100,6 @@ public class UwbPositioningProvider private constructor(
         /** 신호가 잡힌 로케이터 — 좌표가 나오고 있으면 [registered] 전부, 아니면 빈 목록. */
         public val received: List<Int>,
         /** 등록 ∩ 수신 — [received] 와 같다. */
-        @Deprecated("0.2 에서 제거 — received 와 같다", ReplaceWith("received"), level = DeprecationLevel.WARNING)
         public val matched: List<Int>,
         /** 등록됐는데 신호가 없는 주소 — 엔진이 특정할 수 없어 항상 비어 있다. */
         public val missing: List<Int>,
@@ -112,7 +109,6 @@ public class UwbPositioningProvider private constructor(
         public val summary: String,
     ) {
         /** 측위 가능한가 — [hasFix] 와 같다. */
-        @Deprecated("0.2 에서 제거 — hasFix 와 같다", ReplaceWith("hasFix"), level = DeprecationLevel.WARNING)
         public val canPosition: Boolean get() = hasFix
     }
 
@@ -142,15 +138,11 @@ public class UwbPositioningProvider private constructor(
     @Volatile public var onChange: ProviderChangeListener? = null
 
     // MARK: - SDK 내부 연결 (FloorSession 이 건다 — 앱 훅과 따로 둔다)
-
-    /** FloorSession 리스너(onZoneEnter/Exit/Dwell)로 가는 길. 앱의 [onZoneEvent] 를 덮지 않으려고 따로 둔다. */
-    @Volatile internal var sessionZoneSink: ((ZoneEvent) -> Unit)? = null
+    //   구역 이벤트·층은 [delegate](onEmit·onFloorDetected)로 코어를 거쳐 FloorSession 에 간다 — 커스텀 provider 와
+    //   같은 길이다(iOS #55 K14). 앱 훅([onZoneEvent]·[onFloorDetected])은 그와 따로 그대로 불린다.
 
     /** OneS1ght.onDebugLog 로 가는 길. 앱의 [onLog] 를 덮지 않으려고 따로 둔다. */
     @Volatile internal var sessionLogSink: ((LogLevel, String) -> Unit)? = null
-
-    /** FloorSession.onFloorDetected 로 가는 길. 앱의 [onFloorDetected] 를 덮지 않으려고 따로 둔다. */
-    @Volatile internal var sessionFloorSink: ((Long?) -> Unit)? = null
 
     // MARK: - 부품 (감사 SP-C1 — 이 클래스는 공개 파사드, 일은 internal 부품이 한다)
     //   EngineStateMachine  엔진 단계·가동·일시정지·재시작(SP-C3: reloading 이중 플래그를 흡수)
@@ -349,7 +341,8 @@ public class UwbPositioningProvider private constructor(
      * 콘솔 로케이터·세션·존 — 그 층의 전부다.
      * · 앵커·세션은 엔진이 자기 서버에서 받으므로 **주입해도 측위에 쓰이지 않는다** — 진단('등록' 기준)용.
      *   빈 앵커는 「등록 없음」이다(층 해제 포함) — 예전엔 「안 바뀜」으로 보고 무시해 층을 해제해도 옛 등록 수가
-     *   남았다(감사 SP-C9). 구역만 바꾸는 갱신은 [applyZones] 로 온다.
+     *   남았다(감사 SP-C9). 구역만 바꾸는 갱신은 코어가 [applyZones] 로 따로 준다(SDK 내부 — 공개 계약은 iOS 와 같은
+     *   apply(config) 하나다).
      * · 존은 zone_id 매핑용으로 판정기에 꽂는다. 빈 목록도 "없다"는 뜻이라 그대로 반영한다
      *   (구역을 전부 지운 상황이 전달되지 않으면 사라진 구역에서 시책이 계속 발화한다).
      */
@@ -360,9 +353,9 @@ public class UwbPositioningProvider private constructor(
         log(LogLevel.LOG, SdkLocalized.t("uwb.zonesApply", config.zones.size, config.anchors.size))
     }
 
-    /** 구역만 바꾼다 — 등록 로케이터(진단 기준)는 그대로 둔다. */
+    /** 구역만 바꾼다 — 등록 로케이터(진단 기준)는 그대로 둔다. 코어의 구역 새로고침만 부른다(SDK 내부). */
     @MainThread
-    override fun applyZones(zones: List<Zone>) {
+    internal fun applyZones(zones: List<Zone>) {
         judge.apply(zones)
         log(LogLevel.LOG, SdkLocalized.t("uwb.zonesApply", zones.size, registeredAddresses.size))
     }
@@ -675,7 +668,7 @@ public class UwbPositioningProvider private constructor(
     private fun handleZoneEvent(event: ZoneEvent) {
         if (machine.isPaused || !machine.isRunning) return
         log(LogLevel.LOG, "🎯 ${event.label}")
-        sessionZoneSink?.invoke(event)
+        delegate?.onEmit(this, event) // → FloorSession.onZoneEnter/Exit/Dwell
         onZoneEvent?.onZoneEvent(event)
         val status = when (event) {
             is ZoneEvent.Enter -> ZoneEventStatus.ENTER
@@ -687,10 +680,13 @@ public class UwbPositioningProvider private constructor(
 
     // MARK: - 헬퍼
 
-    /** 층 탐지·상실 → 앱 훅([onFloorDetected])과 세션 리스너(FloorSession.onFloorDetected) 둘 다. */
+    /**
+     * 층 탐지·상실 → 앱 훅([onFloorDetected], 엔진 층 번호)과 코어(delegate → FloorSession.onFloorDetected, `Floor.id`
+     * 와 같은 문자열) 둘 다 — iOS 와 같다.
+     */
     private fun emitFloorDetected(fid: Long?) {
         onFloorDetected?.onFloorDetected(fid)
-        sessionFloorSink?.invoke(fid)
+        delegate?.onFloorDetected(this, fid?.toString())
     }
 
     private fun clearPosition() {

@@ -147,4 +147,19 @@ class DtosTest {
     @Test fun iso8601HasMillisAndZ() {
         assertEquals("1970-01-01T00:00:00.123Z", co.onecheck.ones1ght.android.internal.Iso8601.format(123))
     }
+
+    /** iOS #55 S17 — 존 이벤트 응답을 관대하게: id 숫자·없음, type 없음, accepted·event_id 없음. */
+    @Test fun zoneEventIsLenientLikeIos() {
+        val json = """
+            { "event_id": 42,
+              "triggers": [ { "trigger_id": 7, "payload": { "title": "x" } }, { "type": "coupon" } ] }
+        """.trimIndent()
+        val res = SdkJson.decodeFromString<ResZoneEvent>(json)
+        assertTrue(res.accepted)
+        assertEquals("42", res.eventId)
+        assertEquals(listOf("7", ""), res.triggers.map { it.triggerId })
+        assertEquals(listOf("generic", "coupon"), res.triggers.map { it.type })
+        assertEquals(mapOf("title" to "x"), res.triggers[0].payload)
+        assertNull(SdkJson.decodeFromString<ResZoneEvent>("{}").eventId)
+    }
 }

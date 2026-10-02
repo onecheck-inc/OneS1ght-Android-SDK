@@ -58,10 +58,17 @@ public fun interface DebugLogListener {
 }
 
 /**
- * 측위 세션이 **SDK 쪽 사정으로** 닫혔다 — 엔진이 스스로 멈췄고 다시 켜지 못했다(권한·Bluetooth·라이선스처럼
- * 사람이 풀어야 하는 원인이거나, 다시 켜기를 다 써도 안 됐다). 이때 `FloorSession.isRunning` 은 이미 false 라
- * `begin()` 으로 다시 열 수 있다. 앱이 `end()` 로 끈 경우에는 오지 않는다.
+ * 측위 세션이 닫혔다 — 이유는 [FloorSession.StopReason](iOS `onStopped: (StopReason) -> Void` 와 같은 모양).
+ * 불릴 때 `FloorSession.isRunning` 은 이미 false 다.
  */
 public fun interface SessionStoppedListener {
-    public fun onStopped()
+    public fun onStopped(reason: FloorSession.StopReason)
+}
+
+/**
+ * 엔진이 층을 잡았다(층 ID) / 잃었다(`null`) — `FloorSession.onFloorDetected`(iOS `(String?) -> Void`).
+ * 넘어오는 ID 는 `OneS1ght.floors(buildingId)` 가 주는 `Floor.id` 와 같은 값이다.
+ */
+public fun interface SessionFloorListener {
+    public fun onFloorDetected(floorId: String?)
 }

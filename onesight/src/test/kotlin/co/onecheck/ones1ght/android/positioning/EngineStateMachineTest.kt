@@ -208,15 +208,21 @@ class EngineStateMachineTest {
         assertFalse(second)
     }
 
-    @Test fun testStopClearsPause() {
+    /** iOS #55 — stop()/start() 는 일시정지를 풀지 않는다(푸는 것은 resume·코어의 begin/end). */
+    @Test fun testStopAndStartKeepPause() {
         val sm = Recorder().machine()
         sm.start()
         sm.pause()
         assertTrue(sm.isPaused)
 
         sm.stop()
-
-        assertFalse(sm.isPaused)
+        assertTrue(sm.isPaused)
+        sm.onClosed()
+        sm.start()
+        assertTrue(sm.isPaused)
+        assertFalse(sm.acceptsPosition())
+        assertTrue(sm.resume())
+        assertTrue(sm.acceptsPosition())
     }
 
     @Test fun pauseWhileRunningBlocksAcceptsPosition() {

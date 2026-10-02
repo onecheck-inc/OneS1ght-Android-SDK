@@ -30,7 +30,7 @@ class ApiClientTest {
 
     @Before
     fun setUp() {
-        client = ApiClient("test-key", server.url("/api/sdk/v1").toString().trimEnd('/'))
+        client = ApiClient.create("test-key", server.url("/api/sdk/v1").toString().trimEnd('/'))
     }
 
     /** suspend 버전 [org.junit.Assert.assertThrows] — JUnit4 것은 suspend 블록을 받지 못한다. */
@@ -264,7 +264,7 @@ class ApiClientTest {
     @Test fun connectionFailure_isNetwork() = runTest {
         val offline = MockWebServer()
         offline.start()
-        val badClient = ApiClient("test-key", offline.url("/api/sdk/v1").toString().trimEnd('/'))
+        val badClient = ApiClient.create("test-key", offline.url("/api/sdk/v1").toString().trimEnd('/'))
         offline.shutdown()
 
         val e = assertThrowsSuspend<ApiError.Network> { badClient.config() }

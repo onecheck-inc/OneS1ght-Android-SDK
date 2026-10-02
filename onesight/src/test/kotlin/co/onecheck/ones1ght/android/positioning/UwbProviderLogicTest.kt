@@ -367,10 +367,13 @@ class UwbProviderLogicTest {
         assertFalse(provider.isPaused)
     }
 
-    @Test fun stopClearsPause() {
+    /** iOS #55 — 내장 provider 의 stop() 은 일시정지를 풀지 않는다(resume·코어의 begin/end 만 푼다). */
+    @Test fun stopKeepsPause() {
         tracking()
         provider.pause()
         provider.stop()
+        assertTrue(provider.isPaused)
+        provider.resume()
         assertFalse(provider.isPaused)
     }
 

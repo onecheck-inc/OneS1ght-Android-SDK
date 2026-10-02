@@ -8,9 +8,9 @@ package co.onecheck.ones1ght.android
 //  · **싱글턴** — UWB 라디오·측위 엔진·좌표 버퍼가 기기당 하나뿐이라
 //    세션이 여럿이면 물리적으로 충돌한다. floorSession() 은 항상 같은 인스턴스를 준다.
 //  · 가동 중 setFloorMap 을 다시 부르면 이 세션이 새 층으로 갈아탄다(재생성 불필요).
-//  · 구역 이벤트의 표준 출구는 여기 리스너다(Ruling 1). 앱이 UwbPositioningProvider 를 직접 만들어
-//    begin(provider) 에 넣으면 그 provider 의 공개 훅(onZoneEvent 등)도 함께 불린다 — SDK 는 provider 의
-//    내부 연결(sessionZoneSink·sessionLogSink)로만 이 세션에 잇고, 앱 훅은 덮지 않는다(0.0.5~).
+//  · 구역 이벤트·층의 표준 출구는 여기 리스너다(Ruling 1). 어느 provider 로 시작해도 provider 의 delegate
+//    (onEmit·onFloorDetected) → 코어 → 여기로 같은 길을 탄다(iOS #55 K14). 앱이 UwbPositioningProvider 를 직접 만들어
+//    begin(provider) 에 넣으면 그 provider 의 공개 훅(onZoneEvent 등)도 함께 불린다 — 앱 훅은 덮지 않는다(0.0.5~).
 //  · 내장 provider 는 한 번만 만들고 계속 쓴다. 그 안의 코루틴 스코프가 프로세스 수명이라
 //    begin 마다 새로 만들면 새는 만큼 쌓인다(iOS 가 hub 를 재사용하는 것과 같다).
 //
@@ -20,7 +20,6 @@ package co.onecheck.ones1ght.android
 import androidx.annotation.MainThread
 import co.onecheck.ones1ght.android.model.Floor
 import co.onecheck.ones1ght.android.model.ZoneEvent
-import co.onecheck.ones1ght.android.positioning.FloorDetectedListener
 import co.onecheck.ones1ght.android.positioning.PositioningProvider
 import co.onecheck.ones1ght.android.positioning.UwbPositioningProvider
 
@@ -54,19 +53,34 @@ public class FloorSession internal constructor() {
     @Volatile public var onConfigChanged: ConfigChangeListener? = null
 
     /**
-     * 측위 엔진이 층을 찾았다(엔진 층 번호) / 층을 놓쳤다(`null`). 콘솔 층으로 옮겨 `setFloorMap` 할 때 쓴다 —
-     * 사용자에게 층을 고르게 하지 않아도 된다. 내장 측위(`begin()`)와 앱이 만든 [UwbPositioningProvider] 를
-     * 넣은 `begin(provider)` 에서 온다(그 provider 의 `onFloorDetected` 는 따로 그대로 불린다).
+     * 엔진이 층을 잡았다(층 ID) / 잃었다(`null`).
+     *
+     * 갱신된 로케이터는 BLE 로 자기 층을 알리므로, 엔진은 `begin()` 뒤 1~2초 안에 층을 스스로 찾는다. 넘어오는 ID 는
+     * `OneS1ght.floors(buildingId)` 가 주는 `Floor.id` 와 같은 값이다 — 그 층으로 `setFloorMap` 하면 된다. 어느 provider
+     * 로 시작해도 온다(앱이 만든 [UwbPositioningProvider] 의 `onFloorDetected` — 엔진 층 번호 — 는 따로 그대로 불린다).
      * 층을 바꾸려고 측위를 끄지 말 것 — 가동 중 `setFloorMap` 은 안전하고 세션을 유지한다.
      */
-    @Volatile public var onFloorDetected: FloorDetectedListener? = null
+    @Volatile public var onFloorDetected: SessionFloorListener? = null
 
     /**
-     * 측위 세션이 **SDK 쪽 사정으로** 닫혔다 — 엔진이 스스로 멈췄고(권한·Bluetooth·라이선스처럼 사람이 풀어야
-     * 하는 원인이거나, 3·10·30초 뒤 다시 켜기를 다 써도 안 됐다) 세션을 정리했다. 불릴 때 [isRunning] 은 이미
-     * false 라 원인을 안내한 뒤 `begin()` 으로 다시 열 수 있다. 앱이 `end()` 로 끈 경우에는 오지 않는다.
+     * 측위 세션이 닫혔다 — `end()` 를 불렀거나([StopReason.ENDED]), 엔진이 다시 켜지지 않아 SDK 가 닫았다
+     * ([StopReason.ENGINE_FAILED]). 불릴 때 [isRunning] 은 이미 false 다 — ENGINE_FAILED 면 원인(권한·Bluetooth 등)을
+     * 풀고 `begin()` 으로 다시 연다. 이 콜백이 없던 동안 SDK 가 세션을 닫아도 앱 화면은 「찾는 중」에 머물렀다(iOS S6).
      */
     @Volatile public var onStopped: SessionStoppedListener? = null
+
+    /**
+     * 세션이 닫힌 이유(iOS `FloorSession.StopReason`).
+     *
+     * ⚠️ 새 이유가 늘 수 있다 — `when` 에는 `else` 를 둘 것.
+     */
+    public enum class StopReason {
+        /** 앱이 `end()` 를 불렀다(또는 `OneS1ght.reset()`·키 교체). */
+        ENDED,
+
+        /** 엔진이 스스로 꺼졌고 다시 켜지지 않아 SDK 가 세션을 닫았다. `E4001`·`E2003`·`E2004` 등이 함께 남는다. */
+        ENGINE_FAILED,
+    }
 
     // MARK: - 상태
 
@@ -114,10 +128,10 @@ public class FloorSession internal constructor() {
      * 측위 시작 (provider 주입).
      *
      * - 앱이 만든 [UwbPositioningProvider] 면 [begin] 과 **똑같이** 다룬다 — 같은 기기 게이트, SDK 가 넣는
-     *   라이선스, 구역 이벤트 → 이 세션의 리스너(onZoneEnter/Exit/Dwell), 엔진 로그 → `OneS1ght.onDebugLog`.
-     *   provider 에 앱이 단 훅(onZoneEvent·onLog …)은 그대로 둔다(덮지 않는다). 지도 화면처럼 엔진 상태를
-     *   직접 지켜봐야 할 때 쓴다.
-     * - 그 밖의 provider(테스트 Mock·데모 등)는 기기 게이트를 거치지 않는다.
+     *   라이선스, 엔진 로그 → `OneS1ght.onDebugLog`. provider 에 앱이 단 훅(onZoneEvent·onLog …)은 그대로 둔다
+     *   (덮지 않는다). 지도 화면처럼 엔진 상태를 직접 지켜봐야 할 때 쓴다.
+     * - 그 밖의 provider(커스텀·데모 등)는 기기 게이트를 거치지 않는다.
+     * - 구역 콜백(onZoneEnter/Exit/Dwell)·onFloorDetected·일시정지는 어느 provider 든 같은 길(delegate)로 온다.
      *
      * @throws SdkError.NotInitialized · SdkError.NotIdentified — UwbPositioningProvider 면 여기에
      *   SdkError.DeviceNotSupported · SdkError.OsVersionTooLow 가 더해진다.
@@ -144,8 +158,9 @@ public class FloorSession internal constructor() {
      * 측위 **일시정지** — 좌표 표시·수집·판정만 멈추고 엔진은 계속 돌린다.
      *
      * `end()` 와 다르다: end 는 엔진까지 꺼서 층·앵커를 잃는다. 이 호출은 층 추적을 그대로
-     * 둔 채 좌표만 버리므로 `resume()` 이 즉시 이어진다. 쌓인 좌표는 그대로 둔다.
-     * 메인 스레드에서 부른다.
+     * 둔 채 좌표만 버리므로 `resume()` 이 즉시 이어진다. 쌓인 좌표는 그대로 둔다. 어느 provider 로 시작했든
+     * 그 provider 의 pause() 를 부른다. 백그라운드에 다녀와도 일시정지는 유지된다 — 풀리는 것은 `resume()`·`end()`·
+     * `begin()` 뿐이다(iOS 와 같다). 메인 스레드에서 부른다.
      */
     @MainThread
     public fun pause() {
@@ -194,10 +209,8 @@ public class FloorSession internal constructor() {
         }
         if (provider is UwbPositioningProvider) {
             provider.license = coordinator.positioningLicense.orEmpty()
-            // SDK 내부 연결 — 앱이 provider 에 단 훅(onZoneEvent·onLog)과는 따로 건다(덮지 않는다).
-            provider.sessionZoneSink = { event -> dispatch(event) }
+            // SDK 내부 연결 — 앱이 provider 에 단 훅(onLog)과는 따로 건다(덮지 않는다). 구역 이벤트·층은 delegate 로 온다.
             provider.sessionLogSink = { level, line -> OneS1ght.onDebugLog?.onLog(level, line) } // 엔진 로그 → 표준 디버그 훅
-            provider.sessionFloorSink = { floorId -> onFloorDetected?.onFloorDetected(floorId) }
         }
         coordinator.start(provider)
     }

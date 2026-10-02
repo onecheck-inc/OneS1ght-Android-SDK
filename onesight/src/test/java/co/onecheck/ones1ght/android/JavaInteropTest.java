@@ -37,7 +37,7 @@ public class JavaInteropTest {
             h.drain(); assertTrue(got[0] instanceof List);
             FloorSession s = OneS1ght.floorSession();
             s.setOnZoneEnter(zone -> {}); s.setOnPosition(c -> {}); s.setOnZoneDwell((zone, sec) -> {});
-            s.setOnStopped(() -> {}); s.setOnFloorDetected(floorId -> {});
+            s.setOnStopped(reason -> { if (reason == FloorSession.StopReason.ENGINE_FAILED) { } }); s.setOnFloorDetected(floorId -> {});
             OneS1ght.setOnDebugLog((level, msg) -> {});
             s.begin(h.mockProvider(), new Callback<Void>() { @Override public void onSuccess(Void r) {} @Override public void onError(Throwable e) { fail(e.toString()); } });
             h.drain(); assertTrue(s.isRunning());
@@ -212,7 +212,7 @@ public class JavaInteropTest {
             assertNull(OneS1ght.getGoogleMapKey());
             OneS1ght.setLanguage("en");
             OneS1ght.setLanguage(null);
-            OneS1ght.empty();
+            OneS1ght.discardPendingPositions();
 
             final Object[] got = new Object[1];
             // baseUrl 없는 판 — 기본 주소로 나가므로 결과는 보지 않고 모양만 확인한다(초기화 전 조회로 대체).
@@ -243,7 +243,7 @@ public class JavaInteropTest {
                 @Override public void onError(Throwable e) { got[0] = e; } });
             h.drain(); assertTrue(got[0] instanceof List);
 
-            OneS1ght.send(new Callback<Void>() {
+            OneS1ght.uploadPendingPositions(new Callback<Void>() {
                 @Override public void onSuccess(Void r) { got[0] = "sent"; }
                 @Override public void onError(Throwable e) { got[0] = e; } });
             h.drain(); assertEquals("sent", got[0]);

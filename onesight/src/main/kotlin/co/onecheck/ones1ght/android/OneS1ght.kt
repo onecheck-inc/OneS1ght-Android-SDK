@@ -43,7 +43,6 @@ import co.onecheck.ones1ght.android.model.Building
 import co.onecheck.ones1ght.android.model.Floor
 import co.onecheck.ones1ght.android.model.FloorLocators
 import co.onecheck.ones1ght.android.model.Zone
-import co.onecheck.ones1ght.android.network.ApiClient
 import co.onecheck.ones1ght.android.network.ApiError
 import co.onecheck.ones1ght.android.positioning.DeviceCapability
 import co.onecheck.ones1ght.android.positioning.PositioningPermission
@@ -82,7 +81,7 @@ public enum class PermissionStatus {
 /**
  * 측위에 필요한 최소 API 레벨 — Android 17. 측위 엔진의 최소 사양이다. 패키지 minSdk 는 26 이라
  * ("설치는 넓게, 측위는 지원 OS 에서만" — iOS 의 패키지 18 · 측위 27 과 같은 모양) 그 사이 기기에서는
- * deviceAvailability=OS_VERSION_TOO_LOW · permissions()=UNSUPPORTED · begin()=OsVersionTooLow(E2001) 다.
+ * deviceAvailability=OS_VERSION_TOO_LOW · requestPermission()=UNSUPPORTED · begin()=OsVersionTooLow(E2001) 다.
  */
 internal const val MIN_POSITIONING_SDK: Int = 37
 
@@ -90,6 +89,9 @@ public object OneS1ght {
 
     /** SDK 버전 — 서버 로그(`/logs` 의 sdk_version)에 실린다. verify·좌표·존 이벤트에는 실리지 않는다. */
     public const val SDK_VERSION: String = "0.0.6"
+
+    /** 기본 콘솔 SDK API 주소 — [initialize] 의 `baseUrl` 기본값(iOS `OneS1ght.defaultBaseURL`). */
+    public const val DEFAULT_BASE_URL: String = "https://console.ones1ght.com/api/sdk/v1"
 
     // MARK: - 콜백
 
@@ -121,7 +123,7 @@ public object OneS1ght {
      * E2002 로 남긴다.
      *
      * **initialize() 다음에 읽는다.** 칩 조회에는 앱 Context 가 필요한데, SDK 가 그것을 받는 곳은
-     * initialize(또는 permissions(activity)) 뿐이다. 그 전에 읽으면 판단할 수 없어
+     * initialize(또는 requestPermission(activity)) 뿐이다. 그 전에 읽으면 판단할 수 없어
      * [DeviceAvailability.DEVICE_NOT_SUPPORTED] 이고 onDebugLog 에 WARN 이 한 번 남는다.
      */
     @JvmStatic
@@ -164,7 +166,8 @@ public object OneS1ght {
 
     /**
      * 측위 권한(RANGING + ACCESS_FINE_LOCATION + BLUETOOTH_SCAN, 그리고 함께 묻는 ACCESS_COARSE_LOCATION)을
-     * 한 번에 확인·요청한다. 대략 위치만 허용(정밀 거부)이나 근처 기기(BLE) 거부는 DENIED 다.
+     * 한 번에 확인하고 **필요하면 시스템 창을 띄워** 요청한다. 대략 위치만 허용(정밀 거부)이나 근처 기기(BLE) 거부는 DENIED 다.
+     * (iOS `requestPermission()` 과 같은 이름 — 확인만 하는 함수가 아니라는 것이 이름에 드러나야 한다.)
      *
      * - 이 기기에서 측위가 불가하면 팝업 없이 [PermissionStatus.UNSUPPORTED].
      * - 이미 셋 다 허용돼 있으면 팝업 없이 [PermissionStatus.AUTHORIZED].
@@ -174,15 +177,27 @@ public object OneS1ght {
      * initialize 를 부르지 않았어도 호출할 수 있다.
      */
     @JvmSynthetic
-    public suspend fun permissions(activity: ComponentActivity): PermissionStatus {
+    public suspend fun requestPermission(activity: ComponentActivity): PermissionStatus {
         if (appContext == null) appContext = activity.applicationContext
         return permissionsWith { PositioningPermission.request(activity) }
     }
 
-    /** [permissions] 의 Java 판. */
+    /** [requestPermission] 의 Java 판. */
+    @JvmStatic
+    public fun requestPermission(activity: ComponentActivity, callback: Callback<PermissionStatus>) {
+        JavaBridge.run(callback) { requestPermission(activity) }
+    }
+
+    /** 0.0.6 까지의 이름 — [requestPermission] 과 같다. */
+    @Deprecated("requestPermission 으로 바뀜", ReplaceWith("requestPermission(activity)"), level = DeprecationLevel.WARNING)
+    @JvmSynthetic
+    public suspend fun permissions(activity: ComponentActivity): PermissionStatus = requestPermission(activity)
+
+    /** 0.0.6 까지의 이름 — [requestPermission] 의 Java 판과 같다. */
+    @Deprecated("requestPermission 으로 바뀜", ReplaceWith("requestPermission(activity, callback)"), level = DeprecationLevel.WARNING)
     @JvmStatic
     public fun permissions(activity: ComponentActivity, callback: Callback<PermissionStatus>) {
-        JavaBridge.run(callback) { permissions(activity) }
+        requestPermission(activity, callback)
     }
 
     /** 기기 판정 → 요청. 요청 자체는 주입받는다(JVM 테스트는 Activity 를 만들 수 없다). */
@@ -219,7 +234,7 @@ public object OneS1ght {
     public suspend fun initialize(
         context: Context,
         sdkKey: String,
-        baseUrl: String = ApiClient.DEFAULT_BASE_URL,
+        baseUrl: String = DEFAULT_BASE_URL,
     ): Unit = onCore {
         // 기기 게이트는 여기 두지 않는다 — initialize 는 "키·설정" 이고 begin() 이 "측위" 다.
         val app = context.applicationContext ?: context
@@ -304,12 +319,12 @@ public object OneS1ght {
 
     /** 건물 단건. 없으면 [ApiError.NotFound]. */
     @JvmSynthetic
-    public suspend fun building(buildingId: String): Building =
-        buildings().firstOrNull { it.id == buildingId } ?: throw ApiError.NotFound(buildingId)
+    public suspend fun building(id: String): Building =
+        buildings().firstOrNull { it.id == id } ?: throw ApiError.NotFound(id)
 
     @JvmStatic
-    public fun building(buildingId: String, callback: Callback<Building>) {
-        JavaBridge.run(callback) { building(buildingId) }
+    public fun building(id: String, callback: Callback<Building>) {
+        JavaBridge.run(callback) { building(id) }
     }
 
     /** 층 목록 — 이름·치수는 채워지고 **도면 이미지는 비어 있다**(목록 경량화). */
@@ -356,7 +371,7 @@ public object OneS1ght {
 
     /**
      * 로케이터 + 세션ID — sessionId 는 별도 API 가 아니라 이 응답에 함께 실려 온다. 로케이터는 층 단위로 조회하므로
-     * [buildingId] 는 지금 쓰이지 않는다(다른 공간 조회와 모양을 맞춘 인자 — 0.2 이름 정리 때 함께 본다).
+     * [buildingId] 는 지금 쓰이지 않는다(다른 공간 조회와 모양을 맞춘 인자 — iOS `locators(buildingId:floorId:)` 와 같다).
      */
     @JvmSynthetic
     public suspend fun locators(buildingId: String, floorId: String): FloorLocators =
@@ -450,25 +465,25 @@ public object OneS1ght {
         JavaBridge.run(callback) { createProfile(attributes) }
     }
 
-    /** 프로필 조회. */
+    /** 프로필 조회(iOS `fetchProfile(_:)`). */
     @JvmSynthetic
-    public suspend fun getProfile(profileId: String): Map<String, String> =
+    public suspend fun fetchProfile(profileId: String): Map<String, String> =
         onCore { requireCoordinator().getProfile(profileId) }
 
     @JvmStatic
-    public fun getProfile(profileId: String, callback: Callback<Map<String, String>>) {
-        JavaBridge.run(callback) { getProfile(profileId) }
+    public fun fetchProfile(profileId: String, callback: Callback<Map<String, String>>) {
+        JavaBridge.run(callback) { fetchProfile(profileId) }
     }
 
-    /** 프로필 속성 전체 교체. */
+    /** 프로필 속성 **전체 교체** — 넘기지 않은 속성은 지워진다(iOS `replaceProfile(_:attributes:)`). */
     @JvmSynthetic
-    public suspend fun putProfile(profileId: String, attributes: Map<String, String>): Unit =
+    public suspend fun replaceProfile(profileId: String, attributes: Map<String, String>): Unit =
         onCore { requireCoordinator().putProfile(profileId, attributes) }
 
     @JvmStatic
-    public fun putProfile(profileId: String, attributes: Map<String, String>, callback: Callback<Void?>) {
+    public fun replaceProfile(profileId: String, attributes: Map<String, String>, callback: Callback<Void?>) {
         JavaBridge.run(callback) {
-            putProfile(profileId, attributes)
+            replaceProfile(profileId, attributes)
             null
         }
     }
@@ -487,27 +502,80 @@ public object OneS1ght {
 
     // MARK: - 버퍼
 
-    /** 쌓인 좌표를 지금 서버로 전송 (300건/60초를 기다리지 않고 앞당김). 초기화 전이면 아무 일 없음. */
+    /**
+     * 쌓인 좌표를 지금 서버로 전송 (300건/60초를 기다리지 않고 앞당김). 초기화 전이면 아무 일 없음
+     * (iOS `uploadPendingPositions()`).
+     */
     @JvmSynthetic
-    public suspend fun send(): Unit = onCore { coordinator?.flush() }
+    public suspend fun uploadPendingPositions(): Unit = onCore { coordinator?.flush() }
 
     @JvmStatic
-    public fun send(callback: Callback<Void?>) {
+    public fun uploadPendingPositions(callback: Callback<Void?>) {
         JavaBridge.run(callback) {
-            send()
+            uploadPendingPositions()
             null
         }
     }
 
     /**
-     * 쌓인 좌표를 **전송하지 않고 폐기**. 메인 스레드에서 부른다.
-     * ⚠️ flush 가 아니라 empty 인 이유 — flush 는 보통 "목적지로 밀어낸다"(전송)는 뜻이라,
-     *    폐기에 그 이름을 쓰면 전송으로 오해한 호출에 데이터가 조용히 사라진다.
+     * 쌓인 좌표를 **전송하지 않고 폐기**(iOS `discardPendingPositions()`). 메인 스레드에서 부른다.
+     * 전송 중에 불러도 안전하다 — 보내는 중인 좌표는 전송이 끝난 뒤 버퍼에서 빠진다.
      */
     @JvmStatic
     @MainThread
-    public fun empty() {
+    public fun discardPendingPositions() {
         coordinator?.empty()
+    }
+
+    // MARK: - 옛 이름 (0.0.6 까지 — iOS #55 와 같이 deprecated, 그대로 동작)
+
+    /** 0.0.6 까지의 이름 — [fetchProfile] 과 같다. */
+    @Deprecated("fetchProfile 로 바뀜", ReplaceWith("fetchProfile(profileId)"), level = DeprecationLevel.WARNING)
+    @JvmSynthetic
+    public suspend fun getProfile(profileId: String): Map<String, String> = fetchProfile(profileId)
+
+    /** 0.0.6 까지의 이름 — [fetchProfile] 의 Java 판과 같다. */
+    @Deprecated("fetchProfile 로 바뀜", ReplaceWith("fetchProfile(profileId, callback)"), level = DeprecationLevel.WARNING)
+    @JvmStatic
+    public fun getProfile(profileId: String, callback: Callback<Map<String, String>>) {
+        fetchProfile(profileId, callback)
+    }
+
+    /** 0.0.6 까지의 이름 — [replaceProfile] 과 같다. */
+    @Deprecated("replaceProfile 로 바뀜", ReplaceWith("replaceProfile(profileId, attributes)"), level = DeprecationLevel.WARNING)
+    @JvmSynthetic
+    public suspend fun putProfile(profileId: String, attributes: Map<String, String>): Unit =
+        replaceProfile(profileId, attributes)
+
+    /** 0.0.6 까지의 이름 — [replaceProfile] 의 Java 판과 같다. */
+    @Deprecated(
+        "replaceProfile 로 바뀜",
+        ReplaceWith("replaceProfile(profileId, attributes, callback)"),
+        level = DeprecationLevel.WARNING,
+    )
+    @JvmStatic
+    public fun putProfile(profileId: String, attributes: Map<String, String>, callback: Callback<Void?>) {
+        replaceProfile(profileId, attributes, callback)
+    }
+
+    /** 0.0.6 까지의 이름 — [uploadPendingPositions] 와 같다. */
+    @Deprecated("uploadPendingPositions 로 바뀜", ReplaceWith("uploadPendingPositions()"), level = DeprecationLevel.WARNING)
+    @JvmSynthetic
+    public suspend fun send(): Unit = uploadPendingPositions()
+
+    /** 0.0.6 까지의 이름 — [uploadPendingPositions] 의 Java 판과 같다. */
+    @Deprecated("uploadPendingPositions 로 바뀜", ReplaceWith("uploadPendingPositions(callback)"), level = DeprecationLevel.WARNING)
+    @JvmStatic
+    public fun send(callback: Callback<Void?>) {
+        uploadPendingPositions(callback)
+    }
+
+    /** 0.0.6 까지의 이름 — [discardPendingPositions] 와 같다. */
+    @Deprecated("discardPendingPositions 로 바뀜", ReplaceWith("discardPendingPositions()"), level = DeprecationLevel.WARNING)
+    @JvmStatic
+    @MainThread
+    public fun empty() {
+        discardPendingPositions()
     }
 
     // MARK: - 사용자

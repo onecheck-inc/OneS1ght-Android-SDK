@@ -152,17 +152,20 @@ class EngineUnexpectedStopTest {
         assertTrue(c.isRunning)
     }
 
-    /** 세션을 닫으면 코어가 알린다(FloorSession.onStopped 로 이어진다) — 앱이 end() 한 경우에는 안 온다. */
-    @Test fun closingNotifiesOnceButEndDoesNot() = runTest {
+    /** 세션을 닫으면 코어가 이유와 함께 알린다(FloorSession.onStopped) — end() 는 ENDED, 엔진 포기는 ENGINE_FAILED(iOS). */
+    @Test fun closingNotifiesWithReason() = runTest {
         val c = started()
-        var closed = 0
-        c.onEngineStoppedSession = { closed += 1 }
+        val reasons = mutableListOf<co.onecheck.ones1ght.android.FloorSession.StopReason>()
+        c.onSessionClosed = { reasons += it }
         c.stop()
-        assertEquals(0, closed)
+        assertEquals(listOf(co.onecheck.ones1ght.android.FloorSession.StopReason.ENDED), reasons)
+        c.stop() // 가동 중이 아니면 다시 알리지 않는다
+        assertEquals(1, reasons.size)
 
         c.start(p)
         p.simulateUnexpectedStop(retryable = false)
-        eventually { closed == 1 }
+        eventually { reasons.size == 2 }
+        assertEquals(co.onecheck.ones1ght.android.FloorSession.StopReason.ENGINE_FAILED, reasons[1])
         assertFalse(c.isRunning)
     }
 }

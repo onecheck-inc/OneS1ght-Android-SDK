@@ -24,7 +24,7 @@ import co.onecheck.ones1ght.android.model.Position
 import co.onecheck.ones1ght.android.model.Zone
 import co.onecheck.ones1ght.android.model.ZoneDefaults
 import co.onecheck.ones1ght.android.internal.decodeLenientList
-import co.onecheck.ones1ght.android.network.ApiClient
+import co.onecheck.ones1ght.android.OneS1ght
 import co.onecheck.ones1ght.android.network.ApiError
 import co.onecheck.ones1ght.android.network.pathSegment
 import co.onecheck.ones1ght.android.network.performJsonRequest
@@ -54,7 +54,7 @@ internal class SpaceServiceClient(
     private val sdkKey: String,
     private val spaceKey: String,
     http: OkHttpClient,
-    private val consoleBase: String = ApiClient.DEFAULT_BASE_URL,
+    private val consoleBase: String = OneS1ght.DEFAULT_BASE_URL,
     private val spaceHost: String = SPACE_HOST,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {

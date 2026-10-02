@@ -187,6 +187,7 @@ class OneS1ghtTest {
     @Test fun builtInZoneEventsReachSessionListeners() {
         val hub = UwbPositioningProvider.create(FakeHubEngine(), h.dispatcher, clock = { 0L })
         h.builtIn = hub
+        h.enableSpaceService() // 엔진 라이선스 — 없으면 시작이 접혀 세션이 닫힌다(닫힌 세션엔 구역 이벤트가 안 간다)
         initialize()
         OneS1ght.identify("p1")
         val session = OneS1ght.floorSession()
@@ -202,12 +203,13 @@ class OneS1ghtTest {
 
         h.await { session.begin() }
 
-        val hook = hub.sessionZoneSink
-        assertNotNull("begin() 이 구역 훅을 걸어야 한다", hook)
+        // 구역 이벤트는 delegate(onEmit) → 코어 → 세션 리스너로 온다(iOS K14)
+        val delegate = hub.delegate
+        assertNotNull("begin() 이 코어를 delegate 로 걸어야 한다", delegate)
         val zone = Zone("z1", "Z", listOf(Position(0.0, 0.0), Position(1.0, 0.0), Position(1.0, 1.0)))
-        hook!!.invoke(ZoneEvent.Enter(zone, 1_000))
-        hook.invoke(ZoneEvent.Dwell(zone, 5.0, 6_000))
-        hook.invoke(ZoneEvent.Exit(zone, 9_000))
+        delegate!!.onEmit(hub, ZoneEvent.Enter(zone, 1_000))
+        delegate.onEmit(hub, ZoneEvent.Dwell(zone, 5.0, 6_000))
+        delegate.onEmit(hub, ZoneEvent.Exit(zone, 9_000))
 
         assertEquals(listOf("z1"), entered)
         assertEquals(listOf("z1"), exited)
@@ -219,6 +221,47 @@ class OneS1ghtTest {
         assertTrue(logs.contains("engine-line"))
     }
 
+    /** iOS K14 — 커스텀 provider 의 구역 이벤트·층도 delegate 로 FloorSession 리스너에 온다. */
+    @Test fun customProviderZoneAndFloorReachSession() {
+        initialize()
+        OneS1ght.identify("p1")
+        val session = OneS1ght.floorSession()
+        val entered = mutableListOf<String>()
+        val floors = mutableListOf<String?>()
+        session.onZoneEnter = ZoneListener { entered += it.id }
+        session.onFloorDetected = SessionFloorListener { floors += it }
+        h.await { session.begin(h.mock) }
+
+        val zone = Zone("z9", "Z", listOf(Position(0.0, 0.0), Position(1.0, 0.0), Position(1.0, 1.0)))
+        h.mock.simulateZoneEvent(ZoneEvent.Enter(zone, 1_000))
+        h.mock.simulateFloorDetected("f-3")
+        h.mock.simulateFloorDetected(null)
+        assertEquals(listOf("z9"), entered)
+        assertEquals(listOf<String?>("f-3", null), floors)
+
+        h.await { session.end() }
+        h.mock.simulateZoneEvent(ZoneEvent.Enter(zone, 2_000))
+        assertEquals("끝난 세션에는 구역 이벤트가 안 간다", listOf("z9"), entered)
+    }
+
+    /** iOS K14·S20 — pause 는 어느 provider 든 그 provider 로 가고, end()·begin() 은 일시정지를 푼다. */
+    @Test fun pauseGoesToAnyProviderAndEndClearsIt() {
+        initialize()
+        OneS1ght.identify("p1")
+        val session = OneS1ght.floorSession()
+        h.await { session.begin(h.mock) }
+        session.pause()
+        assertTrue(h.mock.isPaused)
+        assertTrue(session.isPaused)
+        h.await { session.end() }
+        assertFalse("end() 는 일시정지를 남기지 않는다", h.mock.isPaused)
+
+        h.mock.pause() // 지난 세션의 일시정지가 provider 에 남아 있어도
+        h.await { session.begin(h.mock) }
+        assertFalse("begin() 은 새 세션을 일시정지 없이 연다", session.isPaused)
+        h.await { session.end() }
+    }
+
     /**
      * 감사 SP-B1 — 엔진이 스스로 멈춰 다시 켜지 못하면 세션이 닫히고 FloorSession.onStopped 가 온다.
      * 그때 isRunning 은 이미 false 라 begin() 이 다시 먹는다(예전엔 「이미 측위 중」 으로 삼켜졌다).
@@ -228,9 +271,11 @@ class OneS1ghtTest {
         OneS1ght.identify("p1")
         val session = OneS1ght.floorSession()
         var stopped = 0
+        val reasons = mutableListOf<FloorSession.StopReason>()
         var runningWhenNotified: Boolean? = null
-        session.onStopped = SessionStoppedListener {
-            stopped += 1
+        session.onStopped = SessionStoppedListener { reason ->
+            reasons += reason
+            if (reason == FloorSession.StopReason.ENGINE_FAILED) stopped += 1
             runningWhenNotified = session.isRunning
         }
         h.await { session.begin(h.mock) }
@@ -244,7 +289,8 @@ class OneS1ghtTest {
         h.await { session.begin(h.mock) }
         assertTrue("닫힌 뒤 begin 이 다시 먹어야 한다", session.isRunning)
         h.await { session.end() }
-        assertEquals("앱이 end() 한 것은 onStopped 가 아니다", 1, stopped)
+        assertEquals("end() 는 ENDED 로 온다(iOS 와 같다)", listOf(FloorSession.StopReason.ENGINE_FAILED, FloorSession.StopReason.ENDED), reasons)
+        assertEquals(1, stopped)
     }
 
     /** 엔진 층 탐지·상실이 FloorSession.onFloorDetected 로 온다 — provider 에 앱이 단 훅도 그대로 불린다. */
@@ -258,8 +304,8 @@ class OneS1ghtTest {
         initialize()
         OneS1ght.identify("p1")
         val session = OneS1ght.floorSession()
-        val floors = mutableListOf<Long?>()
-        session.onFloorDetected = co.onecheck.ones1ght.android.positioning.FloorDetectedListener { floors += it }
+        val floors = mutableListOf<String?>()
+        session.onFloorDetected = SessionFloorListener { floors += it }
 
         h.await { session.begin() }
         engine.current!!.onStarted()
@@ -268,7 +314,7 @@ class OneS1ghtTest {
         engine.current!!.onTrackingStopped(14)
         h.eventually { floors.size == 2 }
 
-        assertEquals(listOf<Long?>(14, null), floors)
+        assertEquals("세션은 Floor.id 와 같은 문자열(iOS)", listOf<String?>("14", null), floors)
         assertEquals(listOf<Long?>(14, null), appFloors)
         h.await { session.end() }
     }

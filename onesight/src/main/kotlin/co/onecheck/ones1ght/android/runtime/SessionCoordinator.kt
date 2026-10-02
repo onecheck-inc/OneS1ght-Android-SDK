@@ -9,8 +9,9 @@ package co.onecheck.ones1ght.android.runtime
 //    ├ onEnter(빌딩)          → 통지만 (건물·층은 호스트 앱의 몫)
 //    ├ onPosition(좌표)       → 다운샘플 후 버퍼 적재 → 300건/60초/종료/백그라운드에 벌크 전송(실패 뒤 임계값 전송은 backoff)
 //    ├ onZone(IN/OUT)         → events/zone 즉시 전송 (+network 1회 재시도) → triggers 호스트 전달. DWELL 은 안 보낸다
+//    ├ onFloorDetected·onEmit → FloorSession 콜백으로 그대로(어느 provider 든 같은 길 — iOS K14)
 //    ├ onReport(코드)         → 화면 로그 한 줄 + 서버 로그
-//    └ onStoppedUnexpectedly  → 다시 켜 보거나(3·10·30초) 세션을 닫는다(FloorSession.onStopped)
+//    └ onStoppedUnexpectedly  → 다시 켜 보거나(3·10·30초) 세션을 닫는다(FloorSession.onStopped(ENGINE_FAILED))
 //  · 실시간 수신(SSE): 층이 정해졌거나 측위가 도는 동안만 붙어 있다
 //
 //  여기는 **순서를 정하는 자리**다. 일은 부품이 한다(감사 SP-C2 · iOS K7 — 한 타입에 책임 열 가지 넘게였다):
@@ -28,6 +29,7 @@ package co.onecheck.ones1ght.android.runtime
 //  여기 없다(iOS 와 같다 — 상태를 두 벌 두면 어긋난다).
 //
 
+import co.onecheck.ones1ght.android.FloorSession
 import co.onecheck.ones1ght.android.SdkError
 import co.onecheck.ones1ght.android.internal.Iso8601
 import co.onecheck.ones1ght.android.model.Building
@@ -42,6 +44,7 @@ import co.onecheck.ones1ght.android.model.ResSdkConfig
 import co.onecheck.ones1ght.android.model.ResZoneEvent
 import co.onecheck.ones1ght.android.model.Trigger
 import co.onecheck.ones1ght.android.model.Zone
+import co.onecheck.ones1ght.android.model.ZoneEvent
 import co.onecheck.ones1ght.android.model.ZoneEventStatus
 import co.onecheck.ones1ght.android.network.ApiClient
 import co.onecheck.ones1ght.android.network.ApiError
@@ -62,7 +65,6 @@ import kotlinx.coroutines.launch
 
 internal class SessionCoordinator(
     val api: ApiClient,
-    @Suppress("DEPRECATION") // 0.2 에서 internal 로 바뀔 공개 타입 — SDK 안에서는 그대로 쓴다
     private val identity: co.onecheck.ones1ght.android.identity.IdentityStore,
     /** verify 의 app_id — 안드로이드는 packageName (iOS bundleIdentifier 자리). */
     private val appId: String?,
@@ -210,8 +212,17 @@ internal class SessionCoordinator(
     /** 존 이벤트 응답의 개인화 액션 → 호스트 전달 (zoneId, triggers) */
     var onTriggers: ((String, List<Trigger>) -> Unit)? = null
 
-    /** 엔진이 스스로 멈춰 세션을 닫았다 → 호스트 전달(FloorSession.onStopped). 앱이 stop 한 경우에는 안 부른다. */
-    var onEngineStoppedSession: (() -> Unit)? = null
+    /**
+     * 측위 세션이 닫혔다 → 호스트 전달(FloorSession.onStopped) — 앱의 end()·reset()·키 교체면 ENDED, 엔진이 다시 켜지지
+     * 않아 SDK 가 닫았으면 ENGINE_FAILED(iOS `onSessionClosed`).
+     */
+    var onSessionClosed: ((FloorSession.StopReason) -> Unit)? = null
+
+    /** 엔진이 층을 잡았다(층 ID)/잃었다(null) → 호스트 전달(FloorSession.onFloorDetected). */
+    var onFloorDetected: ((String?) -> Unit)? = null
+
+    /** 앱에 보일 구역 이벤트 → 호스트 전달(FloorSession.onZoneEnter/Exit/Dwell). */
+    var onZoneEvent: ((ZoneEvent) -> Unit)? = null
 
     /** 실시간 좌표 → 호스트 전달 (지도에 내 위치 찍기용 — 도면 로컬 미터) */
     var onPosition: ((Coordinates) -> Unit)? = null
@@ -445,7 +456,7 @@ internal class SessionCoordinator(
             floorState?.zones = zones
             // 구역을 전부 지웠을 때도 엔진에 반영해야 한다 — 안 그러면 삭제된 구역이 계속 발화한다.
             if (isRunning && contentChanged) {
-                provider?.applyZones(zones) // 구역만 — 앵커·세션은 그대로(감사 SP-C9)
+                applyZonesOnly(zones) // 구역만 — 앵커·세션은 그대로(감사 SP-C9)
                 // 바뀐 순간에만 엔진이 영역을 다시 읽게 한다 — 폴링마다 부르면 엔진이 계속 껐다 켜진다.
                 if (changed) {
                     log(LogLevel.WARN, SdkLocalized.t("zone.geofenceReload", zones.size))
@@ -517,6 +528,9 @@ internal class SessionCoordinator(
         visitorId = identity.newVisitorId()
         uploads.beginSession()
         report(SdkInfoCode.POSITIONING_ON, "visitor=$visitorId")
+        // 새 세션은 일시정지 없이 시작한다 — provider 는 생명주기 재시작 때 일시정지를 유지하므로(S20) 지난 세션의
+        // 일시정지가 남아 있을 수 있다(iOS 와 같다).
+        if (provider.isPaused) provider.resume()
         provider.delegate = this
         supervisor.reset()
         closingAfterEngineStop = false
@@ -631,8 +645,23 @@ internal class SessionCoordinator(
      */
     private var stopInFlight: Deferred<Unit>? = null
 
-    /** 종료: 측위 정지 + 잔여 좌표 flush. 이미 내려가는 중이면 그 정지에 합류한다. */
-    suspend fun stop() {
+    /**
+     * 구역만 바꾼다 — 앵커·세션은 그대로(감사 SP-C9). 내장 provider 는 SDK 안의 전용 길([UwbPositioningProvider.applyZones])
+     * 로 받고, 그 밖의 provider 는 iOS 와 같은 공개 계약대로 앵커가 빈 `apply(PositioningConfig(zones = …))` 로 받는다.
+     */
+    private fun applyZonesOnly(zones: List<Zone>) {
+        when (val p = provider) {
+            is UwbPositioningProvider -> p.applyZones(zones)
+            null -> Unit
+            else -> p.apply(PositioningConfig(zones = zones))
+        }
+    }
+
+    /**
+     * 종료: 측위 정지 + 잔여 좌표 flush. 이미 내려가는 중이면 그 정지에 합류한다. 끝나면 [onSessionClosed] 에
+     * [reason] 을 넘긴다(가동 중이 아니었으면 아무것도 안 한다 — iOS 와 같다).
+     */
+    suspend fun stop(reason: FloorSession.StopReason = FloorSession.StopReason.ENDED) {
         stopInFlight?.let {
             it.await()
             return
@@ -640,14 +669,16 @@ internal class SessionCoordinator(
         if (!isRunning) return
         // LAZY — 자리를 먼저 잡고 시작한다. Main.immediate 에서 곧바로 돌면 끝난 뒤에야
         // stopInFlight 가 채워져, 끝난 정지가 다음 stop 을 막는다.
-        val task = scope.async(start = CoroutineStart.LAZY) { performStop() }
+        val task = scope.async(start = CoroutineStart.LAZY) { performStop(reason) }
         stopInFlight = task
         task.invokeOnCompletion { if (stopInFlight === task) stopInFlight = null }
         task.await()
     }
 
-    private suspend fun performStop() {
+    private suspend fun performStop(reason: FloorSession.StopReason) {
         supervisor.reset()
+        // 끝낸 세션에 일시정지를 남기지 않는다 — provider 의 stop() 은 일시정지를 풀지 않으므로(iOS #55) 여기서 푼다.
+        provider?.let { if (it.isPaused) it.resume() }
         provider?.stop()
         uploads.stopTimer()
         receptionCheckJob?.cancel()
@@ -676,6 +707,8 @@ internal class SessionCoordinator(
         isRunning = false
         closingAfterEngineStop = false
         pauseToRestore = false
+        // 앱에 알린다 — 엔진이 포기해 닫힌 세션을 앱이 모르면 화면은 「찾는 중」 에 머문다(iOS S6).
+        onSessionClosed?.invoke(reason)
     }
 
     // MARK: - 실시간 수신 (SSE)
@@ -817,6 +850,18 @@ internal class SessionCoordinator(
 
     // MARK: - PositioningProviderDelegate
 
+    /** 엔진이 층을 잡았다/잃었다 — 앱에 그대로 넘긴다(층 고르기는 앱의 몫). 물려 있는 provider 것만. */
+    override fun onFloorDetected(provider: PositioningProvider, floorId: String?) {
+        if (this.provider !== provider) return
+        onFloorDetected?.invoke(floorId)
+    }
+
+    /** 앱에 보일 구역 이벤트 — 세션이 도는 동안만(iOS `isLiveSession`). */
+    override fun onEmit(provider: PositioningProvider, event: ZoneEvent) {
+        if (!runningAndNotStopping || this.provider !== provider) return
+        onZoneEvent?.invoke(event)
+    }
+
     /** 엔진 진단 → 표준 경로(onLog + 서버 E-코드). */
     override fun onReport(provider: PositioningProvider, code: SdkErrorCode, context: String) {
         report(code, context)
@@ -839,10 +884,7 @@ internal class SessionCoordinator(
             restart = { restartKeepingPause(provider) },
             giveUp = {
                 closingAfterEngineStop = true
-                scope.launch {
-                    stop()
-                    onEngineStoppedSession?.invoke()
-                }
+                scope.launch { stop(FloorSession.StopReason.ENGINE_FAILED) }
             },
         )
     }

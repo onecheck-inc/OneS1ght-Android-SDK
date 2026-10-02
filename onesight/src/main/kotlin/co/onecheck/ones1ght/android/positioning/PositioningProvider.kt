@@ -5,8 +5,9 @@ package co.onecheck.ones1ght.android.positioning
 //  측위 엔진 주입 계약 — SDK는 UWB를 모른다.
 //
 //  내장 구현: 측위 엔진(층 탐지·UWB 측위·영역 판정)을 감싼 어댑터(UwbPositioningProvider). 커스텀 provider 는
-//  delegate·start()·stop() 만 채우면 되고 나머지는 기본 구현이 있다(선택 채택). provider 는 delegate 로 필수 3종
-//  (onPosition·onZone·onEnter) + 선택 2종(onReport·onStoppedUnexpectedly)을 올리고, 코어가 서버 계약에 맞춰 전송한다.
+//  delegate·start()·stop() 만 채우면 되고 나머지는 기본 구현이 있다(선택 채택). provider 는 delegate 로 필수 2종
+//  (onPosition·onZone) + 선택 5종(onEnter·onFloorDetected·onEmit·onReport·onStoppedUnexpectedly)을 올리고, 코어가 서버
+//  계약에 맞춰 전송하거나 FloorSession 콜백으로 넘긴다 — 어느 provider 로 시작해도 같은 길이다(iOS #55 K14).
 //
 //  스레드 계약: SDK 는 이 인터페이스의 멤버를 **메인 스레드**(코어 디스패처)에서 부른다. 구현도 delegate 를 메인
 //  스레드에서 불러야 한다 — 코어 상태에는 잠금이 없다(엔진 스레드에서 오는 콜백은 provider 가 메인으로 넘긴다).
@@ -16,6 +17,7 @@ package co.onecheck.ones1ght.android.positioning
 
 import co.onecheck.ones1ght.android.model.Coordinates
 import co.onecheck.ones1ght.android.model.Zone
+import co.onecheck.ones1ght.android.model.ZoneEvent
 import co.onecheck.ones1ght.android.model.ZoneEventStatus
 import co.onecheck.ones1ght.android.runtime.SdkErrorCode
 
@@ -115,24 +117,13 @@ public interface PositioningProvider {
     public fun apply(buildingId: String, floorId: String) {}
 
     /**
-     * 측위 설정(앵커·세션·존) 주입 (선택 채택 — 기본 no-op). start 전에도, 가동 중에도 불린다(층 전환·층 해제).
+     * 측위 설정(앵커·세션·존) 주입 (선택 채택 — 기본 no-op). start 전에도, 가동 중에도 불린다(층 전환·층 해제·구역 갱신).
      *
-     * 넘어온 값이 그 층의 **전부**다 — 빈 [PositioningConfig.anchors] 는 「앵커 없음(층 해제 포함)」이다. 구역만 바꿀
-     * 때는 코어가 [applyZones] 를 부른다.
+     * iOS `apply(config:)` 와 같은 계약이다 — 층을 해제할 때는 빈 config 가, 구역만 새로고침할 때는 앵커가 빈 채
+     * [PositioningConfig.zones] 만 실린 config 가 온다. 구역 갱신과 층 해제를 가르고 싶으면 `apply(buildingId, floorId)` 를
+     * 함께 본다(층 해제 때는 빈 문자열 두 개가 먼저 온다). 내장 provider 는 SDK 안에서 둘을 따로 받는다.
      */
     public fun apply(config: PositioningConfig) {}
-
-    /**
-     * 구역만 바꾼다 — 앵커·세션은 그대로 둔다 (선택 채택 — 기본은 `apply(PositioningConfig(zones = zones))`).
-     * 코어의 구역 새로고침(refreshZones)이 부른다.
-     *
-     * 왜 따로 있나(감사 SP-C9): 예전엔 구역 갱신도 apply(config) 에 빈 앵커로 실어 보내, 빈 앵커가 「안 바뀜」과 「층
-     * 해제」를 함께 뜻했다. 그래서 내장 provider 는 빈 앵커를 무시했고, 층을 해제해도 옛 등록 로케이터 수가 남아
-     * 수신 점검(E4002) 문맥이 틀렸다. 기본 구현이 예전 호출과 같아 기존 provider 는 고칠 것이 없다.
-     */
-    public fun applyZones(zones: List<Zone>) {
-        apply(PositioningConfig(zones = zones))
-    }
 
     /**
      * 판정 영역이 바뀌었다 — 엔진이 지오펜스를 다시 읽게 하라 (선택 채택 — 기본 no-op).
@@ -171,6 +162,22 @@ public interface PositioningProviderDelegate {
      * 선택 채택 — 기본 no-op(iOS `didEnter` 와 같다. 예전엔 필수라 코어가 빈 구현을 들고 있었다 — 감사 SP-C8).
      */
     public fun onEnter(provider: PositioningProvider, buildingId: String) {}
+
+    /**
+     * 엔진이 층을 잡았다(층 ID) / 잃었다(`null`) — SDK 가 `FloorSession.onFloorDetected` 로 넘긴다. 넘기는 ID 는
+     * `OneS1ght.floors(buildingId)` 가 주는 `Floor.id` 와 같은 값이어야 한다(iOS `didDetectFloor`).
+     * 선택 채택 — 기본 no-op.
+     */
+    public fun onFloorDetected(provider: PositioningProvider, floorId: String?) {}
+
+    /**
+     * 앱에 보일 구역 이벤트(진입·이탈·체류) — SDK 가 `FloorSession.onZoneEnter/Exit/Dwell` 로 넘긴다(iOS `didEmit`).
+     *
+     * 서버 전송([onZone])과 따로 있는 이유: 체류(DWELL)는 기기 안에서만 쓰는 파생물이라 서버로 보내지 않지만 앱에는
+     * 보여야 하고, 앱 콜백에는 존 ID 가 아니라 `Zone` 이 실려야 한다. 예전엔 FloorSession 이 내장 provider 에만 물려
+     * 있어, 커스텀 provider 로 `begin(provider)` 하면 구역 콜백이 하나도 안 왔다(iOS K14). 선택 채택 — 기본 no-op.
+     */
+    public fun onEmit(provider: PositioningProvider, event: ZoneEvent) {}
 
     /**
      * 엔진이 진단 코드를 올린다 — SDK 가 onDebugLog + 서버 로그(E-코드)로 옮긴다.
