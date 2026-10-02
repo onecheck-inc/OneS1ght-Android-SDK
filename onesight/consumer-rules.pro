@@ -11,20 +11,28 @@
 -keep class kr.co.geoplan.** { *; }
 
 # --- Gson (2.10.1 은 R8 규칙을 싣지 않는다) — 공식 권장 규칙 -------------------------------------------
+# 속성(-keepattributes)은 R8 에서 패키지별로 나눌 수 없다 — 엔진 모델의 List<T> 필드 제네릭(Signature)·Gson 주석이
+# 지워지면 응답이 조용히 비므로 남긴다. 앱 코드의 동작·이름은 바꾸지 않고 메타데이터만 조금 남는다.
 -keepattributes Signature
 -keepattributes *Annotation*
 -keepattributes EnclosingMethod
 -keepattributes InnerClasses
 -dontwarn sun.misc.**
--keep class * extends com.google.gson.TypeAdapter
--keep class * implements com.google.gson.TypeAdapterFactory
--keep class * implements com.google.gson.JsonSerializer
--keep class * implements com.google.gson.JsonDeserializer
--keepclassmembers,allowobfuscation class * {
-    @com.google.gson.annotations.SerializedName <fields>;
-}
+# ⚠️ 범위는 엔진 패키지로만 — Gson 공식 권장 규칙은 `class *`(앱의 모든 클래스)로 걸려, 우리 SDK 를 넣었다는 이유만으로
+#    고객 앱 자신의 TypeAdapter·@SerializedName 필드·TypeToken 까지 축소·난독화에서 빠졌다(2026-10-02, SDK 는 앱에
+#    얹혀 사는 쪽이라 앱 코드에 영향을 주지 않는다). 엔진 클래스는 위 -keep 이 통째로 지키고, 아래는 같은 범위를 명시한다.
+#    고객 앱이 자기 Gson 을 쓰면 자기 규칙을 둔다(Gson 2.11+ 는 자체 규칙을 싣는다).
+-keep class kr.geoplan.** extends com.google.gson.TypeAdapter
+-keep class kr.co.geoplan.** extends com.google.gson.TypeAdapter
+-keep class kr.geoplan.** implements com.google.gson.TypeAdapterFactory
+-keep class kr.geoplan.** implements com.google.gson.JsonSerializer
+-keep class kr.geoplan.** implements com.google.gson.JsonDeserializer
+-keep class kr.co.geoplan.** implements com.google.gson.TypeAdapterFactory
+-keep class kr.co.geoplan.** implements com.google.gson.JsonSerializer
+-keep class kr.co.geoplan.** implements com.google.gson.JsonDeserializer
 -keep,allowobfuscation,allowshrinking class com.google.gson.reflect.TypeToken
--keep,allowobfuscation,allowshrinking class * extends com.google.gson.reflect.TypeToken
+-keep,allowobfuscation,allowshrinking class kr.geoplan.** extends com.google.gson.reflect.TypeToken
+-keep,allowobfuscation,allowshrinking class kr.co.geoplan.** extends com.google.gson.reflect.TypeToken
 
 # --- 엔진 내부 라이브러리의 컴파일 전용 참조 --------------------------------------------------------
 # 측위 필터 jar 가 lombok @NonNull 을 CLASS 보존 주석으로 남겨 두었다. 런타임에 필요 없는데, 이 줄이 없으면
