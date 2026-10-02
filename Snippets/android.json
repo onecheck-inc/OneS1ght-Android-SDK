@@ -1,6 +1,6 @@
 {
   "platform": "android",
-  "sdkVersion": "0.0.6",
+  "sdkVersion": "0.0.7",
   "language": "kotlin",
   "requirements": {
     "positioning": {
@@ -32,7 +32,7 @@
         {
           "path": "app/build.gradle.kts",
           "language": "kotlin",
-          "code": "// settings.gradle.kts 의 repositories 에 mavenCentral() 이 있으면 된다 — 별도 저장소는 필요 없다.\n// 앱 minSdk 는 26(Android 8.0) 이상이면 된다. 측위는 Android 17(API 37) 이상에서만 동작한다.\ndependencies {\n    implementation(\"com.ones1ght.sdk:android:0.0.6\")\n}"
+          "code": "// settings.gradle.kts 의 repositories 에 mavenCentral() 이 있으면 된다 — 별도 저장소는 필요 없다.\n// 앱 minSdk 는 26(Android 8.0) 이상이면 된다. 측위는 Android 17(API 37) 이상에서만 동작한다.\ndependencies {\n    implementation(\"com.ones1ght.sdk:android:0.0.7\")\n}"
         },
         {
           "path": "app/src/main/AndroidManifest.xml",

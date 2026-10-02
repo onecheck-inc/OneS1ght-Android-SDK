@@ -37,7 +37,7 @@ Add the dependency to your app module's `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("com.ones1ght.sdk:android:0.0.6")
+    implementation("com.ones1ght.sdk:android:0.0.7")
 }
 ```
 

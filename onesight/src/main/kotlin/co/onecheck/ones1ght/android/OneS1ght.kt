@@ -88,7 +88,7 @@ internal const val MIN_POSITIONING_SDK: Int = 37
 public object OneS1ght {
 
     /** SDK 버전 — 서버 로그(`/logs` 의 sdk_version)에 실린다. verify·좌표·존 이벤트에는 실리지 않는다. */
-    public const val SDK_VERSION: String = "0.0.6"
+    public const val SDK_VERSION: String = "0.0.7"
 
     /** 기본 콘솔 SDK API 주소 — [initialize] 의 `baseUrl` 기본값(iOS `OneS1ght.defaultBaseURL`). */
     public const val DEFAULT_BASE_URL: String = "https://console.ones1ght.com/api/sdk/v1"
