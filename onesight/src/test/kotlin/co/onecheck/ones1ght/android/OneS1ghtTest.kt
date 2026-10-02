@@ -27,6 +27,7 @@ import co.onecheck.ones1ght.android.runtime.FakeAppLifecycle
 import co.onecheck.ones1ght.android.runtime.InMemoryKeyValueStore
 import co.onecheck.ones1ght.android.runtime.LogLevel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -463,6 +464,14 @@ class OneS1ghtTest {
         }
         assertEquals(0, errors)
         assertEquals(listOf("app bug"), uncaught.map { it.message })
+        // kotlinx-coroutines-test 는 코루틴 미처리 예외를 따로 모아 두었다가 **다음** runTest 시작 때
+        // UncaughtExceptionsBeforeTest 로 던진다 — 여기서 일부러 낸 예외가 테스트 순서에 따라 같은 JVM 의
+        // 엉뚱한 테스트(ApiClientTest 등)를 깨뜨렸다. 이 테스트 안에서 비운다(그 클래스는 Kotlin internal 이라 이름으로 가린다).
+        try {
+            runTest { }
+        } catch (e: IllegalStateException) {
+            if (e.javaClass.simpleName != "UncaughtExceptionsBeforeTest") throw e
+        }
     }
 
     // MARK: - 기기 판정 (Ruling 10)
