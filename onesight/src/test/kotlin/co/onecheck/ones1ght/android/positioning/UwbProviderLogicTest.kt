@@ -319,6 +319,26 @@ class UwbProviderLogicTest {
         assertEquals(1, zoneEvents.filterIsInstance<ZoneEvent.Dwell>().size)
     }
 
+    /**
+     * 감사 SP-B2 — 체류 중에 같은 구역 설정이 다시 들어와도(코어의 refreshZones 폴링) DWELL 이 뜬다.
+     * 예전엔 apply 마다 판정기를 reset 해 체류 타이머가 지워졌다.
+     */
+    @Test fun dwellSurvivesReapplyingSameZones() {
+        tracking()
+        hub.onAreaEvent(14, "정육 코너", "IN")
+        flush()
+
+        repeat(2) {
+            scheduler.advanceTimeBy(2_000)
+            scheduler.runCurrent()
+            provider.apply(PositioningConfig(zones = listOf(zoneA.copy())))
+        }
+        scheduler.advanceTimeBy(1_001)
+        scheduler.runCurrent()
+
+        assertEquals(1, zoneEvents.filterIsInstance<ZoneEvent.Dwell>().size)
+    }
+
     /** 측위 중이 아니면 영역 이벤트는 수집·전송하지 않는다(원본 훅에는 남는다). */
     @Test fun areaEventWhileNotRunningIsNotForwarded() {
         configured()

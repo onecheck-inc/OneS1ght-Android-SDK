@@ -20,6 +20,7 @@ package co.onecheck.ones1ght.android
 import androidx.annotation.MainThread
 import co.onecheck.ones1ght.android.model.Floor
 import co.onecheck.ones1ght.android.model.ZoneEvent
+import co.onecheck.ones1ght.android.positioning.FloorDetectedListener
 import co.onecheck.ones1ght.android.positioning.PositioningProvider
 import co.onecheck.ones1ght.android.positioning.UwbPositioningProvider
 
@@ -51,6 +52,21 @@ public class FloorSession internal constructor() {
      * - `RulesChanged` → 지금 들어가 있는 구역이 있으면 그 구역의 이벤트를 한 번 다시 조회하라.
      */
     @Volatile public var onConfigChanged: ConfigChangeListener? = null
+
+    /**
+     * 측위 엔진이 층을 찾았다(엔진 층 번호) / 층을 놓쳤다(`null`). 콘솔 층으로 옮겨 `setFloorMap` 할 때 쓴다 —
+     * 사용자에게 층을 고르게 하지 않아도 된다. 내장 측위(`begin()`)와 앱이 만든 [UwbPositioningProvider] 를
+     * 넣은 `begin(provider)` 에서 온다(그 provider 의 `onFloorDetected` 는 따로 그대로 불린다).
+     * 층을 바꾸려고 측위를 끄지 말 것 — 가동 중 `setFloorMap` 은 안전하고 세션을 유지한다.
+     */
+    @Volatile public var onFloorDetected: FloorDetectedListener? = null
+
+    /**
+     * 측위 세션이 **SDK 쪽 사정으로** 닫혔다 — 엔진이 스스로 멈췄고(권한·Bluetooth·라이선스처럼 사람이 풀어야
+     * 하는 원인이거나, 3·10·30초 뒤 다시 켜기를 다 써도 안 됐다) 세션을 정리했다. 불릴 때 [isRunning] 은 이미
+     * false 라 원인을 안내한 뒤 `begin()` 으로 다시 열 수 있다. 앱이 `end()` 로 끈 경우에는 오지 않는다.
+     */
+    @Volatile public var onStopped: SessionStoppedListener? = null
 
     // MARK: - 상태
 
@@ -181,6 +197,7 @@ public class FloorSession internal constructor() {
             // SDK 내부 연결 — 앱이 provider 에 단 훅(onZoneEvent·onLog)과는 따로 건다(덮지 않는다).
             provider.sessionZoneSink = { event -> dispatch(event) }
             provider.sessionLogSink = { level, line -> OneS1ght.onDebugLog?.onLog(level, line) } // 엔진 로그 → 표준 디버그 훅
+            provider.sessionFloorSink = { floorId -> onFloorDetected?.onFloorDetected(floorId) }
         }
         coordinator.start(provider)
     }
@@ -209,6 +226,8 @@ public class FloorSession internal constructor() {
         onPosition = null
         onTriggers = null
         onConfigChanged = null
+        onFloorDetected = null
+        onStopped = null
         builtInProvider = null
     }
 

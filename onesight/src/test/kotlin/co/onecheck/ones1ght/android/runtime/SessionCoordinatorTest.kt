@@ -644,8 +644,11 @@ class SessionCoordinatorTest {
         c.setFloorMap(Floor("F", "F"), "B")
         c.start(provider)
 
+        val appliedBefore = provider.appliedConfig
         assertEquals(listOf("z-1"), c.refreshZones().map { it.id })
         assertEquals("같은 구역이면 엔진을 건드리지 않는다", 0, provider.reloadGeofencesCount)
+        // 감사 SP-B2 — 같은 구역이면 provider 에 다시 물리지도 않는다(판정기 체류 상태를 지우던 경로).
+        assertTrue("같은 구역을 provider 에 다시 물렸다", provider.appliedConfig === appliedBefore)
 
         routeWithFloor(zonesJson = ZONES_AB)
         assertEquals(listOf("z-1", "z-2"), c.refreshZones().map { it.id })

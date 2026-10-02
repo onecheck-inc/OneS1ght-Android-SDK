@@ -43,6 +43,15 @@ public sealed class SdkError(message: String) : Exception(message) {
         override val code: SdkErrorCode get() = SdkErrorCode.OS_VERSION_TOO_LOW
     }
 
+    /**
+     * 층을 지정하려는데 건물을 알 수 없다 — `setFloorMap(floor)` 를 건물 인자 없이, 직전에 지정한 건물도
+     * 없이 불렀다. 처음 지정할 때는 `setFloorMap(floor, buildingId)` 로 건물을 함께 넘긴다(그 뒤로는 생략 가능).
+     * 층 상태는 바뀌지 않는다. 코드는 E3001(층 미지정).
+     */
+    public class BuildingNotSet : SdkError("Building not set — call setFloorMap(floor, buildingId) first (E3001)") {
+        override val code: SdkErrorCode get() = SdkErrorCode.FLOOR_NOT_SET
+    }
+
     /** 같은 하위 타입이면 같다 — 담은 값이 없어 타입이 곧 정체다. */
     override fun equals(other: Any?): Boolean = other != null && other.javaClass == javaClass
 

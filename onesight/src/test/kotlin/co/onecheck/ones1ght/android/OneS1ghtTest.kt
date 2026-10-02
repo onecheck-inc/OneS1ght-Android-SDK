@@ -27,6 +27,7 @@ import co.onecheck.ones1ght.android.runtime.FakeAppLifecycle
 import co.onecheck.ones1ght.android.runtime.InMemoryKeyValueStore
 import co.onecheck.ones1ght.android.runtime.LogLevel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -227,6 +228,60 @@ class OneS1ghtTest {
     }
 
     /**
+     * 감사 SP-B1 — 엔진이 스스로 멈춰 다시 켜지 못하면 세션이 닫히고 FloorSession.onStopped 가 온다.
+     * 그때 isRunning 은 이미 false 라 begin() 이 다시 먹는다(예전엔 「이미 측위 중」 으로 삼켜졌다).
+     */
+    @Test fun engineGiveUpClosesSessionAndNotifiesOnStopped() {
+        initialize()
+        OneS1ght.identify("p1")
+        val session = OneS1ght.floorSession()
+        var stopped = 0
+        var runningWhenNotified: Boolean? = null
+        session.onStopped = SessionStoppedListener {
+            stopped += 1
+            runningWhenNotified = session.isRunning
+        }
+        h.await { session.begin(h.mock) }
+        assertTrue(session.isRunning)
+
+        h.mock.simulateUnexpectedStop(retryable = false, context = "engine=3 powered off")
+        h.eventually { stopped == 1 }
+        assertEquals(false, runningWhenNotified)
+        assertFalse(session.isRunning)
+
+        h.await { session.begin(h.mock) }
+        assertTrue("닫힌 뒤 begin 이 다시 먹어야 한다", session.isRunning)
+        h.await { session.end() }
+        assertEquals("앱이 end() 한 것은 onStopped 가 아니다", 1, stopped)
+    }
+
+    /** 엔진 층 탐지·상실이 FloorSession.onFloorDetected 로 온다 — provider 에 앱이 단 훅도 그대로 불린다. */
+    @Test fun floorDetectionReachesSessionListener() {
+        val engine = FakeHubEngine()
+        val provider = UwbPositioningProvider.create(engine, h.dispatcher, clock = { 0L })
+        val appFloors = mutableListOf<Long?>()
+        provider.onFloorDetected = co.onecheck.ones1ght.android.positioning.FloorDetectedListener { appFloors += it }
+        h.builtIn = provider
+        h.enableSpaceService() // 엔진 라이선스(공간 서비스 키)를 콘솔이 내려 주게
+        initialize()
+        OneS1ght.identify("p1")
+        val session = OneS1ght.floorSession()
+        val floors = mutableListOf<Long?>()
+        session.onFloorDetected = co.onecheck.ones1ght.android.positioning.FloorDetectedListener { floors += it }
+
+        h.await { session.begin() }
+        engine.current!!.onStarted()
+        engine.current!!.onTrackingStarted(14)
+        h.eventually { floors.isNotEmpty() }
+        engine.current!!.onTrackingStopped(14)
+        h.eventually { floors.size == 2 }
+
+        assertEquals(listOf<Long?>(14, null), floors)
+        assertEquals(listOf<Long?>(14, null), appFloors)
+        h.await { session.end() }
+    }
+
+    /**
      * 앱이 만든 UwbPositioningProvider 를 begin(provider) 에 넣으면 begin() 과 같은 대우를 받는다(0.0.5) —
      * 라이선스·구역 이벤트 → 세션 리스너·엔진 로그 → onDebugLog. 앱이 provider 에 단 훅은 덮지 않는다.
      */
@@ -357,6 +412,22 @@ class OneS1ghtTest {
         h.await { OneS1ght.setFloorMap(null) }
     }
 
+    /**
+     * 감사 SF-A1 — 건물 문맥 없이(건물 인자도, 직전 건물도 없이) 층을 지정하면 조용히 층을 비우지 않고
+     * 문서화된 SdkError(E3001) 로 거절한다. 예전엔 성공 콜백이 오는데 층이 비어 구역 이벤트가 0건이었다.
+     */
+    @Test fun setFloorMapWithoutBuildingContextIsRejected() {
+        initialize()
+        val e = assertThrows<SdkError> {
+            h.await { OneS1ght.setFloorMap(co.onecheck.ones1ght.android.model.Floor("f1", "F1")) }
+        }
+        assertTrue("$e", e is SdkError.BuildingNotSet)
+        assertEquals(co.onecheck.ones1ght.android.runtime.SdkErrorCode.FLOOR_NOT_SET, e.code)
+        assertNull("거절했으면 층 상태를 건드리지 않는다", OneS1ght.floorSession().floor)
+        // 층 해제(null)는 건물이 없어도 된다.
+        h.await { OneS1ght.setFloorMap(null) }
+    }
+
     /** 초기화 전 조회는 NotInitialized, refreshZones·send 는 조용히 빈 값. */
     @Test fun lookupsBeforeInitialize() {
         assertThrows<SdkError.NotInitialized> { h.await { OneS1ght.buildings() } }
@@ -463,6 +534,14 @@ class OneS1ghtTest {
         }
         assertEquals(0, errors)
         assertEquals(listOf("app bug"), uncaught.map { it.message })
+        // kotlinx-coroutines-test 는 코루틴 미처리 예외를 따로 모아 두었다가 **다음** runTest 시작 때
+        // UncaughtExceptionsBeforeTest 로 던진다 — 여기서 일부러 낸 예외가 테스트 순서에 따라 같은 JVM 의
+        // 엉뚱한 테스트(ApiClientTest 등)를 깨뜨렸다. 이 테스트 안에서 비운다(그 클래스는 Kotlin internal 이라 이름으로 가린다).
+        try {
+            runTest { }
+        } catch (e: IllegalStateException) {
+            if (e.javaClass.simpleName != "UncaughtExceptionsBeforeTest") throw e
+        }
     }
 
     // MARK: - 기기 판정 (Ruling 10)

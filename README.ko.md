@@ -265,6 +265,7 @@ session.onZoneExit  = ZoneListener { zone -> hideCoupon(zone) }
 session.onZoneDwell = DwellListener { zone, seconds -> logDwell(zone, seconds) }
 session.onPosition  = PositionListener { coord -> mapView.moveMarker(coord) }
 session.onTriggers  = TriggersListener { zoneId, triggers -> handle(triggers) }
+session.onStopped   = SessionStoppedListener { showRestart() } // 엔진이 멈춰 다시 켜지 못해 세션이 닫힘 — begin() 으로 다시 시작
 
 session.begin()
 …
@@ -351,7 +352,7 @@ session.isPaused
 | 공간 조회 | `buildings()` · `building(id)` · `floors(buildingId)` · `floor(b, f)` · `zones(b, f)` · `zone(b, f, z)` · `locators(b, f)` |
 | 층 지정 | `setFloorMap(floor, buildingId)` · `refreshZones()` |
 | 측위 | `floorSession()` → `begin()` · `end()` · `pause()` · `resume()` · `isPaused` |
-| 세션 콜백 | `onZoneEnter` · `onZoneExit` · `onZoneDwell` · `onPosition` · `onTriggers` · `onConfigChanged` |
+| 세션 콜백 | `onZoneEnter` · `onZoneExit` · `onZoneDwell` · `onPosition` · `onTriggers` · `onConfigChanged` · `onFloorDetected` · `onStopped` |
 | 버퍼 | `send()`(전송) · `empty()`(폐기) |
 | 조회 | `isInitialized` · `isDeviceAvailable` · `deviceAvailability` · `onDebugLog` · `setLanguage(code)` · `SDK_VERSION` |
 | 콘솔 제공 값 | `googleMapKey` |

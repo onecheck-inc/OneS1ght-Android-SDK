@@ -61,6 +61,12 @@ internal class SpaceServiceClient(
         .writeTimeout(20, TimeUnit.SECONDS)
         .build()
 
+    /**
+     * 서버가 준 존 폴리곤에서 점·존을 걸러냈을 때의 진단 문구 — 코어가 받아 화면 로그(WARN)로 남긴다.
+     * 공간 조회는 코어 디스패처에서만 돌므로 같은 스레드에서 불린다.
+     */
+    var onBadPolygon: ((String) -> Unit)? = null
+
     // 세션 캐시 — plan 은 정적(층이름 겸 선로딩), 앵커는 전원상태(clusterStatus)가 변할 수 있어 TTL.
     private val planCache = mutableMapOf<String, ConsolePlanResponse>()
     private val anchorCache = mutableMapOf<String, Pair<Long, AnchorResponse>>()
@@ -252,8 +258,19 @@ internal class SpaceServiceClient(
         val res = consoleGet<ConsoleZonesResponse>("/positioning/buildings/$buildingId/floor/$floorId/zones")
         val seen = mutableSetOf<String>()
         return res.zones.mapNotNull { z ->
-            val poly = z.polygon
-            if (!z.isActive || poly == null || poly.size < 3 || !seen.add(z.name)) return@mapNotNull null
+            val raw = z.polygon
+            if (!z.isActive || raw == null) return@mapNotNull null
+            // ⚠️ 감사 SF-A2: 점 원소를 확인 없이 it[0]·it[1] 로 읽으면 망가진 점 하나로 IndexOutOfBounds 가
+            //    새어 층 전체가 안 열렸다. 나쁜 점만 거르고(iOS S23 과 같은 기준), 3개 미만이 남으면 그 존만 버린다.
+            val poly = sanitizePolygon(raw)
+            if (poly.size < 3) {
+                onBadPolygon?.invoke("zone ${z.zoneId} (${z.name}) dropped: ${poly.size}/${raw.size} valid polygon points")
+                return@mapNotNull null
+            }
+            if (poly.size < raw.size) {
+                onBadPolygon?.invoke("zone ${z.zoneId} (${z.name}): skipped ${raw.size - poly.size} bad polygon points")
+            }
+            if (!seen.add(z.name)) return@mapNotNull null
             RawZone(
                 id = z.zoneId,
                 name = z.name,
@@ -267,6 +284,17 @@ internal class SpaceServiceClient(
                 dwellSeconds = z.dwellSeconds,
             )
         }
+    }
+
+    /**
+     * 폴리곤 점 정리 — 원소가 2개 미만이거나 x·y 가 유한하지 않은 점은 버리고, 남은 점은 `[x, y]` 로 맞춘다
+     * (원소가 3개 이상이면 앞의 둘만 쓴다). 이 뒤의 코드는 모든 점이 원소 2개라고 믿고 읽는다.
+     */
+    private fun sanitizePolygon(raw: List<List<Double>>): List<List<Double>> = raw.mapNotNull { p ->
+        if (p.size < 2) return@mapNotNull null
+        val x = p[0]
+        val y = p[1]
+        if (!x.isFinite() || !y.isFinite()) null else listOf(x, y)
     }
 
     /**
