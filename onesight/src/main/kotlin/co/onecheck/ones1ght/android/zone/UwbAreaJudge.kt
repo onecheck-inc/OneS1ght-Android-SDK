@@ -142,6 +142,16 @@ internal class UwbAreaJudge(private val scheduler: DwellScheduler) {
         }
     }
 
+    /**
+     * 지금 안에 있는 구역에서 나간 것으로 친다 — EXIT 를 한 번 내고 판정 상태를 비운다. 안에 있는 구역이 없으면
+     * 아무것도 안 한다. 측위를 잠시 멈추기 전(배경 전환)에 쓴다 — 감사 SP-B15.
+     */
+    fun exitActive(atMs: Long) {
+        val zone = activeZoneId?.let { id -> zones.firstOrNull { it.id == id } } ?: return reset()
+        reset()
+        onEvent?.invoke(ZoneEvent.Exit(zone, atMs))
+    }
+
     /** 판정 상태 초기화 (측위 시작·층 전환·재개). 존 목록은 유지한다. */
     fun reset() {
         dwell?.cancel()

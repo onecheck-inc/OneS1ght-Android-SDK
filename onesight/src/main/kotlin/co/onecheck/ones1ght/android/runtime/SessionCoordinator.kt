@@ -45,6 +45,7 @@ import co.onecheck.ones1ght.android.network.ApiError
 import co.onecheck.ones1ght.android.positioning.PositioningConfig
 import co.onecheck.ones1ght.android.positioning.PositioningProvider
 import co.onecheck.ones1ght.android.positioning.PositioningProviderDelegate
+import co.onecheck.ones1ght.android.positioning.UwbPositioningProvider
 import co.onecheck.ones1ght.android.space.SpaceServiceClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -446,6 +447,9 @@ internal class SessionCoordinator(
         }
         return try {
             val zones = client.loadZones(state.buildingId, state.floorId)
+            // 기다리는 사이 층이 바뀌었다(자동 층 전환·setFloorMap) — 옛 층 구역을 새 층에 넣지 않는다. 넣으면 다른
+            // 층 zone_id 로 매핑돼 엉뚱한 구역 시책이 나갔다(감사 SP-B6 · iOS S10).
+            if (floorState !== state) return floorState?.zones ?: emptyList()
             val changed = geofencesChanged(state.zones, zones)
             // 내용(id·이름·도형·체류 초 등)이 하나라도 다른가 — 같으면 provider 를 건드리지 않는다.
             // ⚠️ 감사 SP-B2: 폴링마다 apply 하면 판정기의 체류 타이머가 지워져 DWELL 이 안 떴다.
@@ -530,6 +534,7 @@ internal class SessionCoordinator(
         engineRestartJob = null
         engineRestartAttempts = 0
         closingAfterEngineStop = false
+        pauseToRestore = false
         // ⚠️ isRunning 을 **먼저** 세운다. 엔진은 시작 안에서 동기로 접힐 수 있다(라이선스 없음·권한 이미 거부) —
         //    그 알림(onStoppedUnexpectedly)이 isRunning=false 일 때 오면 무시돼, 세션은 「측위 중」 인 채 엔진만
         //    죽은 상태로 남았다(iOS #54 와 같다).
@@ -557,8 +562,17 @@ internal class SessionCoordinator(
     private fun startReceptionCheck() {
         receptionCheckJob?.cancel()
         receptionCheckJob = scope.launch {
+            // 내장 엔진은 층을 잡아야(TRACKING) 좌표를 낸다 — 층을 찾는 동안 재면 정상인데 E4002 가 났다(감사 SP-B8).
+            // 층을 끝내 못 찾는 것은 E3007(20초)의 몫이다. 층을 잡은 뒤부터 [receptionCheckDelayMs] 를 잰다.
+            val uwb = provider as? UwbPositioningProvider
+            if (uwb != null) {
+                while (isActive && isRunning && uwb.phase != UwbPositioningProvider.PositioningPhase.TRACKING) {
+                    delay(RECEPTION_POLL_MS)
+                }
+            }
             delay(receptionCheckDelayMs)
-            if (!isActive || !isRunning) return@launch
+            // 배경이면 재지 않는다 — 복귀(onForegroundResumed)가 다시 건다.
+            if (!isActive || !isRunning || !appInForeground) return@launch
             val d = provider?.positioningDiagnostic ?: return@launch // 진단 없는 provider
 
             // ⚠️ 두 갈래를 하나로 합치지 말 것 — 앵커별 상태를 못 주는 엔진에서는 예전 조건이
@@ -681,6 +695,7 @@ internal class SessionCoordinator(
         logBuffer.flush() // 세션 종료 — 잔여 로그도 내보낸다
         isRunning = false
         closingAfterEngineStop = false
+        pauseToRestore = false
     }
 
     // MARK: - 실시간 수신 (SSE)
@@ -822,8 +837,16 @@ internal class SessionCoordinator(
                             // 내려가면 다시 켜 보기를 멈춘다 — 배경에선 UWB 가 안 돈다. 돌아오면 아래에서 켠다.
                             engineRestartJob?.cancel()
                             engineRestartJob = null
+                            receptionCheckJob?.cancel() // 배경에서는 재지 않는다(SP-B8) — 복귀가 다시 건다
+                            receptionCheckJob = null
                             if (runningAndNotStopping) { // 측위는 세션이 돌 때만, 정지 중이면 그 정지에 맡긴다
-                                provider?.stop()
+                                provider?.let { p ->
+                                    // 사용자가 건 일시정지는 생명주기 재시작에서 유지한다(iOS S20) — 복귀 때 다시 건다.
+                                    pauseToRestore = p.isPaused
+                                    // 배경에서는 UWB 가 멈춰 OUT 이 안 온다 — 지금 구역에서 나간 것으로 친다(SP-B15).
+                                    (p as? UwbPositioningProvider)?.exitActiveZoneBeforeBackground()
+                                    p.stop()
+                                }
                                 flushPositions()
                             }
                             live?.stop() // 스트림은 언제나 끊는다
@@ -851,7 +874,10 @@ internal class SessionCoordinator(
         // onStoppedUnexpectedly 로 알려 오고, 거기서 다시 켜 보거나 세션을 닫는다.
         engineRestartAttempts = 0
         val active = runningAndNotStopping
-        if (active) provider?.start()
+        if (active) {
+            provider?.let(::restartKeepingPause)
+            startReceptionCheck() // 복귀 후 다시 잰다(SP-B8)
+        }
         // 정지 중이면 스트림을 둘지 말지는 그 정지(performStop)가 정한다.
         if (!streamWanted(floorSet = floorState != null, running = active)) return
         // 배경에서 끊긴 것 — 앞 연결을 확실히 닫고 새로 붙인다(중복 통지로 연결이 새지 않게).
@@ -902,6 +928,7 @@ internal class SessionCoordinator(
             return
         }
         engineRestartAttempts += 1
+        pauseToRestore = provider.isPaused // 다시 켜도 사용자가 건 일시정지는 그대로(iOS S20)
         val delayMs = engineRestartDelaysMs[attempt]
         val total = engineRestartDelaysMs.size
         report(
@@ -915,8 +942,22 @@ internal class SessionCoordinator(
             if (!runningAndNotStopping || this@SessionCoordinator.provider !== provider) return@launch
             // 배경이면 켜지 않는다 — UWB 가 안 돈다. 포그라운드 복귀(onForegroundResumed)가 대신 켠다.
             if (!appInForeground) return@launch
-            provider.start()
+            restartKeepingPause(provider)
         }
+    }
+
+    /**
+     * 내려가기 전에 사용자가 건 일시정지 — 생명주기 재시작(배경 복귀·엔진 재시도)이 provider 를 다시 켜면 풀리므로
+     * 다시 건다(iOS S20: 예전엔 배경에 한 번 다녀오면 멈춘 측위가 다시 좌표·구역 이벤트를 올렸다). 앱의
+     * begin()·end() 는 이 값을 지운다.
+     */
+    private var pauseToRestore = false
+
+    private fun restartKeepingPause(p: PositioningProvider) {
+        val keepPaused = pauseToRestore
+        pauseToRestore = false
+        p.start()
+        if (keepPaused) p.pause()
     }
 
     /** 좌표 fix — 층 설정 확보 + 버퍼 적재, 임계 도달 시 flush */
@@ -1003,6 +1044,9 @@ internal class SessionCoordinator(
     }
 
     internal companion object {
+        /** 수신 점검 — 엔진이 층을 잡았는지 보는 간격. */
+        const val RECEPTION_POLL_MS: Long = 1_000L
+
         /** 좌표 전송 실패 뒤 첫 대기 · 최대 대기(임계값 전송만 — 60초 타이머는 그대로). */
         const val POSITION_RETRY_MIN_MS: Long = 5_000L
         const val POSITION_RETRY_MAX_MS: Long = 60_000L

@@ -436,6 +436,17 @@ public class UwbPositioningProvider private constructor(
         publish()
     }
 
+    /**
+     * 지금 안에 있는 구역에서 나간 것으로 친다(EXIT) — 코어가 앱이 배경으로 내려가 측위를 멈추기 **직전에** 부른다.
+     *
+     * 왜: 배경에서는 UWB 가 멈춰 엔진이 OUT 을 주지 않고, 복귀하면 판정기가 처음부터 시작해 같은 구역의 ENTER 가
+     * EXIT 없이 두 번 서버로 갔다(쿠폰 중복 여지 — 감사 SP-B15). 일시정지 중이면 보내지 않는다(이벤트를 막는 중).
+     */
+    internal fun exitActiveZoneBeforeBackground() {
+        if (!machine.acceptsPosition()) return
+        judge.exitActive(clock())
+    }
+
     /** 좌표·영역 이벤트 소비만 멈춘다 — **엔진은 계속 돈다**(층·앵커를 다시 찾지 않도록). */
     override fun pause() {
         machine.pause()
@@ -691,6 +702,12 @@ public class UwbPositioningProvider private constructor(
         log(LogLevel.ERROR, SdkLocalized.t("uwb.error", code, message, describe(code)))
         onEngineError?.onEngineError(code, message)
         sdkCode(code, message)?.let { report(it, "engine=$code $message") }
+        // 시작 직후 끈 경우(STOPPING) — 시작이 접혔으면 onStopped 는 오지 않는다. 감시 타이머 5초를 기다리지 않고
+        // 곧바로 멈춘 것으로 친다(감사 SP-B14: 끄고 바로 다시 켜면 5초 늦게 켜졌다).
+        if (machine.phase == Phase.STOPPING && code in START_ABORT_CODES) {
+            finishStopped()
+            return
+        }
         if (machine.phase != Phase.STARTING) return
         when (code) {
             in START_ABORT_CODES -> {
@@ -701,8 +718,9 @@ public class UwbPositioningProvider private constructor(
             HUB_ALREADY_STARTED -> machine.onOpened()
             HUB_STOPPING -> {
                 // 시작 로그·층 감시·입장 트리거는 첫 시도에서 이미 나갔다 — 재시도는 재적재처럼 조용히.
+                // 층 탐색 전용(startDetection)이어도 다시 연다(SP-B4).
                 reloading = true
-                machine.restart()
+                machine.retryOpenAfterStop()
             }
         }
     }
