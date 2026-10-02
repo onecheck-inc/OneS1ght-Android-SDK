@@ -37,6 +37,7 @@ public class JavaInteropTest {
             h.drain(); assertTrue(got[0] instanceof List);
             FloorSession s = OneS1ght.floorSession();
             s.setOnZoneEnter(zone -> {}); s.setOnPosition(c -> {}); s.setOnZoneDwell((zone, sec) -> {});
+            s.setOnStopped(() -> {}); s.setOnFloorDetected(floorId -> {});
             OneS1ght.setOnDebugLog((level, msg) -> {});
             s.begin(h.mockProvider(), new Callback<Void>() { @Override public void onSuccess(Void r) {} @Override public void onError(Throwable e) { fail(e.toString()); } });
             h.drain(); assertTrue(s.isRunning());

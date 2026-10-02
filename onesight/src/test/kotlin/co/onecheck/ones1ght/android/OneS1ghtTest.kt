@@ -228,6 +228,60 @@ class OneS1ghtTest {
     }
 
     /**
+     * 감사 SP-B1 — 엔진이 스스로 멈춰 다시 켜지 못하면 세션이 닫히고 FloorSession.onStopped 가 온다.
+     * 그때 isRunning 은 이미 false 라 begin() 이 다시 먹는다(예전엔 「이미 측위 중」 으로 삼켜졌다).
+     */
+    @Test fun engineGiveUpClosesSessionAndNotifiesOnStopped() {
+        initialize()
+        OneS1ght.identify("p1")
+        val session = OneS1ght.floorSession()
+        var stopped = 0
+        var runningWhenNotified: Boolean? = null
+        session.onStopped = SessionStoppedListener {
+            stopped += 1
+            runningWhenNotified = session.isRunning
+        }
+        h.await { session.begin(h.mock) }
+        assertTrue(session.isRunning)
+
+        h.mock.simulateUnexpectedStop(retryable = false, context = "engine=3 powered off")
+        h.eventually { stopped == 1 }
+        assertEquals(false, runningWhenNotified)
+        assertFalse(session.isRunning)
+
+        h.await { session.begin(h.mock) }
+        assertTrue("닫힌 뒤 begin 이 다시 먹어야 한다", session.isRunning)
+        h.await { session.end() }
+        assertEquals("앱이 end() 한 것은 onStopped 가 아니다", 1, stopped)
+    }
+
+    /** 엔진 층 탐지·상실이 FloorSession.onFloorDetected 로 온다 — provider 에 앱이 단 훅도 그대로 불린다. */
+    @Test fun floorDetectionReachesSessionListener() {
+        val engine = FakeHubEngine()
+        val provider = UwbPositioningProvider.create(engine, h.dispatcher, clock = { 0L })
+        val appFloors = mutableListOf<Long?>()
+        provider.onFloorDetected = co.onecheck.ones1ght.android.positioning.FloorDetectedListener { appFloors += it }
+        h.builtIn = provider
+        h.enableSpaceService() // 엔진 라이선스(공간 서비스 키)를 콘솔이 내려 주게
+        initialize()
+        OneS1ght.identify("p1")
+        val session = OneS1ght.floorSession()
+        val floors = mutableListOf<Long?>()
+        session.onFloorDetected = co.onecheck.ones1ght.android.positioning.FloorDetectedListener { floors += it }
+
+        h.await { session.begin() }
+        engine.current!!.onStarted()
+        engine.current!!.onTrackingStarted(14)
+        h.eventually { floors.isNotEmpty() }
+        engine.current!!.onTrackingStopped(14)
+        h.eventually { floors.size == 2 }
+
+        assertEquals(listOf<Long?>(14, null), floors)
+        assertEquals(listOf<Long?>(14, null), appFloors)
+        h.await { session.end() }
+    }
+
+    /**
      * 앱이 만든 UwbPositioningProvider 를 begin(provider) 에 넣으면 begin() 과 같은 대우를 받는다(0.0.5) —
      * 라이선스·구역 이벤트 → 세션 리스너·엔진 로그 → onDebugLog. 앱이 provider 에 단 훅은 덮지 않는다.
      */

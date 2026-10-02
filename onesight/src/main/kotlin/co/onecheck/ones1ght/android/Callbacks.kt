@@ -55,3 +55,12 @@ public fun interface ConfigChangeListener {
 public fun interface DebugLogListener {
     public fun onLog(level: LogLevel, message: String)
 }
+
+/**
+ * 측위 세션이 **SDK 쪽 사정으로** 닫혔다 — 엔진이 스스로 멈췄고 다시 켜지 못했다(권한·Bluetooth·라이선스처럼
+ * 사람이 풀어야 하는 원인이거나, 다시 켜기를 다 써도 안 됐다). 이때 `FloorSession.isRunning` 은 이미 false 라
+ * `begin()` 으로 다시 열 수 있다. 앱이 `end()` 로 끈 경우에는 오지 않는다.
+ */
+public fun interface SessionStoppedListener {
+    public fun onStopped()
+}

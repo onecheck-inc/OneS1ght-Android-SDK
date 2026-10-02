@@ -66,6 +66,7 @@ internal fun TestScope.makeCoordinator(
     lifecycle: AppLifecycle? = null,
     flushThreshold: Int = 100,
     receptionCheckDelayMs: Long = 7_000,
+    engineRestartDelaysMs: List<Long> = listOf(3_000L, 10_000L, 30_000L),
     spaceClients: MutableList<Pair<String, String>>? = null,
     liveFactory: ((ConfigChange) -> Unit, (LogLevel, String) -> Unit) -> LiveConfigStream? = { _, _ -> null },
 ): SessionCoordinator {
@@ -86,6 +87,7 @@ internal fun TestScope.makeCoordinator(
         liveFactory = liveFactory,
         flushThreshold = flushThreshold,
         receptionCheckDelayMs = receptionCheckDelayMs,
+        engineRestartDelaysMs = engineRestartDelaysMs,
     )
 }
 

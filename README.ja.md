@@ -269,6 +269,7 @@ session.onZoneExit  = ZoneListener { zone -> hideCoupon(zone) }
 session.onZoneDwell = DwellListener { zone, seconds -> logDwell(zone, seconds) }
 session.onPosition  = PositionListener { coord -> mapView.moveMarker(coord) }
 session.onTriggers  = TriggersListener { zoneId, triggers -> handle(triggers) }
+session.onStopped   = SessionStoppedListener { showRestart() } // エンジンが停止し再起動できずセッションが閉じた — begin() で再開
 
 session.begin()
 …
@@ -355,7 +356,7 @@ session.isPaused
 | 空間取得 | `buildings()` · `building(id)` · `floors(buildingId)` · `floor(b, f)` · `zones(b, f)` · `zone(b, f, z)` · `locators(b, f)` |
 | フロア指定 | `setFloorMap(floor, buildingId)` · `refreshZones()` |
 | 測位 | `floorSession()` → `begin()` · `end()` · `pause()` · `resume()` · `isPaused` |
-| セッションコールバック | `onZoneEnter` · `onZoneExit` · `onZoneDwell` · `onPosition` · `onTriggers` · `onConfigChanged` |
+| セッションコールバック | `onZoneEnter` · `onZoneExit` · `onZoneDwell` · `onPosition` · `onTriggers` · `onConfigChanged` · `onFloorDetected` · `onStopped` |
 | バッファ | `send()`(送信) · `empty()`(破棄) |
 | 状態 | `isInitialized` · `isDeviceAvailable` · `deviceAvailability` · `onDebugLog` · `setLanguage(code)` · `SDK_VERSION` |
 | コンソール提供値 | `googleMapKey` |
