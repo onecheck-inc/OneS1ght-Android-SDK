@@ -209,6 +209,48 @@ class UwbAreaJudgeTest {
         assertTrue("존이 사라졌는데 체류가 발화했다: $events", dwells.isEmpty())
     }
 
+    /**
+     * 감사 SP-B2 — 같은 존 목록을 다시 물려도(구역 폴링) 체류 중인 존의 상태·타이머는 그대로다.
+     * 온보딩 앱이 5초마다 구역을 다시 받아, 매번 지우면 DWELL 이 영영 안 떴다(엔진은 IN 을 다시 안 준다).
+     */
+    @Test fun reapplyingSameZonesKeepsPendingDwell() {
+        val zones = listOf(zone("zn_7", "정육 코너", dwell = 10), zone("zn_8", "청과 코너"))
+        judge.apply(zones)
+        judge.handleAreaEvent("IN", "정육 코너", 0)
+
+        repeat(3) {
+            scheduler.advanceBy(3_000)
+            judge.apply(zones.map { it.copy() }) // 폴링 — 내용이 같은 새 목록
+        }
+        scheduler.advanceBy(1_000)
+
+        assertEquals("같은 목록을 다시 물렸을 뿐인데 체류가 사라졌다: $events", 1, dwells.size)
+        assertEquals("zn_7", judge.activeZoneId)
+    }
+
+    /** 다른 존만 바뀌어도 체류 중인 존이 그대로면 유지한다. */
+    @Test fun changingAnotherZoneKeepsPendingDwell() {
+        judge.apply(listOf(zone("zn_7", "정육 코너", dwell = 2), zone("zn_8", "청과 코너")))
+        judge.handleAreaEvent("IN", "정육 코너", 0)
+
+        judge.apply(listOf(zone("zn_7", "정육 코너", dwell = 2), zone("zn_9", "수산 코너")))
+        scheduler.advanceBy(2_000)
+
+        assertEquals(1, dwells.size)
+    }
+
+    /** 체류 중인 존의 정의(체류 초·도형·이름…)가 바뀌면 옛 판정은 버린다 — 옛 기준으로 발화하면 안 된다. */
+    @Test fun changingTheActiveZoneDefinitionResetsDwell() {
+        judge.apply(listOf(zone("zn_7", "정육 코너", dwell = 2)))
+        judge.handleAreaEvent("IN", "정육 코너", 0)
+
+        judge.apply(listOf(zone("zn_7", "정육 코너", dwell = 30)))
+        scheduler.advanceBy(60_000)
+
+        assertTrue("정의가 바뀐 존의 옛 체류가 발화했다: $events", dwells.isEmpty())
+        assertEquals(null, judge.activeZoneId)
+    }
+
     /** OUT 이 오면 체류 타이머도 함께 끝난다. */
     @Test fun exitCancelsPendingDwell() {
         judge.apply(listOf(zone("zn_7", "정육 코너", dwell = 1)))
