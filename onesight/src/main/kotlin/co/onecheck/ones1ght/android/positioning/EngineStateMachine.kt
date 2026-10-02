@@ -61,12 +61,15 @@ internal class EngineStateMachine(
             log(LogLevel.LOG, SdkLocalized.t("uwb.startQueued"))
             return
         }
+        // ⚠️ isRunning 을 **먼저** 세운다(감사 SP-B3). 엔진 콜백은 운영 디스패처(Main.immediate)에서 같은 호출
+        //    안으로 곧바로 들어올 수 있다 — openSession 안에서 시작이 접혀 IDLE 로 정리된 뒤에 isRunning=true 를
+        //    덮으면 IDLE 인데 측위 중으로 남아, 이후 start() 가 전부 no-op 이었다.
+        isRunning = true
+        isPaused = false
         if (phase == Phase.IDLE) {
             phase = Phase.STARTING
             openSession()
         }
-        isRunning = true
-        isPaused = false
     }
 
     /**
@@ -121,6 +124,18 @@ internal class EngineStateMachine(
      */
     internal fun restart() {
         if (!isRunning || phase == Phase.IDLE || phase == Phase.STOPPING) return
+        restarting = true
+        phase = Phase.STOPPING
+        closeSession()
+    }
+
+    /**
+     * 시작이 「엔진이 아직 내려가는 중(8)」으로 거절됐다 — 그 정지가 끝나는 대로 다시 연다. [restart] 와 달리
+     * 측위 가동(isRunning)과 무관하다: 층 탐색 전용([openDetection])으로 띄운 경우에도 다시 열어야 한다
+     * (감사 SP-B4: 예전엔 isRunning 가드에 막혀 STARTING 에 영원히 머물렀다).
+     */
+    internal fun retryOpenAfterStop() {
+        if (phase != Phase.STARTING) return
         restarting = true
         phase = Phase.STOPPING
         closeSession()
