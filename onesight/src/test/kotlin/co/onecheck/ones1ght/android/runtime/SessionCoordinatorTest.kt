@@ -317,7 +317,7 @@ class SessionCoordinatorTest {
         c.stop()
     }
 
-    // 좌표: 층설정 lazy 로드 + 임계(2건) 도달 시 자동 벌크 전송 (봉투 검증)
+    // 좌표: 임계(2건) 도달 시 자동 벌크 전송 (봉투 검증)
     @Test fun positions_bufferAndAutoFlushAtThreshold() = runTest {
         routeDefaults()
         val c = makeStarted(flushThreshold = 2)
@@ -337,7 +337,6 @@ class SessionCoordinatorTest {
         assertEquals(c.visitorId, bulk["visitor_id"]?.jsonPrimitive?.content)
         assertEquals("pf_8a3c", bulk["profile_id"]?.jsonPrimitive?.content)
         assertEquals("Android", bulk["platform_name"]?.jsonPrimitive?.content)
-        eventually { routes.requests.any { it.path.contains("/positioning/floors/F") } }
         c.stop()
     }
 
@@ -351,23 +350,6 @@ class SessionCoordinatorTest {
             provider.simulatePosition(Coordinates(i.toDouble(), 0.0, 0.0), "F", BASE_MS + i * 50L)
         }
         assertEquals(20, seen)
-        c.stop()
-    }
-
-    // floors 404 = "존 없음" 정상 분기 — 좌표 수집은 계속
-    @Test fun floors404_isNormalBranch_positionsStillFlow() = runTest {
-        routeDefaults(floorStatus = 404)
-        val c = makeStarted(flushThreshold = 1)
-
-        provider.simulatePosition(Coordinates(1.0, 1.0, 0.0), "F", BASE_MS)
-        eventually { routes.count("/positioning/logs") > 0 }
-
-        eventually { c.floorConfigs["F"] != null }
-        assertEquals(0, c.floorConfigs["F"]?.zones?.size) // 빈 설정으로 마킹 (재조회 방지)
-
-        // 같은 층 좌표가 또 와도 재조회하지 않는다
-        provider.simulatePosition(Coordinates(2.0, 1.0, 0.0), "F", BASE_MS + 1_000)
-        never { routes.requests.count { it.path.contains("/positioning/floors/") } > 1 }
         c.stop()
     }
 
@@ -612,7 +594,8 @@ class SessionCoordinatorTest {
         c.stop()
     }
 
-    @Test fun start_withoutFloorWarnsE3001() = runTest {
+    /** 층 없이 시작 — 정상 경로라 화면 로그(INFO)만, E3001 은 올리지 않는다(iOS #54). */
+    @Test fun start_withoutFloorLogsInfoNotE3001() = runTest {
         routeDefaults()
         val c = coordinator()
         c.prepare()
@@ -620,8 +603,8 @@ class SessionCoordinatorTest {
         val lines = mutableListOf<Pair<LogLevel, String>>()
         c.onLog = { level, line -> lines.add(level to line) }
         c.start(provider)
-        assertTrue(lines.toString(), lines.any { it.first == LogLevel.WARN && it.second == SdkLocalized.t("coord.noFloorLoaded") })
-        assertTrue(lines.toString(), lines.any { it.second.startsWith("[E3001]") })
+        assertTrue(lines.toString(), lines.any { it.first == LogLevel.INFO && it.second == SdkLocalized.t("coord.noFloorLoaded") })
+        assertFalse(lines.toString(), lines.any { it.second.startsWith("[E3001]") })
         assertTrue(lines.toString(), lines.any { it.second.startsWith("[I4001]") && it.second.endsWith("visitor=v-20260928-001") })
         c.stop()
     }

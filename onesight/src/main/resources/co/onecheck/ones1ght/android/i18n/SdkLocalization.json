@@ -159,11 +159,6 @@
     "en": "Floor config loaded: %d locators · %d zones (floor %@…)",
     "ja": "階設定をロード: ロケーター %d台 · エリア %d件 (floor %@…)"
   },
-  "coord.floorEmpty": {
-    "ko": "층에 존 없음(404) — 정상 분기",
-    "ja": "階にゾーンなし(404) — 正常分岐",
-    "en": "No zones on floor (404) — normal branch"
-  },
   "coord.zoneSent": {
     "ko": "zone %@ 전송 (triggers %d개)",
     "ja": "zone %@ 送信 (triggers %d件)",
@@ -528,11 +523,6 @@
     "ko": "❌ 위치 권한이 없어 측위를 시작하지 못했습니다. 설정 앱에서 허용해야 합니다",
     "ja": "❌ 位置情報の許可がないため測位を開始できません。設定アプリで許可してください",
     "en": "❌ Cannot start positioning without location permission. Allow it in Settings"
-  },
-  "coord.floorZones": {
-    "ko": "층 구역 설정 로드: %d개 (floor %@…)",
-    "en": "Floor zone config loaded: %d (floor %@…)",
-    "ja": "階エリア設定をロード: %d件 (floor %@…)"
   },
   "zone.geofenceReload": {
     "ko": "구역이 바뀌었습니다(%d개) — 판정 엔진이 구역을 다시 읽습니다",

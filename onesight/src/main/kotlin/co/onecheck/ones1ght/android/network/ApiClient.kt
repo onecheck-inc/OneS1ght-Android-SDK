@@ -2,7 +2,7 @@ package co.onecheck.ones1ght.android.network
 
 //
 //  ApiClient.kt
-//  서버 통신 — OkHttp 경량 클라이언트 (사양서 §6 엔드포인트 5종 + config·profiles·logs = 11종)
+//  서버 통신 — OkHttp 경량 클라이언트 (사양서 §6 엔드포인트 5종 + config·profiles·logs = 10종)
 //
 //  · 모든 요청: X-SDK-Key 헤더 + JSON. JWT/토큰 교환 없음 (사양서 §2)
 //  · 상태코드 → 타입화 에러([ApiError], 에러 본문 {detail} 파싱)
@@ -18,7 +18,6 @@ import co.onecheck.ones1ght.android.model.ReqSdkLogs
 import co.onecheck.ones1ght.android.model.ReqVerify
 import co.onecheck.ones1ght.android.model.ReqZoneEvent
 import co.onecheck.ones1ght.android.model.ResBuildings
-import co.onecheck.ones1ght.android.model.ResFloorConfig
 import co.onecheck.ones1ght.android.model.ResPositionBulk
 import co.onecheck.ones1ght.android.model.ResProfile
 import co.onecheck.ones1ght.android.model.ResProfileCreate
@@ -62,7 +61,7 @@ private fun defaultHttp(): OkHttpClient =
         .build()
 
 /**
- * 서버 통신 클라이언트 — 콘솔 SDK API 11종.
+ * 서버 통신 클라이언트 — 콘솔 SDK API 10종.
  *
  * [apiKey] 는 헤더에만 실린다 — 저장·로그 금지.
  */
@@ -94,7 +93,7 @@ public class ApiClient private constructor(
         internal fun create(apiKey: String, baseUrl: String, http: OkHttpClient): ApiClient = ApiClient(apiKey, baseUrl, http)
     }
 
-    // MARK: - 엔드포인트 11종
+    // MARK: - 엔드포인트 10종
 
     /** POST /auth/verify — 키 검증 + 클라 등록(초기화 1회). */
     internal suspend fun verify(req: ReqVerify): ResVerify = post("/auth/verify", req)
@@ -107,9 +106,6 @@ public class ApiClient private constructor(
 
     /** GET /positioning/buildings — 건물·층 목록(측위 활성화 시 1회). */
     internal suspend fun buildings(): ResBuildings = get("/positioning/buildings")
-
-    /** GET /positioning/floors/{floor_id} — 층 존 설정(층 진입 시 해당 층만). */
-    internal suspend fun floorConfig(floorId: String): ResFloorConfig = get("/positioning/floors/${pathSegment(floorId)}")
 
     /** POST /events/zone — 존 입장/체류/퇴장(판정 즉시). */
     internal suspend fun sendZoneEvent(req: ReqZoneEvent): ResZoneEvent = post("/events/zone", req)

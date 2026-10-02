@@ -6,7 +6,7 @@ package co.onecheck.ones1ght.android.runtime
 //
 //  verify(키검증) → /config(관련 키) → provider 가동
 //    ├ onEnter(빌딩)   → 통지만 (건물·층은 호스트 앱의 몫)
-//    ├ onPosition(좌표) → 층 설정 lazy 로드 + 버퍼 적재 → 300건/60초/종료/백그라운드에 벌크 전송
+//    ├ onPosition(좌표) → 버퍼 적재 → 300건/60초/종료/백그라운드에 벌크 전송(실패 뒤 임계값 전송은 backoff)
 //    └ onZone(IN/OUT)  → events/zone 즉시 전송 (+network 1회 재시도) → triggers 호스트 전달
 //
 //  · 인증 게이팅: profileId 없이 start 하면 수집 미시작 (서버는 기록만 하므로 클라가 막음)
@@ -33,7 +33,6 @@ import co.onecheck.ones1ght.android.model.ReqPositionBulk
 import co.onecheck.ones1ght.android.model.ReqSdkLogs
 import co.onecheck.ones1ght.android.model.ReqVerify
 import co.onecheck.ones1ght.android.model.ReqZoneEvent
-import co.onecheck.ones1ght.android.model.ResFloorConfig
 import co.onecheck.ones1ght.android.model.ResSdkConfig
 import co.onecheck.ones1ght.android.model.ResZoneEvent
 import co.onecheck.ones1ght.android.model.SdkDefaults
@@ -165,10 +164,6 @@ internal class SessionCoordinator(
     /** 서버 전송용 좌표 다운샘플 기준 시각 — 판정 입력은 솎지 않는다. */
     private var lastRecordedAt: Long? = null
 
-    /** 층별 존 설정 (lazy). */
-    val floorConfigs: MutableMap<String, ResFloorConfig> = mutableMapOf()
-    private val loadingFloors = mutableSetOf<String>()
-
     /** setFloorMap 결과 — start 시 provider 에 주입. */
     var floorState: FloorState? = null
         private set
@@ -231,7 +226,7 @@ internal class SessionCoordinator(
 
     // MARK: - 서버 로그 (콘솔 로그 분석기)
 
-    private val logBuffer = SdkLogBuffer(send = ::sendLogs, scope = scope)
+    private val logBuffer = SdkLogBuffer(send = ::sendLogs, scope = scope, canSend = { profileId != null })
 
     /**
      * 코드를 남긴다 — onLog(시스템 언어 문구) + 서버(코드 + 문맥).
@@ -248,7 +243,7 @@ internal class SessionCoordinator(
     }
 
     private suspend fun sendLogs(batch: List<SdkLogEntry>): Boolean {
-        // profileId 가 없으면 귀속할 곳이 없다 — 로그를 버린다(초기화 전 단계).
+        // profileId 가 없으면 귀속할 곳이 없다 — 버퍼가 canSend 로 붙들고 있다가 identify 때 보낸다(SP-B7 · iOS S13).
         val profileId = profileId ?: return false
         val req = ReqSdkLogs(profileId, PLATFORM_NAME, OneS1ght.SDK_VERSION, batch)
         return try {
@@ -520,8 +515,10 @@ internal class SessionCoordinator(
         if (floorState != null) {
             applyFloorStateToProvider()
         } else {
-            log(LogLevel.WARN, SdkLocalized.t("coord.noFloorLoaded"))
-            report(SdkErrorCode.FLOOR_NOT_SET)
+            // 엔진이 BLE 로 층을 찾는 흐름에서는 **여기가 정상 경로다** — 서버에 E3001 을 올리지 않는다(iOS #54).
+            // 예전엔 시작할 때마다 올라가 콘솔 로그가 이 줄로 덮였다. 층이 **끝내** 안 잡히는 것은 E3007 이 알린다.
+            // 화면 로그(onDebugLog)에는 INFO 로 남긴다 — "왜 아직 좌표가 없지" 의 답이다.
+            log(LogLevel.INFO, SdkLocalized.t("coord.noFloorLoaded"))
         }
 
         // 방문 시작
@@ -593,7 +590,11 @@ internal class SessionCoordinator(
     /** 프로필 연결 — 좌표·존 이벤트가 이 ID 로 귀속된다. */
     fun identify(profileId: String?) {
         this.profileId = profileId
-        if (profileId != null) report(SdkInfoCode.IDENTIFIED)
+        if (profileId != null) {
+            report(SdkInfoCode.IDENTIFIED)
+            // 프로필이 생기기 전에 쌓인 로그(초기화 중 E1007 등)를 이제 보낸다(SP-B7 · iOS S13).
+            scope.launch { logBuffer.flush() }
+        }
     }
 
     // MARK: - 프로필 CRUD (키 검증 통과가 전제라 coordinator 경유)
@@ -738,6 +739,19 @@ internal class SessionCoordinator(
 
     // MARK: - 전송
 
+    /**
+     * 좌표 전송 실패 뒤 임계값 전송을 다시 시도해도 되는 시각 — 실패할 때마다 [POSITION_RETRY_MIN_MS] 부터 두 배씩
+     * [POSITION_RETRY_MAX_MS] 까지 늘고, 성공하면 0. 60초 타이머·종료·send() 는 이것과 무관하게 보낸다.
+     *
+     * 왜: 오프라인에서 임계값을 넘긴 뒤엔 좌표(4Hz)마다 전송 → 실패 → E5001(ERROR) → 로그 전송까지 초당 최대
+     * 8요청이 났다(iOS S5).
+     */
+    private var positionRetryAt = 0L
+    private var positionRetryDelayMs = 0L
+
+    /** 임계값 전송이 이미 예약·진행 중인가 — 좌표마다 또 예약하지 않는다. */
+    private var thresholdFlushPending = false
+
     /** 좌표 벌크 전송 (buffer 의 sender) — true = 200 */
     private suspend fun sendPositions(batch: List<PositionPoint>): Boolean {
         val profileId = profileId ?: return false
@@ -745,43 +759,17 @@ internal class SessionCoordinator(
         return try {
             val res = api.sendPositionLogs(req)
             log(LogLevel.INFO, SdkLocalized.t("coord.logsSent", batch.size, res.acceptedCount))
+            positionRetryDelayMs = 0L
+            positionRetryAt = 0L
             true
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            positionRetryDelayMs = (positionRetryDelayMs * 2).coerceIn(POSITION_RETRY_MIN_MS, POSITION_RETRY_MAX_MS)
+            positionRetryAt = clock() + positionRetryDelayMs
             log(LogLevel.WARN, SdkLocalized.t("coord.logsFail", batch.size))
             reportApi(e, "positions=${batch.size}")
             false
-        }
-    }
-
-    /** 층 설정 lazy 로드 — 처음 보는 floorId 만 (사양서: 층 진입 시 해당 층만). */
-    private fun ensureFloorLoaded(floorId: String) {
-        if (floorConfigs[floorId] != null || floorId in loadingFloors) return
-        loadingFloors.add(floorId)
-        scope.launch {
-            try {
-                val config = api.floorConfig(floorId)
-                floorConfigs[floorId] = config
-                log(SdkLocalized.t("coord.floorZones", config.zones.size, floorId.take(8)))
-            } catch (e: ApiError.NotFound) {
-                log(LogLevel.INFO, SdkLocalized.t("coord.floorEmpty"))
-                // 404 = 이 층에 존 없음 → 정상 분기(사양서 §9). 빈 설정으로 마킹해 재조회 방지
-                floorConfigs[floorId] = ResFloorConfig(
-                    floorId = floorId,
-                    buildingId = null,
-                    name = floorId,
-                    syncedAt = "",
-                    zones = emptyList(),
-                    anchors = emptyList(),
-                )
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // 네트워크 등 — 마킹 안 함 → 다음 좌표에서 재시도
-            } finally {
-                loadingFloors.remove(floorId)
-            }
         }
     }
 
@@ -938,12 +926,19 @@ internal class SessionCoordinator(
         // 안드로이드 provider 는 층을 모를 수 있다(null) — 지정된 층으로 귀속한다. 그것도 없으면
         // floor_id 없이는 서버 계약이 성립하지 않으므로 싣지 않는다.
         val floor = floorId ?: floorState?.floorId ?: return
-        ensureFloorLoaded(floor)
         // ⚠️ 서버 전송분만 솎는다. 존 판정(provider 내부)은 원속도 그대로.
         if (!shouldRecord(atMs)) return
         buffer.append(PositionPoint(floorId = floor, coordinates = coordinates, capturedAt = iso(atMs)))
-        if (buffer.count >= flushThreshold) {
-            scope.launch { flushPositions() }
+        // 임계값 전송 — 이미 예약됐거나 실패 뒤 대기 중이면 좌표마다 다시 걸지 않는다(iOS S5).
+        if (buffer.count >= flushThreshold && !thresholdFlushPending && clock() >= positionRetryAt) {
+            thresholdFlushPending = true
+            scope.launch {
+                try {
+                    flushPositions()
+                } finally {
+                    thresholdFlushPending = false
+                }
+            }
         }
     }
 
@@ -964,7 +959,6 @@ internal class SessionCoordinator(
         // DWELL 은 앱 콜백 전용이다(사양서 §6) — 서버 계약은 IN/OUT 뿐.
         if (status == ZoneEventStatus.DWELL) return
         val floor = floorId ?: floorState?.floorId ?: return
-        ensureFloorLoaded(floor)
         val profileId = profileId ?: return
         val req = ReqZoneEvent(
             profileId = profileId,
@@ -1009,6 +1003,10 @@ internal class SessionCoordinator(
     }
 
     internal companion object {
+        /** 좌표 전송 실패 뒤 첫 대기 · 최대 대기(임계값 전송만 — 60초 타이머는 그대로). */
+        const val POSITION_RETRY_MIN_MS: Long = 5_000L
+        const val POSITION_RETRY_MAX_MS: Long = 60_000L
+
         /**
          * 엔진이 지오펜스를 다시 읽어야 하는가 — **어느 구역이 있느냐**만 본다(id 집합).
          * 구역을 다시 그리면 콘솔이 새 id 를 주므로 도형이 바뀐 경우도 여기서 잡힌다.

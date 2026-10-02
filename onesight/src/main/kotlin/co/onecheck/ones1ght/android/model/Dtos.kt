@@ -358,36 +358,6 @@ internal data class ResBuildings(
     val buildings: List<BuildingRef>,
 )
 
-/** GET /positioning/floors/{floor_id} 응답의 존 판정 파라미터 9종. */
-@Serializable
-internal data class ZoneMeta(
-    @SerialName("zone_id") val zoneId: String,
-    val name: String,
-    /** 미터 좌표 다각형. */
-    val polygon: List<List<Double>>? = null,
-    @SerialName("trigger_type") val triggerType: String,
-    @SerialName("dwell_seconds") val dwellSeconds: Int? = null,
-    @SerialName("in_dist") val inDist: Double,
-    @SerialName("in_count") val inCount: Int,
-    @SerialName("in_count_interval") val inCountInterval: Int,
-    @SerialName("out_period") val outPeriod: Int,
-    val priority: Int,
-    @SerialName("call_inout") val callInout: Boolean,
-    @SerialName("is_active") val isActive: Boolean,
-)
-
-/** GET /positioning/floors/{floor_id} 응답. */
-@Serializable
-internal data class ResFloorConfig(
-    @SerialName("floor_id") val floorId: String,
-    @SerialName("building_id") val buildingId: String? = null,
-    val name: String,
-    @SerialName("synced_at") val syncedAt: String,
-    val zones: List<ZoneMeta>,
-    /** 현재 항상 빈 리스트(공간 서비스 앵커 API 대기). */
-    val anchors: List<String>,
-)
-
 /** POST /events/zone 응답. 시책은 하나씩 읽는다 — 하나가 깨져도 나머지 시책은 앱에 간다(SF-A5). */
 @Serializable
 internal data class ResZoneEvent(
