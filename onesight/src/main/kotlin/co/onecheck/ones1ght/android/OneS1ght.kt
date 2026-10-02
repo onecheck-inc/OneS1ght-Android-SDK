@@ -222,7 +222,7 @@ public object OneS1ght {
      *
      * @param context applicationContext 만 보관한다.
      * @param sdkKey OneS1ght 콘솔 발급 키 (ock_). 측위에 필요한 나머지 키는 콘솔에서 받는다.
-     * @param baseUrl 자체 서버를 구축한 고객만.
+     * @param baseUrl 자체 서버를 구축한 고객만. 키 검증·전송뿐 아니라 공간 조회(건물·층·구역·도면)도 이 서버로 간다.
      * @throws ApiError 키 무효(E1002)·네트워크(E5001) 등
      * @throws SdkError.PositioningDisabled 테넌트에서 측위가 꺼져 있다(E1003)
      */
@@ -275,11 +275,16 @@ public object OneS1ght {
         }
     }
 
-    /** 초기화 리셋 — 세션을 버린다. 이후 다른 키로 재초기화할 수 있다(런타임 키 교체용). */
+    /**
+     * 초기화 리셋 — 세션을 버린다. 이후 다른 키로 재초기화할 수 있다(런타임 키 교체용).
+     * setFloorMap 의 건물 문맥도 지운다 — 다른 고객사로 다시 초기화한 뒤 옛 건물로 층을 조회하지 않게(SF-A8).
+     * identify 로 넘긴 프로필은 남는다(다음 initialize 의 세션으로 넘어간다).
+     */
     @JvmSynthetic
     public suspend fun reset(): Unit = onCore {
         discardCoordinator()
         storedKey = null
+        currentBuildingId = null
     }
 
     /** [reset] 의 Java 판. */
@@ -513,7 +518,8 @@ public object OneS1ght {
     /**
      * 프로필 연결 — 좌표·존 이벤트가 이 ID 로 귀속된다(해제는 null). 메인 스레드에서 부른다.
      * begin() 전에 반드시 호출해야 한다 (없으면 NotIdentified · E1004).
-     * ⚠️ initialize 보다 먼저 부르면 값이 전달되지 않는다(iOS 와 같은 동작 — 두 플랫폼을 함께 고친다).
+     * initialize 보다 먼저 불러도 되고, reset·키 교체 뒤에도 값이 이어진다 — 새 세션을 만들 때 넘긴다
+     * (감사 SF-A7 · iOS S12).
      */
     @JvmStatic
     @MainThread
@@ -551,9 +557,10 @@ public object OneS1ght {
             appId = app.packageName,
             scope = scope,
             lifecycle = lifecycle,
-            spaceClientFactory = { sdk, space ->
+            spaceClientFactory = { sdk, space, spaceHost ->
                 if (endpoints == null) {
-                    SpaceServiceClient(sdk, space, api.http)
+                    // 콘솔 공간 조회도 initialize 의 baseUrl 로(SF-A9 · iOS S15), 공간 서비스는 콘솔 geo_base_url 로(SF-A11).
+                    SpaceServiceClient(sdk, space, api.http, consoleBase = baseUrl, spaceHost = spaceHost)
                 } else {
                     SpaceServiceClient(sdk, space, api.http, consoleBase = endpoints.first, spaceHost = endpoints.second)
                 }
@@ -564,6 +571,8 @@ public object OneS1ght {
         c.onConfigChange = { change -> FloorSession.shared.onConfigChanged?.onConfigChanged(change) }
         c.onEngineStoppedSession = { FloorSession.shared.onStopped?.onStopped() }
         c.onLog = { level, line -> onDebugLog?.onLog(level, line) }
+        // 앱이 이미 넘긴 프로필을 새 세션에 잇는다 — initialize 전 identify·reset·키 교체 뒤에도(SF-A7 · iOS S12).
+        c.identify(profileId)
         coordinatorScope = scope
         return c
     }
@@ -628,8 +637,8 @@ public object OneS1ght {
     }
 
     /**
-     * 공간 조회의 (콘솔 주소, 공간 서비스 주소). 운영은 null — 공간 조회는 기본 주소로 나간다
-     * (initialize 의 baseUrl 을 쓰지 않는다, 사양서 §4.2). 테스트가 스텁 서버로 돌린다.
+     * 공간 조회의 (콘솔 주소, 공간 서비스 주소). 운영은 null — 콘솔 공간 조회는 initialize 의 baseUrl,
+     * 공간 서비스는 콘솔 `/config` 의 geo_base_url 로 나간다. 테스트가 스텁 서버로 돌린다.
      */
     @Volatile
     internal var spaceEndpointsOverride: Pair<String, String>? = null

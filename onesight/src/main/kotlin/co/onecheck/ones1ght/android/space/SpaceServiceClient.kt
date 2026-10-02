@@ -26,6 +26,7 @@ import co.onecheck.ones1ght.android.network.ApiClient
 import co.onecheck.ones1ght.android.network.ApiError
 import co.onecheck.ones1ght.android.network.pathSegment
 import co.onecheck.ones1ght.android.network.performJsonRequest
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -43,8 +44,8 @@ import java.util.concurrent.TimeUnit
  * 공간 조회 — 건물·층·도면·로케이터·구역. [sdkKey] 는 콘솔(§4.2 표), [spaceKey] 는 공간
  * 서비스(`/config` 의 `geo_sdk_key`) 호출에 쓴다.
  *
- * iOS 와 같이 공간 조회의 콘솔 호출은 `initialize` 의 baseUrl 을 쓰지 않는다(spec §4.2) —
- * [consoleBase] 기본값은 [ApiClient.DEFAULT_BASE_URL] 이다.
+ * [consoleBase] 는 `initialize` 의 baseUrl 이다 — 자체 서버 고객의 공간 조회가 우리 서버로 새지 않게(감사 SF-A9 ·
+ * iOS S15, 예전엔 늘 기본 주소였다). [spaceHost] 는 콘솔 `/config` 의 `geo_base_url`([spaceHostFor] 로 검사).
  */
 internal class SpaceServiceClient(
     private val sdkKey: String,
@@ -58,6 +59,24 @@ internal class SpaceServiceClient(
     internal companion object {
         internal const val SPACE_HOST: String = "https://geospace.geoplan.io/"
         internal const val ANCHOR_TTL_MS: Long = 180_000L
+
+        /**
+         * 도면 캐시 수명 — plan.changed 신호를 놓쳐도(배경·끊김) 도면이 프로세스 끝까지 낡지 않게(감사 SF-A15 ·
+         * iOS S16). 신호를 받으면 그 자리에서 버린다([invalidatePlan]).
+         */
+        internal const val PLAN_TTL_MS: Long = 10 * 60_000L
+
+        /**
+         * 콘솔이 준 `geo_base_url` → 공간 서비스 주소. 없거나 URL 이 아니거나 https 가 아니면 [SPACE_HOST]
+         * (감사 SF-A11: 예전엔 값을 무시하고 늘 하드코딩 주소였다 — 공간 서비스 호스트가 바뀌면 배포된 앱이
+         * 앵커를 못 받는다). 공간 서비스 키가 실리므로 평문 http 는 받지 않는다 — 루프백(개발·테스트)만 예외.
+         */
+        internal fun spaceHostFor(geoBaseUrl: String?): String {
+            val url = geoBaseUrl?.trim()?.toHttpUrlOrNull() ?: return SPACE_HOST
+            val loopback = url.host == "localhost" || url.host == "127.0.0.1" || url.host == "::1"
+            if (url.scheme != "https" && !loopback) return SPACE_HOST
+            return url.toString().trimEnd('/') + "/"
+        }
     }
 
     /** 콘솔·공간 서비스 둘 다 20초 — [http] 의 다른 설정(예: 재시도 정책)은 그대로 물려받는다. */
@@ -79,8 +98,8 @@ internal class SpaceServiceClient(
      */
     var onDuplicateZoneName: ((name: String, keptId: String, droppedId: String) -> Unit)? = null
 
-    // 세션 캐시 — plan 은 정적(층이름 겸 선로딩), 앵커는 전원상태(clusterStatus)가 변할 수 있어 TTL.
-    private val planCache = mutableMapOf<String, ConsolePlanResponse>()
+    // 세션 캐시 — plan 은 거의 정적(층이름 겸 선로딩)이라 길게, 앵커는 전원상태(clusterStatus)가 변할 수 있어 짧게.
+    private val planCache = mutableMapOf<String, Pair<Long, ConsolePlanResponse>>()
     private val anchorCache = mutableMapOf<String, Pair<Long, AnchorResponse>>()
 
     // MARK: - 공개 진입점
@@ -151,7 +170,7 @@ internal class SpaceServiceClient(
         } catch (e: ApiError.NotFound) {
             return emptyList()
         }
-        return normalizeZones(raw, planCache[floorId]?.plan?.image)
+        return normalizeZones(raw, planCache[floorId]?.second?.plan?.image)
     }
 
     /**
@@ -233,13 +252,21 @@ internal class SpaceServiceClient(
         return fallback?.plan?.image
     }
 
-    /** console 도면 프록시. 층별 캐시. */
+    /**
+     * 도면 캐시를 버린다 — 콘솔이 도면이 바뀌었다고 알렸을 때(plan.changed). [floorId] 가 null 이면 전부.
+     * 다음 조회가 새로 받는다.
+     */
+    fun invalidatePlan(floorId: String?) {
+        if (floorId == null) planCache.clear() else planCache.remove(floorId)
+    }
+
+    /** console 도면 프록시. 층별 캐시([PLAN_TTL_MS]). */
     private suspend fun consolePlan(buildingId: String, floorId: String): ConsolePlanResponse {
-        planCache[floorId]?.let { return it }
+        planCache[floorId]?.let { (at, cached) -> if (clock() - at < PLAN_TTL_MS) return cached }
         val res = consoleGet<ConsolePlanResponse>(
             "/positioning/buildings/${pathSegment(buildingId)}/floor/${pathSegment(floorId)}/plan",
         )
-        planCache[floorId] = res
+        planCache[floorId] = clock() to res
         return res
     }
 

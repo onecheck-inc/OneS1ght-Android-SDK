@@ -90,7 +90,7 @@
       "throws": [
         "E1001"
       ],
-      "warning": "발급받은 profileId 를 반드시 앱에 보관해 재사용할 것. identify 를 initialize 보다 먼저 부르면 값이 전달되지 않는다. 고객사 회원 ID 는 서버로 보내지 않는다.",
+      "warning": "발급받은 profileId 를 반드시 앱에 보관해 재사용할 것. identify 는 initialize 앞뒤 어디서 불러도 세션으로 이어진다. 고객사 회원 ID 는 서버로 보내지 않는다.",
       "expectedLog": "[I1002] Identified — profile attached"
     },
     {

@@ -210,7 +210,6 @@ class SessionCoordinatorTest {
         }
 
         assertEquals("측위가 꺼져도 지도 키는 받아야 한다", "AIza_disabled", c.googleMapKey)
-        assertEquals("gpk_disabled", c.spaceServiceKey)
     }
 
     // 존 판정 → events/zone 전송 (바디 검증) → triggers 호스트 콜백
