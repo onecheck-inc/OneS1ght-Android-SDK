@@ -421,7 +421,7 @@ suspend fun kotlinUwbProvider(context: Context): String {
     OneS1ght.floorSession().begin(provider)
     val d = provider.diagnostic
     val line = "${phase.value} ${provider.isDetecting} ${provider.isRunning} ${provider.isPaused} $position " +
-        "${provider.detectedFloorId} ${provider.measurementCount} ${provider.log.size} ${d.registered} ${d.canPosition} ${d.summary}"
+        "${provider.detectedFloorId} ${provider.measurementCount} ${provider.log.size} ${d.registered} ${d.hasFix} ${d.summary}"
     OneS1ght.floorSession().end()
     provider.stopDetection()
     return line
@@ -558,7 +558,7 @@ public final class JavaConsumer {
                 System.out.println(provider.getPhase() + " " + provider.isDetecting() + " " + provider.isRunning() + " "
                     + provider.isPaused() + " " + provider.getLatestPosition() + " " + provider.getDetectedFloorId() + " "
                     + provider.getMeasurementCount() + " " + provider.getLog().size() + " " + d.getRegistered() + " "
-                    + d.getCanPosition() + " " + d.getSummary());
+                    + d.getHasFix() + " " + d.getSummary());
                 provider.stopDetection();
             }
             @Override public void onError(Throwable e) {}
