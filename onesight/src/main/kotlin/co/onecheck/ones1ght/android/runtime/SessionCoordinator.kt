@@ -302,7 +302,10 @@ internal class SessionCoordinator(
         }
 
         positioningLicense = key
-        spaceClient = spaceClientFactory(api.apiKey, key)
+        spaceClient = spaceClientFactory(api.apiKey, key).also { c ->
+            // 서버 폴리곤에서 걸러낸 점·존 — 조용히 넘기면 "구역이 안 보인다" 로만 드러난다.
+            c.onBadPolygon = { msg -> log(LogLevel.WARN, msg) }
+        }
     }
 
     /** 측위 키를 못 구했다는 사실을 남긴다. reason 은 고정 토큰이라 키 값이 실리지 않는다. */
