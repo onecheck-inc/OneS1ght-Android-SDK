@@ -64,7 +64,10 @@ class LiveConfigStreamIngestTest {
             "data:{\"seq\":38,\"tenant_id\":1,\"store_id\":3,\"zone_id\":264,\"rule_id\":120,\"status\":\"active\"}\n" +
             "\n"
 
-    private fun stream(onChange: (ConfigChange) -> Unit): LiveConfigStream =
+    private fun stream(
+        delayFn: suspend (Long) -> Unit = { kotlinx.coroutines.delay(it) },
+        onChange: (ConfigChange) -> Unit,
+    ): LiveConfigStream =
         LiveConfigStream(
             http = OkHttpClient(),
             baseUrl = server.url("/api/sdk/v1").toString().trimEnd('/'),
@@ -72,6 +75,7 @@ class LiveConfigStreamIngestTest {
             scope = scope,
             onChange = onChange,
             log = { _, _ -> },
+            delayFn = delayFn,
         )
 
     /** 핵심 — 서버가 보낸 이벤트가 호스트까지, 순서 그대로 도착해야 한다. */
@@ -113,16 +117,17 @@ class LiveConfigStreamIngestTest {
     fun heartbeatAloneDeliversNothingBeyondConnect() {
         server.enqueue(MockResponse().setBody(":ping\n\n:ping\n\n"))
 
-        val got = mutableListOf<ConfigChange>()
-        val firstChange = CountDownLatch(1)
-        val liveConfigStream = stream { change ->
-            got.add(change)
-            firstChange.countDown()
-        }
+        val got = java.util.Collections.synchronizedList(mutableListOf<ConfigChange>())
+        // 고정 대기(Thread.sleep) 대신 조건 대기(감사 SF-T1 · K16): 첫 연결이 EOF 까지 다 읽혀야 재연결 대기(delayFn)에
+        // 들어온다 — 거기 닿았으면 그 연결이 올릴 것은 이미 다 올렸다. 재연결은 하지 않고 멈춰 둔다.
+        val connectionDrained = CountDownLatch(1)
+        val liveConfigStream = stream(delayFn = {
+            connectionDrained.countDown()
+            kotlinx.coroutines.awaitCancellation()
+        }) { change -> got.add(change) }
 
         liveConfigStream.start(buildingId = null, floorId = null)
-        assertTrue(firstChange.await(5, TimeUnit.SECONDS))
-        Thread.sleep(300) // 최소 재연결 백오프(1초 근방)보다 한참 짧게 — 하트비트 외에 더 오는지 확인할 여유
+        assertTrue("첫 연결이 끝까지 읽히지 않았다", connectionDrained.await(5, TimeUnit.SECONDS))
         liveConfigStream.stop()
 
         assertEquals(listOf(ConfigChange.ResyncNeeded), got)
@@ -214,8 +219,9 @@ class LiveConfigStreamIngestTest {
         liveConfigStream.stop()
 
         // 두 번째 연결도 끊겨야 재연결 루프가 멈춘다 — currentCall 이 그 사이 지워지지
-        // 않았다면(고친 버그) 세 번째 요청은 없어야 한다.
-        Thread.sleep(500)
+        // 않았다면(고친 버그) 세 번째 요청은 없어야 한다. 고정 대기 대신 수신 코루틴이 실제로 끝나기를 기다린다
+        // (감사 SF-T1) — 연결이 안 끊겼다면 1000초짜리 몸통에 매달려 여기서 실패한다. 끝났으면 더 올 요청이 없다.
+        awaitNoActiveChildren(scope, message = "stop() 뒤에도 수신 코루틴이 연결에 매달려 있다 — 두 번째 연결이 안 끊겼다")
         assertEquals(
             "stop() 뒤에 예상 밖의 재연결이 있었다 — 두 번째 연결이 제대로 안 끊겼다는 뜻이다",
             2,

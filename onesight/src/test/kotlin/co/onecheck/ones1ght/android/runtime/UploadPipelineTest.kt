@@ -86,17 +86,26 @@ class UploadPipelineTest {
     @Test fun offlineDoesNotRetryOnEveryPosition() = runTest {
         route(positionsOffline = true)
         val c = makeCoordinator(server, flushThreshold = 3)
+        // 전송 실패 한 건 = 화면 로그의 「[E5xxx] … — positions=N」 한 줄(오프라인 흉내가 E5001·E5005 중 무엇으로 끝나든).
+        val failures = java.util.concurrent.atomic.AtomicInteger()
+        c.onLog = { _, line -> if (line.startsWith("[E5") && "positions=" in line) failures.incrementAndGet() }
         c.prepare()
         c.identify("p")
         c.start(provider)
-        for (i in 0 until 40) {
+        fun position(i: Int) {
             provider.simulatePosition(Coordinates(i.toDouble(), 0.0, 0.0), "F", BASE_MS + i * 1_000L)
             testScheduler.runCurrent()
-            Thread.sleep(3)
         }
-        never(300) { false }
+        // 고정 대기(Thread.sleep) 대신 조건 대기(감사 SF-T1 · K16): 임계(3건)에서 나간 첫 전송이 실패로 끝날 때까지 본다.
+        for (i in 0 until 3) position(i)
+        eventually(message = "첫 전송 실패가 처리되지 않았다") { failures.get() == 1 }
+        // 실패 뒤 좌표가 계속 와도(가상 시계는 그대로 — backoff 창 안) 새 전송을 걸지 않는다.
+        for (i in 3 until 40) position(i)
+        // 서버가 본 전송은 전부 실패 처리까지 끝났다 — 그 뒤로는 더 걸릴 전송이 없다.
+        eventually(message = "전송 처리가 끝나지 않았다") { failures.get() == routes.count("/positioning/logs") }
         val attempts = routes.count("/positioning/logs")
-        assertTrue("오프라인에서 좌표마다 재시도했다: $attempts", attempts in 1..2)
+        assertEquals("오프라인에서 좌표마다 재시도했다: $attempts", 1, attempts)
+        assertEquals(40, c.pendingCount)
     }
 
     // MARK: - S13 · SP-B7 — 프로필 전 로그

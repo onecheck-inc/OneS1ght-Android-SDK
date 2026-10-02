@@ -97,7 +97,8 @@ class LiveConfigStreamResilienceTest {
         s.start(null, null)
         assertTrue(connected.await(5, TimeUnit.SECONDS))
         s.stop()
-        Thread.sleep(300)
+        // 고정 대기 대신 수신 코루틴이 끝나기를 기다린다(감사 SF-T1) — 끝났으면 끊김 로그를 남길 기회도 지났다.
+        awaitNoActiveChildren(scope)
         assertFalse(logs.toString(), logs.any { it.first == LogLevel.WARN })
     }
 
