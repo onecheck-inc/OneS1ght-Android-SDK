@@ -12,21 +12,42 @@ package co.onecheck.ones1ght.android.positioning
 import android.content.Context
 import android.os.Build
 import co.onecheck.ones1ght.android.MIN_POSITIONING_SDK
+import co.onecheck.ones1ght.android.OneS1ght
+import co.onecheck.ones1ght.android.runtime.LogLevel
 
 internal class AndroidDeviceCapability(
     /** 지금 아는 applicationContext — initialize·permissions 가 채운다. */
     private val contextProvider: () -> Context?,
     /** 엔진 판정 — 기본은 내장 엔진. API 37 미만이면 엔진 클래스를 건드리지 않고 false. */
     private val hardware: (Context) -> Boolean = ::engineHardwareAvailable,
+    private val sdkIntProvider: () -> Int = { Build.VERSION.SDK_INT },
+    /** 엔진 클래스 링크 실패를 알리는 곳 — 기본은 `OneS1ght.onDebugLog`(ERROR). */
+    private val onLinkageError: (LogLevel, String) -> Unit = { level, msg -> OneS1ght.onDebugLog?.onLog(level, msg) },
 ) : DeviceCapability {
 
     override val sdkInt: Int
-        get() = Build.VERSION.SDK_INT
+        get() = sdkIntProvider()
 
+    /**
+     * 판정은 던지지 않는다(false). 단 엔진 클래스가 없거나 링크가 깨진 것(LinkageError — R8/ProGuard 가 엔진을
+     * 지운 경우 등)은 「미지원 기기」로 위장하지 않고 ERROR 로 드러낸다 — 기기 문제가 아니라 앱 빌드 문제다
+     * (감사 SP-B13: 예전엔 Throwable 을 통째로 삼켜 E2002 로만 보였다). 일반 예외는 종전대로 조용히 false.
+     */
     override fun hasUwbHardware(): Boolean {
         if (sdkInt < MIN_POSITIONING_SDK) return false
         val context = contextProvider() ?: return false
-        return runCatching { hardware(context) }.getOrDefault(false)
+        return try {
+            hardware(context)
+        } catch (e: LinkageError) {
+            onLinkageError(
+                LogLevel.ERROR,
+                "positioning engine classes unavailable (${e.javaClass.simpleName}: ${e.message}) — " +
+                    "check that R8/ProGuard keeps the SDK's engine classes; this is an app build issue, not the device",
+            )
+            false
+        } catch (e: Exception) {
+            false
+        }
     }
 }
 

@@ -90,6 +90,13 @@ internal class UwbAreaJudge(private val scheduler: DwellScheduler) {
                 key = "${z.name}#$n"
                 n += 1
             }
+            if (key != z.name) {
+                // 엔진은 영역을 **이름으로만** 알려 준다 — 같은 이름의 두 번째 구역(#2 키)은 영영 매핑되지 않는다.
+                // 조용히 두지 않고 알린다(감사 SP-B10). 목록이 바뀔 때만 여기 오므로 폴링마다 반복하지 않는다.
+                val first = map[z.name]?.id ?: "?"
+                onLog?.invoke(LogLevel.WARN, "zone ${z.id} (${z.name}) can never be mapped: duplicate name of $first")
+                onReport?.invoke(SdkErrorCode.ZONE_MAPPING_FAILED, "duplicate zone name=${z.name} kept=$first unmapped=${z.id}")
+            }
             map[key] = z
         }
         nameToZone = map

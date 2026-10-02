@@ -44,6 +44,7 @@ internal class LiveConfigStream(
     private val log: (LogLevel, String) -> Unit,
     private val random: () -> Double = Math::random,
     private val delayFn: suspend (Long) -> Unit = { delay(it) },
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
 
     /**
@@ -65,6 +66,12 @@ internal class LiveConfigStream(
     private val minBackoffMs = 1_000L
     private val maxBackoffMs = 30_000L
 
+    /**
+     * 이만큼 붙어 있었을 때만 백오프를 처음(1초)으로 되돌린다 — 붙자마자 끊는 프록시에서 1초마다 재연결 +
+     * ResyncNeeded 폭주가 나던 것(감사 SP-B12).
+     */
+    private val stableConnectionMs = 30_000L
+
     // MARK: - 수명주기
 
     /** start() 됐고 아직 stop() 되지 않았는가 — 새는 연결을 세는 진단·테스트용. */
@@ -76,9 +83,10 @@ internal class LiveConfigStream(
         job = scope.launch {
             var backoff = minBackoffMs
             while (isActive) {
+                val startedAt = clock()
                 val connected = consume(buildingId, floorId)
                 if (!isActive) break
-                if (connected) backoff = minBackoffMs
+                if (connected && clock() - startedAt >= stableConnectionMs) backoff = minBackoffMs
                 delayFn(jitter(backoff))
                 backoff = min(backoff * 2, maxBackoffMs)
             }
@@ -110,7 +118,7 @@ internal class LiveConfigStream(
             val response = withContext(Dispatchers.IO) { call.execute() }
             response.use {
                 if (!response.isSuccessful) {
-                    log(LogLevel.WARN, "live: 연결 거절 ${response.code}")
+                    log(LogLevel.WARN, SdkLocalized.t("live.rejected", response.code))
                     false
                 } else {
                     onConnected()
@@ -119,8 +127,9 @@ internal class LiveConfigStream(
                 }
             }
         } catch (e: IOException) {
-            // stop() 이 진행 중이던 call 을 취소해도 여기로 떨어진다 — 정상 종료 경로다.
-            log(LogLevel.WARN, "live: 끊김 $e")
+            // stop() 이 진행 중이던 call 을 취소해도 여기로 떨어진다 — 정상 종료 경로다. 우리가 끊은 것(층 전환·
+            // 배경·정지)은 끊김이 아니다 — WARN 으로 남기면 진짜 끊김과 섞인다(iOS #54).
+            if (!call.isCanceled()) log(LogLevel.WARN, SdkLocalized.t("live.disconnected", "$e"))
             false
         } finally {
             // ⚠️ 다음 세대(다음 start())가 이미 자기 call 로 currentCall 을 갈아치웠을 수
@@ -162,19 +171,31 @@ internal class LiveConfigStream(
         if (seq != null) {
             val last = lastSeq
             if (last != null && seq != last + 1) {
-                log(LogLevel.WARN, "live: 일련번호 갭 $last → $seq, 재동기화 요청")
-                onChange(ConfigChange.ResyncNeeded)
+                log(LogLevel.WARN, SdkLocalized.t("live.gap", last, seq))
+                deliver(ConfigChange.ResyncNeeded)
             }
             lastSeq = seq
         }
-        if (change != null) onChange(change)
+        if (change != null) deliver(change)
     }
 
     /** 연결이 (재)수립됐다 — 기준선을 새로 잡고 재동기화를 알린다. */
     internal fun onConnected() {
-        log(LogLevel.INFO, "live: 연결됨")
+        log(LogLevel.INFO, SdkLocalized.t("live.connected"))
         lastSeq = null
-        onChange(ConfigChange.ResyncNeeded)
+        deliver(ConfigChange.ResyncNeeded)
+    }
+
+    /**
+     * 고객 콜백(onConfigChanged)이 던져도 스트림은 산다 — 예전엔 예외가 수신 코루틴을 죽이고 앱까지 죽였다
+     * (감사 SP-B12). 로그만 남기고 다음 신호를 계속 받는다.
+     */
+    private fun deliver(change: ConfigChange) {
+        try {
+            onChange(change)
+        } catch (e: Exception) {
+            log(LogLevel.WARN, SdkLocalized.t("live.callbackFailed", "${e.javaClass.simpleName}: ${e.message}"))
+        }
     }
 
     /** ±20% 흔들어 재연결이 한꺼번에 몰리지 않게 한다. */

@@ -4,7 +4,8 @@ package co.onecheck.ones1ght.android.positioning
 //  IntelligenceHubEngine.kt
 //  [HubEngine] 의 실기기 구현 — 내장 통합 측위 엔진을 그대로 감싼다.
 //
-//  · 엔진 인스턴스는 프로세스 싱글턴이다(엔진이 applicationContext 만 붙든다).
+//  · 엔진 인스턴스는 프로세스 싱글턴이다(엔진이 applicationContext 만 붙든다). 그래서 리스너는 엔진에 직접
+//    덮어쓰지 않고 프로세스 공용 [HubListenerMux] 에 이 래퍼(=provider 하나) 몫으로 건다(감사 SP-B5).
 //  · 권한 검사·요청은 엔진이 하지 않는다 — 검사만 하고 없으면 onError(3·7) 로 알린다. 요청은
 //    OneS1ght.permissions(activity) 몫이다. 그래서 start() 호출부의 MissingPermission 린트는 끈다.
 //  · 엔진 타입은 이 파일 밖으로 나가지 않는다(공개 API·다른 클래스에 새지 않게).
@@ -38,7 +39,7 @@ internal class IntelligenceHubEngine(context: Context) : HubEngine {
     }
 
     override fun setListener(listener: HubEngine.Listener?) {
-        hub.setListener(listener?.let(::Bridge))
+        muxFor(hub).set(owner = this, listener = listener)
     }
 
     // 권한은 엔진이 검사해 onError(3·7) 로 알린다 — 여기서 미리 막으면 그 사유가 사라진다.
@@ -49,6 +50,15 @@ internal class IntelligenceHubEngine(context: Context) : HubEngine {
 
     override fun stop() {
         hub.stop()
+    }
+
+    private companion object {
+        /** 엔진 싱글턴 하나에 멀티플렉서 하나 — 처음 쓸 때 만든다. */
+        @Volatile private var mux: HubListenerMux? = null
+
+        @Synchronized
+        fun muxFor(hub: IntelligenceHub): HubListenerMux =
+            mux ?: HubListenerMux { listener -> hub.setListener(listener?.let(::Bridge)) }.also { mux = it }
     }
 
     /** 엔진 리스너 → 계약 리스너. 스레드는 옮기지 않는다(provider 가 코어로 넘긴다). */

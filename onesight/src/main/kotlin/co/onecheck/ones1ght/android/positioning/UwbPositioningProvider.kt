@@ -861,6 +861,9 @@ public class UwbPositioningProvider private constructor(
         /** 엔진 오류 3 의 문장 중 "Bluetooth 꺼짐" 을 가르는 구절 — iOS 와 같은 판정. */
         private const val BLUETOOTH_POWERED_OFF = "powered off"
 
+        /** 엔진 오류 3 의 문장 중 "Bluetooth 미지원 기기" 를 가르는 구절(엔진 1.1.0). */
+        private const val BLUETOOTH_UNSUPPORTED = "unsupported on this device"
+
         /**
          * 시작 단계에서 엔진이 스스로 되돌리는(onStopped 없이 끝나는) 오류 — 엔진 1.1.0 기준:
          * 1 라이선스 미등록 · 3 Bluetooth · 7 위치 · 9 설정 누락 · 10 라이선스 거부 · 11 서버 미도달 ·
@@ -893,20 +896,29 @@ public class UwbPositioningProvider private constructor(
          * (상태 변경 방송) 모두 `bluetooth unavailable: powered off` 로 준다. 권한은
          * `…: permission required — …`, 미지원은 `…: unsupported on this device` 다.
          * 어댑터 상태를 SDK 가 따로 묻지 않는다 — 엔진 문장으로 충분하고, 새 권한을 요구하지 않는다.
+         *
+         * 감사 SP-B9 — 기존 코드 안에서 할 일이 맞는 곳으로 옮겼다(새 E-코드는 공개 enum 확장이라 만들지 않는다):
+         *  · 1 라이선스 미설정 · 10 라이선스 거부 → E1007(측위 키 문제). 엔진 라이선스는 콘솔이 주는 측위 키다 —
+         *    E1002 「SDK 키 무효」로 올리면 멀쩡한 SDK 키(ock_)를 의심하게 했다. ⚠️ iOS 는 아직 E1002 다.
+         *  · 3 + `unsupported on this device` → E2002(미지원 기기). ⚠️ iOS 는 아직 E2003 이다.
+         *  · 7(위치 권한·정밀도·서비스 꺼짐)·9(매니페스트 RANGING 선언 누락)는 E2003 그대로 — 맞는 기존 코드가
+         *    없다. 문맥 `engine=7 …`·`engine=9 …` 와 엔진 문장으로 갈린다.
          */
         internal fun sdkCode(hubError: Int, message: String = ""): SdkErrorCode? = when (hubError) {
-            1 -> SdkErrorCode.INVALID_KEY // 라이선스 미등록
-            3 -> if (message.contains(BLUETOOTH_POWERED_OFF, ignoreCase = true)) {
-                SdkErrorCode.BLUETOOTH_OFF // Bluetooth 꺼짐 — 켜면 풀린다
-            } else {
-                SdkErrorCode.PERMISSION_DENIED // Bluetooth 불가(권한·미지원)
+            1 -> SdkErrorCode.KEY_UNAVAILABLE // 라이선스(=콘솔 측위 키) 미설정
+            3 -> when {
+                message.contains(BLUETOOTH_POWERED_OFF, ignoreCase = true) ->
+                    SdkErrorCode.BLUETOOTH_OFF // Bluetooth 꺼짐 — 켜면 풀린다
+                message.contains(BLUETOOTH_UNSUPPORTED, ignoreCase = true) ->
+                    SdkErrorCode.DEVICE_NOT_SUPPORTED // Bluetooth 없는 기기 — 기기를 바꿔야 한다
+                else -> SdkErrorCode.PERMISSION_DENIED // Bluetooth 권한(근처 기기)
             }
             4 -> SdkErrorCode.LOCATORS_MISSING // 그 층의 앵커 정보 없음
             5 -> SdkErrorCode.UWB_SESSION_FAILED // DL-TDoA 세션 오류
             6 -> SdkErrorCode.AREA_JUDGE_FAILED // 영역 판정 오류
             7 -> SdkErrorCode.PERMISSION_DENIED // 위치 불가(권한·정밀도·서비스 꺼짐)
             9 -> SdkErrorCode.PERMISSION_DENIED // 매니페스트 RANGING 선언 누락(권한 계열)
-            10 -> SdkErrorCode.INVALID_KEY // 서버가 라이선스 거부
+            10 -> SdkErrorCode.KEY_UNAVAILABLE // 서버가 라이선스(=콘솔 측위 키) 거부
             11 -> SdkErrorCode.NETWORK // 라이선스 서버 미도달
             12 -> SdkErrorCode.DEVICE_NOT_SUPPORTED // DL-TDoA 미지원 기기(OS 미달 포함)
             13 -> SdkErrorCode.FLOOR_NOT_DETECTED // BLE 스캔 시작 제한 — 층 탐색 불가

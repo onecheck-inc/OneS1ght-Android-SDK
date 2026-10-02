@@ -438,9 +438,9 @@ initialize ─→ begin ─→ [UWB 座標] ─┬─→ onPosition            (
 | `E1002` | SDK キーが無効または失効 |
 | `E1003` | テナントで測位が無効 |
 | `E1004` | プロフィール未連携 |
-| `E1007` | コンソールから測位キーを取得できない |
+| `E1007` | コンソールから測位キーを取得できない — または測位エンジンがそのキーを拒否(文脈 `engine=1`·`engine=10`) |
 | `E2001` | Android バージョン不足 |
-| `E2002` | UWB 非対応端末 |
+| `E2002` | UWB 非対応端末(Bluetooth のない端末を含む — 文脈 `engine=3 … unsupported`) |
 | `E2003` | 測位権限が拒否された |
 | `E2004` | Bluetooth がオフ |
 | `E3001` | `setFloorMap(floor)` の建物がない(`SdkError.BuildingNotSet`) — フロアなしの `begin()` は正常なので記録されない |
