@@ -59,6 +59,24 @@ internal class EngineStateMachine(
      */
     private var restarting = false
 
+    /**
+     * 내부 재시작(구역 재적재·정지 중 거절된 시작의 재시도)으로 내려가는 중인가 — provider 가 「우리가 껐다 켜는 중」
+     * 을 따로 플래그로 들고 있지 않고 이걸 읽는다(감사 SP-C3: 예전엔 provider 의 reloading 과 이 값이 이중이었다).
+     */
+    internal val isRestarting: Boolean get() = restarting
+
+    /** [onClosed] 뒤 무엇이 이어졌나 — provider 가 「새 가동인가, 재시작인가」를 플래그 인자 대신 이 값으로 가른다. */
+    internal enum class AfterClose {
+        /** 완전히 멈췄다(IDLE). */
+        IDLE,
+
+        /** 내부 재시작이라 곧바로 다시 열었다 — 가동·일시정지 상태는 그대로. */
+        RESTARTED,
+
+        /** 내려가는 동안 예약된 start 를 이어받아 새로 열었다. */
+        STARTED_QUEUED,
+    }
+
     internal fun start() {
         if (isRunning) return
         if (phase == Phase.STOPPING) {
@@ -146,12 +164,12 @@ internal class EngineStateMachine(
         closeSession()
     }
 
-    internal fun onClosed() {
+    internal fun onClosed(): AfterClose {
         if (restarting) {
             restarting = false
             phase = Phase.STARTING
             openSession()
-            return
+            return AfterClose.RESTARTED
         }
         phase = Phase.IDLE
         isRunning = false
@@ -160,7 +178,9 @@ internal class EngineStateMachine(
         if (startAfterStop) {
             startAfterStop = false
             start()
+            return AfterClose.STARTED_QUEUED
         }
+        return AfterClose.IDLE
     }
 
     /**

@@ -652,7 +652,7 @@ class OneS1ghtTest {
     /** 다른 키로 initialize 하면 앞 세션은 측위·스트림·생명주기 관찰까지 전부 내려놓는다. */
     @Test fun keyChangeStopsAndTearsDownOldCoordinator() {
         val lifecycles = mutableListOf<FakeAppLifecycle>()
-        OneS1ght.platformFactory = { InMemoryKeyValueStore() to FakeAppLifecycle().also { lifecycles += it } }
+        SdkWiring.platformFactory = { InMemoryKeyValueStore() to FakeAppLifecycle().also { lifecycles += it } }
         initialize("ock_a")
         OneS1ght.identify("p1")
         h.await { OneS1ght.floorSession().begin(h.mock) }

@@ -140,7 +140,7 @@ internal class JavaInteropHarness private constructor() {
      */
     fun enableSpaceService() {
         routes.spaceKey = "gsk_facade"
-        OneS1ght.spaceEndpointsOverride = baseUrl() to server.url("/").toString()
+        SdkWiring.spaceEndpointsOverride = baseUrl() to server.url("/").toString()
     }
 
     /** Java 콜백 판이 전부 끝날 때까지(콜백 전달 포함) 실시간으로 기다린다. */
@@ -191,13 +191,13 @@ internal class JavaInteropHarness private constructor() {
     private fun install() {
         server.dispatcher = routes
         server.start()
-        OneS1ght.dispatcher = dispatcher
-        OneS1ght.deviceCapability = capability
+        SdkWiring.dispatcher = dispatcher
+        SdkWiring.deviceCapability = capability
         // 앱 Context 를 이미 아는 상태(= initialize·permissions 이후)로 시작한다. "그 전" 동작은
         // 그 테스트가 직접 null 로 되돌려 본다.
         OneS1ght.appContext = context
-        OneS1ght.platformFactory = { InMemoryKeyValueStore() to null }
-        OneS1ght.builtInProviderFactory = {
+        SdkWiring.platformFactory = { InMemoryKeyValueStore() to null }
+        SdkWiring.builtInProviderFactory = {
             builtInCreated += 1
             builtIn
         }
