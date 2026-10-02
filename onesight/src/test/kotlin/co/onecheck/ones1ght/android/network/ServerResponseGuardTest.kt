@@ -34,7 +34,7 @@ class ServerResponseGuardTest {
 
     @Before
     fun setUp() {
-        client = ApiClient("test-key", server.url("/api/sdk/v1").toString().trimEnd('/'))
+        client = ApiClient.create("test-key", server.url("/api/sdk/v1").toString().trimEnd('/'))
     }
 
     private suspend inline fun <reified T : Throwable> assertThrowsSuspend(crossinline block: suspend () -> Unit): T {
@@ -77,7 +77,9 @@ class ServerResponseGuardTest {
             ),
         )
         val res = client.sendZoneEvent(zoneEvent())
-        assertEquals(listOf("t-ok"), res.triggers.map { it.triggerId })
+        // 객체가 아닌 것만 버린다. id 가 빠진 시책은 빈 id 로 산다(iOS #55 — 쿠폰을 그리는 데 필요한 것은 payload).
+        assertEquals(listOf("t-ok", ""), res.triggers.map { it.triggerId })
+        assertEquals("no-id", res.triggers[1].type)
     }
 
     // MARK: - SF-A16 — 경로 변수 인코딩

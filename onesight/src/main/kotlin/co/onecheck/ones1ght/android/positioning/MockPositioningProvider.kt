@@ -12,16 +12,16 @@ package co.onecheck.ones1ght.android.positioning
 //
 
 import co.onecheck.ones1ght.android.model.Coordinates
+import co.onecheck.ones1ght.android.model.ZoneEvent
 import co.onecheck.ones1ght.android.model.ZoneEventStatus
 
 /**
- * 테스트·데모용 가짜 측위 — 콜백을 코드로 쏴서 SDK 파이프라인(좌표 전송·구역 이벤트·자기 정지 처리)을 본다.
+ * 테스트용 가짜 측위 — 콜백을 코드로 쏴서 SDK 파이프라인(좌표 전송·구역 이벤트·자기 정지 처리)을 본다.
  *
- * 0.2 에서 internal(또는 별도 테스트 아티팩트)로 바뀐다(감사 SP-C6 · iOS K4 — 테스트용 타입이 배포 AAR 에 공개돼
- * 있었다). 앱이 가짜 측위가 필요하면 [PositioningProvider] 를 직접 구현한다 — `delegate`·`start()`·`stop()` 만 채우면 된다.
+ * **SDK 내부 전용이다**(감사 SP-C6 · iOS K4 — 0.0.6 까지 배포 AAR 에 공개돼 있었다). 앱이 가짜 측위가 필요하면
+ * [PositioningProvider] 를 직접 구현한다 — `delegate`·`start()`·`stop()` 만 채우면 되고 나머지는 기본 구현이 있다.
  */
-@Deprecated("0.2 에서 internal 로 바뀜", level = DeprecationLevel.WARNING)
-public class MockPositioningProvider : PositioningProvider {
+internal class MockPositioningProvider : PositioningProvider {
 
     override var delegate: PositioningProviderDelegate? = null
 
@@ -66,6 +66,18 @@ public class MockPositioningProvider : PositioningProvider {
         isRunning = false
     }
 
+    /** 일시정지 — 실제 엔진처럼 start()/stop() 을 건너도 유지된다(iOS Mock 과 같다). */
+    override var isPaused: Boolean = false
+        private set
+
+    override fun pause() {
+        isPaused = true
+    }
+
+    override fun resume() {
+        isPaused = false
+    }
+
     override fun apply(buildingId: String, floorId: String) {
         appliedBuildingId = buildingId
         appliedFloorId = floorId
@@ -96,6 +108,16 @@ public class MockPositioningProvider : PositioningProvider {
     /** 좌표 fix 발생 */
     public fun simulatePosition(c: Coordinates, floorId: String?, atMs: Long) {
         delegate?.onPosition(this, c, floorId, atMs)
+    }
+
+    /** 엔진이 층을 잡음(null = 잃음) — iOS `simulateFloorDetected`. */
+    public fun simulateFloorDetected(floorId: String?) {
+        delegate?.onFloorDetected(this, floorId)
+    }
+
+    /** 앱에 보일 구역 이벤트 발생(진입·이탈·체류) — iOS `simulateZoneEvent`. */
+    public fun simulateZoneEvent(event: ZoneEvent) {
+        delegate?.onEmit(this, event)
     }
 
     /** 존 판정 발생 */

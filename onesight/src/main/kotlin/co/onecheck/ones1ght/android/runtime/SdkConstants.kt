@@ -14,8 +14,8 @@ internal object SdkLimits {
 }
 
 /**
- * 좌표 서버 전송 주기(Hz) — verify 가 `position_rate_hz` 를 안 주거나 범위 밖이면 접는 값. 공개 `SdkDefaults` 는 0.2 에서
- * internal 로 바뀌므로(감사 SF-C1) SDK 안에서는 이걸 읽는다 — 값은 같다.
+ * 좌표 서버 전송 주기(Hz) — verify 가 `position_rate_hz` 를 안 주거나 범위 밖이면 접는 값(`SdkDefaults` 와
+ * 같은 값 — 그쪽은 0.0.6 까지 공개였던 이름이다).
  */
 internal object PositionRate {
     const val DEFAULT_HZ: Int = 4

@@ -9,6 +9,80 @@
 
 ---
 
+## [Unreleased]
+
+**공개 API 를 iOS SDK(main #55)와 똑같이 맞췄습니다.** 이름이 바뀐 API 는 옛 이름이 경고만 내고 그대로 동작하지만,
+고객이 쓸 일이 없던 내부 타입은 공개에서 내렸습니다(**Breaking**). 엔진이 스스로 꺼져도 세션이 「측위 중」에 굳지 않습니다.
+
+### Breaking
+
+> 마이그레이션 지침은 [`Migrations/android.json`](Migrations/android.json) 의 `planned[]`(0.0.7) 에 있다 — 릴리스 때
+> `migrations[]` 로 옮긴다(릴리스 검사가 마지막 칸을 현재 버전에 묶어 두므로 [Unreleased] 동안에는 넣지 않는다).
+
+**공개에서 내린 것(internal)** — README·스니펫이 안내한 적 없는 내부 부품입니다. 쓰고 있었다면 오른쪽으로 옮기세요.
+
+| 0.0.6 공개 심볼 | 옮길 곳 |
+|---|---|
+| `ApiClient` 생성자·`apiKey`·`baseUrl` | `OneS1ght.initialize(context, sdkKey[, baseUrl])` · 프로필은 `OneS1ght.createProfile`·`fetchProfile`·`replaceProfile`·`deleteProfile`. 타입 `ApiClient` 와 `ApiClient.DEFAULT_BASE_URL`(deprecated)만 남았다. |
+| `IdentityStore` · `KeyValueStore` · `InMemoryKeyValueStore` | 없음 — 방문 ID 는 SDK 가 발급한다(iOS 는 `IdentityStore` internal, `SecureStore`·`KeychainSecureStore` 삭제). |
+| `SdkDefaults` | 없음 — 서버가 값을 안 줄 때의 내부 기본값(4·1·100 Hz)이다. |
+| `MockPositioningProvider` | `PositioningProvider` 를 직접 구현한다(요구사항은 `delegate`·`start()`·`stop()` 셋, 나머지는 기본 구현). |
+| `ConfigChange.Companion`(빈 companion) | 없음. |
+
+**이름 바꿈(옛 이름은 `@Deprecated(WARNING)` — 경고만, IDE 의 Replace 가 바꿔 줌)**
+
+| 0.0.6 | 이번 판 | iOS |
+|---|---|---|
+| `OneS1ght.permissions(activity[, cb])` | `OneS1ght.requestPermission(activity[, cb])` — 확인이 아니라 **시스템 창을 띄운다** | `requestPermission()` |
+| `OneS1ght.getProfile(id[, cb])` | `OneS1ght.fetchProfile(id[, cb])` | `fetchProfile(_:)` |
+| `OneS1ght.putProfile(id, attrs[, cb])` | `OneS1ght.replaceProfile(id, attrs[, cb])` — 넘기지 않은 속성은 지워진다 | `replaceProfile(_:attributes:)` |
+| `OneS1ght.send([cb])` | `OneS1ght.uploadPendingPositions([cb])` | `uploadPendingPositions()` |
+| `OneS1ght.empty()` | `OneS1ght.discardPendingPositions()` | `discardPendingPositions()` |
+| `ApiClient.DEFAULT_BASE_URL` | `OneS1ght.DEFAULT_BASE_URL` | `OneS1ght.defaultBaseURL` |
+| `OneS1ght.building(buildingId = …)` | `OneS1ght.building(id = …)` — 매개변수 이름만(위치 인자는 그대로) | `building(id:)` |
+
+`floors(buildingId)`·`floor(buildingId, floorId)`·`zones(…)`·`zone(…)`·`locators(…)`·`setFloorMap(floor, buildingId)`·
+`Trigger.triggerId` 는 안드로이드가 이미 iOS 새 이름과 같았다.
+
+**0.0.6 뒤 main 에만 있던 것(릴리스 전) — 모양을 iOS 에 맞춤**
+
+- `FloorSession.onStopped` — `SessionStoppedListener { reason -> }` 가 `FloorSession.StopReason`(`ENDED`·`ENGINE_FAILED`)을 받는다.
+  `end()`·`reset()`·키 교체 때도 `ENDED` 로 온다.
+- `FloorSession.onFloorDetected` — `SessionFloorListener { floorId: String? -> }`, `Floor.id` 와 같은 문자열(iOS `(String?) -> Void`).
+  엔진 층 번호(`Long?`)는 `UwbPositioningProvider.onFloorDetected` 가 그대로 준다.
+- `PositioningProvider.applyZones` 를 공개 계약에서 뺐다(iOS 에 없다) — 구역 새로고침은 iOS 처럼 앵커가 빈
+  `apply(PositioningConfig(zones = …))` 로 온다. 내장 provider 는 SDK 안에서 따로 받아 등록 로케이터 수를 지키므로 동작은 같다.
+
+**동작 바뀜**
+
+- `Trigger.triggerId` 는 서버가 빼면 빈 문자열(숫자면 문자열로), `type` 은 빼면 `"generic"` 입니다(예전엔 그 트리거가 버려졌습니다).
+  존 이벤트 응답의 `accepted`·`event_id` 도 관대하게 읽습니다.
+- `UwbPositioningProvider.stop()`·`start()` 가 일시정지를 풀지 않습니다(`resume()` 만 푼다). `FloorSession` 의 `begin()`·`end()` 는
+  예전처럼 일시정지 없이 시작·종료합니다.
+
+### 추가
+
+- `PositioningProviderDelegate.onFloorDetected(provider, floorId: String?)` · `onEmit(provider, event: ZoneEvent)` — 선택 채택(기본 구현).
+  커스텀 provider 가 부르면 `FloorSession.onFloorDetected`·`onZoneEnter/Exit/Dwell` 로 이어진다 — 예전엔 내장 provider 일 때만 왔다(iOS K14).
+- `FloorSession.StopReason` · `SessionFloorListener` · `OneS1ght.DEFAULT_BASE_URL`.
+
+### 고침 (감사 2026-10-02, #11~#26 — iOS #54·#55 와 같은 수정)
+
+- 엔진이 스스로 꺼지면 3·10·30초 뒤 다시 켜 보고, 안 되면 세션을 닫는다(`FloorSession.onStopped(ENGINE_FAILED)`).
+- `E3001`(층 미지정)을 서버로 올리지 않는다 · 좌표 전송 중 `empty()` 크래시 · 오프라인 전송 폭주 · 프로필 연결 전 로그 유실.
+- `identify` 를 `initialize` 보다 먼저 불러도 이어진다 · `reset` 뒤 옛 건물 문맥 · `baseUrl` 이 공간 조회에도 · 도면 캐시 무효화.
+- 서버 목록·응답을 항목별로 관대하게 · 망가진 폴리곤 점만 거르기 · 구역 새로고침이 체류 타이머를 지우지 않기.
+- 백그라운드에 다녀와도 일시정지 유지 · 엔진 상태 기계(동기 오류·탐지 모드 고착·정지 중 시작) · 판정·실시간 연결·오류 매핑.
+- 건물 없이 처음 `setFloorMap(floor)` 하면 `SdkError.BuildingNotSet`(E3001)으로 거절(안드로이드에만 — iOS 는 조용히 층을 비운다).
+
+### 문서
+
+- README 3개 언어·스니펫을 새 이름으로 · `onStopped`/`onFloorDetected` 예제 · 커스텀 provider 도 구역 콜백이 온다고 정정.
+- SDK enum·sealed class(`ConfigChange`·`SdkErrorCode`·`ZoneEvent`·`FloorSession.StopReason`·`PermissionStatus`·`DeviceAvailability`·
+  `LogLevel`)는 마이너 판에서 갈래가 늘 수 있으니 `when` 에 `else` 를 두라고 명시(iOS `@unknown default` 와 같은 안내).
+
+---
+
 ## [0.0.6] — 2026-09-30
 
 **Bluetooth 꺼짐을 권한 거부와 나눠 `E2004` 로 남깁니다 — iOS 0.1.24 와 같습니다.**

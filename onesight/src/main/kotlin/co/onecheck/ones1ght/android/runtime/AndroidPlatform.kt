@@ -1,4 +1,3 @@
-@file:Suppress("DEPRECATION") // 이 파일은 0.2 에서 internal 로 바뀔 KeyValueStore·IdentityStore 자체다 — 안에서 서로 쓴다
 
 package co.onecheck.ones1ght.android.runtime
 

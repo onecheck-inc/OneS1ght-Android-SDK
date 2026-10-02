@@ -88,7 +88,8 @@ internal class EngineStateMachine(
         //    안으로 곧바로 들어올 수 있다 — openSession 안에서 시작이 접혀 IDLE 로 정리된 뒤에 isRunning=true 를
         //    덮으면 IDLE 인데 측위 중으로 남아, 이후 start() 가 전부 no-op 이었다.
         isRunning = true
-        isPaused = false
+        // isPaused 는 건드리지 않는다 — 생명주기 재시작(배경 복귀·엔진 재시도)에서 일시정지가 풀리면 앱은 「일시정지」
+        // 인데 좌표·존 이벤트가 다시 나갔다(iOS #55 S20). 새 세션(begin)·종료(end)에서는 코어가 resume() 으로 푼다.
         if (phase == Phase.IDLE) {
             phase = Phase.STARTING
             openSession()
@@ -116,13 +117,12 @@ internal class EngineStateMachine(
         // 예약된 start 가 있으면 먼저 지운다 — 끄겠다는 최신 의사가 이긴다.
         startAfterStop = false
         restarting = false
+        // isPaused 는 그대로 둔다 — start() 와 같은 이유(iOS #55: 내장 provider 의 stop()/start() 는 일시정지를 풀지 않는다).
         if (phase == Phase.IDLE || phase == Phase.STOPPING) {
             isRunning = false
-            isPaused = false
             return
         }
         isRunning = false
-        isPaused = false
         phase = Phase.STOPPING
         closeSession()
     }
@@ -188,7 +188,7 @@ internal class EngineStateMachine(
      * `stop()` 과 다르다: stop 은 엔진까지 꺼서 층·앵커를 잃는다.
      */
     internal fun pause() {
-        if (!isRunning || isPaused) return
+        if (!(isRunning || startAfterStop) || isPaused) return
         isPaused = true
         log(LogLevel.INFO, SdkLocalized.t("uwb.paused"))
     }

@@ -35,7 +35,6 @@ internal object SdkWiring {
      * 가는 길을 잇고, 앱이 이미 넘긴 프로필을 새 세션에 잇는다(initialize 전 identify·reset·키 교체 뒤에도 —
      * SF-A7 · iOS S12).
      */
-    @Suppress("DEPRECATION") // IdentityStore — 0.2 에서 internal 로 바뀔 공개 타입, SDK 안에서는 그대로 쓴다
     fun makeCoordinator(app: Context, sdkKey: String, baseUrl: String, profileId: String?): Pair<SessionCoordinator, CoroutineScope> {
         val (store, lifecycle) = platformFactory(app)
         val scope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -59,7 +58,9 @@ internal object SdkWiring {
         c.onTriggers = { zoneId, triggers -> FloorSession.shared.onTriggers?.onTriggers(zoneId, triggers) }
         c.onPosition = { coord -> FloorSession.shared.onPosition?.onPosition(coord) }
         c.onConfigChange = { change -> FloorSession.shared.onConfigChanged?.onConfigChanged(change) }
-        c.onEngineStoppedSession = { FloorSession.shared.onStopped?.onStopped() }
+        c.onSessionClosed = { reason -> FloorSession.shared.onStopped?.onStopped(reason) }
+        c.onFloorDetected = { floorId -> FloorSession.shared.onFloorDetected?.onFloorDetected(floorId) }
+        c.onZoneEvent = { event -> FloorSession.shared.dispatch(event) }
         c.onLog = { level, line -> OneS1ght.onDebugLog?.onLog(level, line) }
         c.identify(profileId)
         return c to scope
@@ -94,12 +95,10 @@ internal object SdkWiring {
             deviceCapabilityOverride = value
         }
 
-    @Suppress("DEPRECATION") // KeyValueStore — 0.2 에서 internal
     private val defaultPlatformFactory: (Context) -> Pair<co.onecheck.ones1ght.android.runtime.KeyValueStore, AppLifecycle?> =
         { ctx -> AndroidKeyValueStore(ctx) to AndroidAppLifecycle() }
 
     /** 영속 저장소·앱 생명주기. 운영은 SharedPreferences·ProcessLifecycleOwner. */
-    @Suppress("DEPRECATION") // KeyValueStore — 0.2 에서 internal
     var platformFactory: (Context) -> Pair<co.onecheck.ones1ght.android.runtime.KeyValueStore, AppLifecycle?> =
         defaultPlatformFactory
 

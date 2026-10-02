@@ -12,6 +12,8 @@ package co.onecheck.ones1ght.android.model
 
 import co.onecheck.ones1ght.android.internal.LenientListSerializer
 import co.onecheck.ones1ght.android.internal.LenientStringMapSerializer
+import co.onecheck.ones1ght.android.internal.SdkJson
+import co.onecheck.ones1ght.android.internal.decodeLenientList
 import co.onecheck.ones1ght.android.internal.parseLenientStringMap
 import co.onecheck.ones1ght.android.runtime.PositionRate
 import kotlinx.serialization.KSerializer
@@ -26,6 +28,7 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.encoding.decodeStructure
 import kotlinx.serialization.encoding.encodeStructure
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonObject
@@ -66,9 +69,12 @@ public enum class ZoneEventStatus(public val wire: String) {
  */
 // @Serializable 은 공개 클래스에 달지 않고 쓰는 자리(ResZoneEvent.triggers)에 단다 — Coordinates 와 같은 이유.
 public data class Trigger @JvmOverloads constructor(
-    /** 와이어 이름 trigger_id — 직렬화는 [TriggerSerializer] 가 직접 한다. */
+    /** 액션 ID(와이어 이름 trigger_id). 서버가 숫자로 주어도 문자열로 받는다. 서버가 빼면 빈 문자열(iOS #55 와 같다). */
     public val triggerId: String,
-    /** signage | coupon | tracking | merch | generic */
+    /**
+     * 액션 종류 — `signage` · `coupon` · `tracking` · `merch` · `generic`. ⚠️ 문자열이다 — 서버가 종류를 늘릴 수 있어
+     * 모르는 값도 그대로 온다. 서버가 빼면 `generic`(iOS #55 와 같다).
+     */
     public val type: String,
     public val payload: Map<String, String>? = null,
 )
@@ -134,10 +140,10 @@ internal object TriggerSerializer : KSerializer<Trigger> {
         val obj = jsonDecoder.decodeJsonElement() as? JsonObject
             ?: throw SerializationException("Trigger 가 객체가 아니다")
 
-        val triggerId = (obj["trigger_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
-            ?: throw SerializationException("Trigger.trigger_id 가 없거나 문자열이 아니다")
-        val type = (obj["type"] as? JsonPrimitive)?.takeIf { it.isString }?.content
-            ?: throw SerializationException("Trigger.type 이 없거나 문자열이 아니다")
+        // ⚠️ 관대하게 읽는다(iOS S17). id 가 숫자로 와도, 빠져도 트리거는 산다 — 쿠폰을 그리는 데 필요한 것은
+        //    payload 다. 예전엔 둘 중 하나만 빠져도 그 트리거가 통째로 버려졌다.
+        val triggerId = lenientId(obj["trigger_id"]) ?: ""
+        val type = (obj["type"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: GENERIC_TRIGGER_TYPE
         val payload = obj["payload"]?.let { parseLenientStringMap(it) }
 
         return Trigger(triggerId = triggerId, type = type, payload = payload)
@@ -158,14 +164,13 @@ internal object TriggerSerializer : KSerializer<Trigger> {
 }
 
 /**
- * 서버가 값을 주지 않을 때 쓰는 기본값 — 종전 SDK 하드코딩과 같아 동작이 바뀌지 않는다. **SDK 내부 전용이다** —
- * 0.2 에서 internal 로 바뀐다(감사 SF-C1 · iOS K4).
+ * 서버가 값을 주지 않을 때 쓰는 기본값 — 종전 SDK 하드코딩과 같아 동작이 바뀌지 않는다. **SDK 내부 전용이다**
+ * (감사 SF-C1 · iOS K4 — 0.0.6 까지 공개였다).
  */
-@Deprecated("0.2 에서 internal 로 바뀜", level = DeprecationLevel.WARNING)
-public object SdkDefaults {
-    public const val POSITION_RATE_HZ: Int = PositionRate.DEFAULT_HZ
-    public const val MIN_RATE_HZ: Int = PositionRate.MIN_HZ
-    public const val MAX_RATE_HZ: Int = PositionRate.MAX_HZ
+internal object SdkDefaults {
+    const val POSITION_RATE_HZ: Int = PositionRate.DEFAULT_HZ
+    const val MIN_RATE_HZ: Int = PositionRate.MIN_HZ
+    const val MAX_RATE_HZ: Int = PositionRate.MAX_HZ
 }
 
 // MARK: - 요청 (SDK → 서버)
@@ -329,20 +334,70 @@ internal data class ResSdkConfig(
     @SerialName("geo_base_url") val geoBaseUrl: String? = null,
 )
 
-/** POST /events/zone 응답. 시책은 하나씩 읽는다 — 하나가 깨져도 나머지 시책은 앱에 간다(SF-A5). */
-@Serializable
+/**
+ * POST /events/zone 응답. 시책은 하나씩 읽는다 — 하나가 깨져도 나머지 시책은 앱에 간다(SF-A5).
+ *
+ * ⚠️ 원소 단위로 관대하게 읽는다(iOS S17). 예전엔 event_id 가 숫자·null 이거나 accepted 가 빠지면 응답 전체가 디코드
+ *    실패 → 그 존 이벤트의 쿠폰이 **전부** 조용히 사라졌다. 200 이면 받은 것이다(accepted 기본 true).
+ */
+@Serializable(with = ResZoneEventSerializer::class)
 internal data class ResZoneEvent(
-    val accepted: Boolean,
-    @SerialName("event_id") val eventId: String,
-    @Serializable(with = LenientTriggerListSerializer::class) val triggers: List<Trigger>,
+    val accepted: Boolean = true,
+    val eventId: String? = null,
+    val triggers: List<Trigger> = emptyList(),
 )
+
+/** [ResZoneEvent] — 필드마다 따로 시도한다. 객체가 아니면(null·배열) 그건 응답 전체가 틀린 것이라 던진다. */
+internal object ResZoneEventSerializer : KSerializer<ResZoneEvent> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("ResZoneEvent") {
+        element<Boolean>("accepted", isOptional = true)
+        element<String>("event_id", isOptional = true)
+        element("triggers", LenientTriggerListSerializer.descriptor, isOptional = true)
+    }
+
+    override fun deserialize(decoder: Decoder): ResZoneEvent {
+        val jsonDecoder = decoder as? JsonDecoder
+            ?: throw SerializationException("ResZoneEvent 는 JSON 디코더에서만 쓸 수 있다")
+        val obj = jsonDecoder.decodeJsonElement() as? JsonObject
+            ?: throw SerializationException("ResZoneEvent 가 객체가 아니다")
+        return ResZoneEvent(
+            accepted = (obj["accepted"] as? JsonPrimitive)?.booleanOrNull ?: true,
+            eventId = lenientId(obj["event_id"]),
+            triggers = (obj["triggers"] as? JsonArray)?.let { decodeLenientList(it, TriggerSerializer) } ?: emptyList(),
+        )
+    }
+
+    override fun serialize(encoder: Encoder, value: ResZoneEvent) {
+        val jsonEncoder = encoder as? JsonEncoder
+            ?: throw SerializationException("ResZoneEvent 는 JSON 인코더에서만 쓸 수 있다")
+        jsonEncoder.encodeJsonElement(
+            buildJsonObject {
+                put("accepted", value.accepted)
+                value.eventId?.let { put("event_id", it) }
+                put("triggers", SdkJson.encodeToJsonElement(LenientTriggerListSerializer, value.triggers))
+            },
+        )
+    }
+}
+
+/** 트리거 type 이 빠졌을 때 — iOS 와 같은 값. */
+private const val GENERIC_TRIGGER_TYPE: String = "generic"
+
+/** id 자리 — 문자열·정수 어느 쪽이든 문자열로. 없거나 null 이거나 다른 타입이면 null(iOS `lenientID`). */
+@JvmSynthetic // 최상위 internal 함수는 이름이 망글링되지 않아 Java 에 보인다
+internal fun lenientId(element: kotlinx.serialization.json.JsonElement?): String? {
+    val p = element as? JsonPrimitive ?: return null
+    if (p is kotlinx.serialization.json.JsonNull) return null
+    if (p.isString) return p.content
+    return p.content.toLongOrNull()?.toString()
+}
 
 /** [ResZoneEvent.triggers] — 요소 단위로 관대하게. */
 internal object LenientTriggerListSerializer : LenientListSerializer<Trigger>(TriggerSerializer)
 
 /** POST /positioning/logs 응답. */
 @Serializable
-internal data class ResPositionBulk(@SerialName("accepted_count") val acceptedCount: Int)
+internal data class ResPositionBulk(@SerialName("accepted_count") val acceptedCount: Int? = null) // 관대(iOS S17)
 
 // MARK: - 프로필 (서버 TBD — SDK 가 계약을 정의한다)
 

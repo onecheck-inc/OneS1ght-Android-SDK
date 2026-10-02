@@ -9,7 +9,7 @@
 #    (b) Java   — javac --release 8. Callback 판을 부른다.
 #    둘 다 classes.jar + android.jar(compileOnly) + api 의존만 클래스패스에 둔다.
 #    initialize → identify → buildings → floors → setFloorMap → floorSession().begin → 리스너 → end,
-#    permissions(activity), 그리고 기본 구현 멤버를 오버라이드하지 않은 PositioningProvider 구현으로 begin(provider),
+#    requestPermission(activity), onStopped(StopReason)·onFloorDetected(Floor.id), 그리고 기본 구현 멤버를 오버라이드하지 않은 PositioningProvider 구현으로 begin(provider),
 #    앱이 직접 만든 UwbPositioningProvider(상태 StateFlow·게터·훅·진단)로 begin(provider)(0.0.5~).
 # 3. 하나라도 실패하면 0 이 아닌 값으로 끝난다.
 #
@@ -347,6 +347,9 @@ import co.onecheck.ones1ght.android.OneS1ght
 import co.onecheck.ones1ght.android.PermissionStatus
 import co.onecheck.ones1ght.android.PositionListener
 import co.onecheck.ones1ght.android.SdkError
+import co.onecheck.ones1ght.android.FloorSession
+import co.onecheck.ones1ght.android.SessionFloorListener
+import co.onecheck.ones1ght.android.SessionStoppedListener
 import co.onecheck.ones1ght.android.TriggersListener
 import co.onecheck.ones1ght.android.ZoneListener
 import co.onecheck.ones1ght.android.model.Building
@@ -371,7 +374,7 @@ class KotlinProvider : PositioningProvider {
 
 /** 권한 요청 — suspend 판(androidx.activity 의 ComponentActivity 를 받는다: api 의존이 고객 클래스패스에 있는지). */
 suspend fun kotlinPermissions(activity: ComponentActivity): Boolean =
-    OneS1ght.permissions(activity) == PermissionStatus.AUTHORIZED
+    OneS1ght.requestPermission(activity) == PermissionStatus.AUTHORIZED
 
 /** Kotlin 앱이 쓰는 모양 그대로 — suspend 판 + fun interface SAM 변환. */
 suspend fun kotlinFlow(context: Context): String {
@@ -390,6 +393,16 @@ suspend fun kotlinFlow(context: Context): String {
     session.onPosition = PositionListener { c -> println("${c.x},${c.y},${c.z}") }
     session.onTriggers = TriggersListener { zoneId, triggers -> println("$zoneId ${triggers.size}") }
     session.onConfigChanged = ConfigChangeListener { change -> println(change) }
+    session.onStopped = SessionStoppedListener { reason ->
+        when (reason) {
+            FloorSession.StopReason.ENGINE_FAILED -> println("retry")
+            else -> Unit
+        }
+    }
+    session.onFloorDetected = SessionFloorListener { floorId: String? -> println(floorId) }
+    OneS1ght.uploadPendingPositions()
+    OneS1ght.discardPendingPositions()
+    println(OneS1ght.DEFAULT_BASE_URL)
     try {
         session.begin()
     } catch (e: SdkError) {
@@ -474,7 +487,7 @@ public final class JavaConsumer {
 
     /** 권한 요청 — Callback 판. */
     public static void javaPermissions(ComponentActivity activity) {
-        OneS1ght.permissions(activity, new Callback<PermissionStatus>() {
+        OneS1ght.requestPermission(activity, new Callback<PermissionStatus>() {
             @Override public void onSuccess(PermissionStatus status) { System.out.println(status == PermissionStatus.AUTHORIZED); }
             @Override public void onError(Throwable e) {}
         });
@@ -518,6 +531,9 @@ public final class JavaConsumer {
         session.setOnZoneEnter(zone -> System.out.println(zone.getId()));
         session.setOnZoneExit(zone -> System.out.println(zone.getName()));
         session.setOnZoneDwell((zone, seconds) -> System.out.println(zone.getId() + " " + seconds));
+        session.setOnStopped(reason -> System.out.println(reason == FloorSession.StopReason.ENGINE_FAILED));
+        session.setOnFloorDetected(floorId -> System.out.println(floorId));
+        OneS1ght.discardPendingPositions();
         session.setOnPosition(c -> System.out.println(c.getX() + "," + c.getY() + "," + c.getZ()));
         session.setOnTriggers((zoneId, triggers) -> System.out.println(zoneId + " " + triggers.size()));
         session.setOnConfigChanged(change -> System.out.println(change));

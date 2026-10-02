@@ -37,7 +37,8 @@ public sealed class ConfigChange {
      */
     public data object ResyncNeeded : ConfigChange()
 
-    public companion object
+    /** 파싱 확장([parse])의 받침 — SDK 내부 전용(0.0.6 까지 빈 공개 companion 이었다. iOS 에는 없는 자리다). */
+    internal companion object
 }
 
 /**

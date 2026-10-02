@@ -11,6 +11,7 @@ package co.onecheck.ones1ght.android.network
 //  포팅 원본: ApiClient.swift
 //
 
+import co.onecheck.ones1ght.android.OneS1ght
 import co.onecheck.ones1ght.android.internal.SdkJson
 import co.onecheck.ones1ght.android.model.ReqPositionBulk
 import co.onecheck.ones1ght.android.model.ReqProfile
@@ -63,37 +64,21 @@ private fun defaultHttp(): OkHttpClient =
 /**
  * 서버 통신 클라이언트 — 콘솔 SDK API 9종. **SDK 내부 전용이다.**
  *
- * 0.2 에서 internal 로 바뀐다(감사 SF-C1 · iOS K4) — 지금은 깨지 않으려고 공개로 두고 생성자·[apiKey]·[baseUrl] 에
- * 경고만 단다. 엔드포인트는 이미 전부 internal 이라 고객이 이 객체로 할 수 있는 일은 없다. [DEFAULT_BASE_URL] 은
- * 0.2 에서 `OneS1ght` 쪽으로 옮긴다(그때까지 그대로 쓴다).
+ * 0.0.6 까지는 생성자·[key]·[base] 가 공개(`apiKey`·`baseUrl`)였다(감사 SF-C1 · iOS K4 — iOS 0.1.24 도 같았다).
+ * 엔드포인트는 이미 전부 internal 이라 고객이 이 객체로 할 수 있는 일이 없었다. 타입 이름만 남긴 것은 옛
+ * `ApiClient.DEFAULT_BASE_URL` 을 쓰던 코드가 경고만 받고 계속 컴파일되게 하려는 것이다(iOS 와 같은 모양).
+ * 생성은 모듈 안에서 [create] 로만 한다 — 생성자를 internal 로 두면 JVM 에선 public 이라 Java 에 보여서
+ * private 으로 막았다.
  *
  * 키는 헤더에만 실린다 — 저장·로그 금지.
  */
 public class ApiClient private constructor(
-    /** SDK 키 — 모듈 안에서 읽는 이름(공개 [apiKey] 는 0.2 에서 사라진다). */
+    /** SDK 키 — 모듈 안에서만 읽는다(공개로 올리면 SDK 키가 고객사 코드에 노출된다). */
     internal val key: String,
-    /** 콘솔 SDK API 주소 — 모듈 안에서 읽는 이름(공개 [baseUrl] 은 0.2 에서 사라진다). */
+    /** 콘솔 SDK API 주소. */
     internal val base: String,
     http: OkHttpClient,
 ) {
-    /** SDK 키. */
-    @Deprecated("0.2 에서 internal 로 바뀜", level = DeprecationLevel.WARNING)
-    public val apiKey: String get() = key
-
-    /** 콘솔 SDK API 주소. */
-    @Deprecated("0.2 에서 internal 로 바뀜", level = DeprecationLevel.WARNING)
-    public val baseUrl: String get() = base
-
-    /**
-     * 공개 생성자에는 OkHttpClient 를 받지 않는다 — okhttp 는 implementation 의존이라 공개 시그니처에
-     * 나오면 고객 컴파일 클래스패스에 없는 타입이 된다(JavaApiSurfaceTest (e)). HTTP 클라이언트를 갈아끼우는
-     * 건 모듈 안(테스트)에서만 [create] 로 한다 — 그 생성자를 internal 로 두면 JVM 에선 public 이라 Java 에 보여서
-     * private 으로 막았다.
-     */
-    @Deprecated("0.2 에서 internal 로 바뀜", level = DeprecationLevel.WARNING)
-    @JvmOverloads
-    public constructor(apiKey: String, baseUrl: String = DEFAULT_BASE_URL) : this(apiKey, baseUrl, defaultHttp())
-
     /**
      * 같은 모듈의 SSE(Task 6)가 재사용한다. `http.newBuilder()` 로 스트리밍용 타임아웃(예:
      * `readTimeout(0, …)`)만 바꿔 쓸 것 — 이 클라이언트 자체의 기본 타임아웃은 [SdkTimeouts.API_SECONDS] 다.
@@ -101,7 +86,13 @@ public class ApiClient private constructor(
     internal val http: OkHttpClient = http
 
     public companion object {
-        public const val DEFAULT_BASE_URL: String = "https://console.ones1ght.com/api/sdk/v1"
+        /** 0.0.6 까지의 자리 — `OneS1ght.DEFAULT_BASE_URL` 로 옮겼다(iOS `ApiClient.defaultBaseURL` → `OneS1ght.defaultBaseURL`). */
+        @Deprecated(
+            "OneS1ght.DEFAULT_BASE_URL 로 옮겼다",
+            ReplaceWith("OneS1ght.DEFAULT_BASE_URL", "co.onecheck.ones1ght.android.OneS1ght"),
+            level = DeprecationLevel.WARNING,
+        )
+        public const val DEFAULT_BASE_URL: String = OneS1ght.DEFAULT_BASE_URL
 
         /** HTTP 클라이언트를 주입하는 모듈 내부 팩토리 — @JvmSynthetic 이라 Java 에는 안 보인다. */
         @JvmSynthetic
