@@ -1,6 +1,6 @@
 {
   "platform": "android",
-  "currentVersion": "0.0.7",
+  "currentVersion": "0.0.8",
   "_readme": [
     "판올림마다 이 파일에 한 칸을 더한다. 비어 있으면 MCP 가 '변경 없음' 이라고 답할 근거가 없어",
     "에이전트가 추측으로 코드를 고치게 된다 — 그게 이 파일이 존재하는 이유다.",
@@ -227,6 +227,20 @@
           "action": "provider 를 직접 stop()/start() 하고 일시정지가 풀리기를 기대했다면 resume() 을 부른다. triggerId 가 빈 문자열일 수 있음을 처리한다.",
           "before": "provider.stop(); provider.start() // 일시정지가 풀리길 기대",
           "after": "provider.stop(); provider.start(); provider.resume()"
+        }
+      ]
+    },
+    {
+      "from": "0.0.7",
+      "to": "0.0.8",
+      "breaking": false,
+      "summary": "네트워크 전송 안정성과 고객 앱 R8 영향 축소. 공개 API 변경 없음. ① 한 번 보낸 POST(구역 이벤트·좌표·프로필 생성·로그)를 OkHttp 가 연결 끊김 뒤 조용히 다시 보내지 않는다 — 서버에 같은 기록이 두 번 쌓이던 것을 막는다(재시도는 SDK 의 명시 규칙만). ② SDK 가 고객 앱에 싣는 Gson R8 규칙을 측위 엔진 패키지로만 좁혔다 — 앱 자신의 클래스는 더 이상 축소·난독화에서 빠지지 않는다.",
+      "action": "의존성 해석만 다시 하면 된다. 코드는 고칠 것이 없다. 앱이 자기 Gson 모델을 쓰면서 이 SDK 의 규칙에 기대고 있었다면(앱 R8 규칙 없이) 앱에 Gson 규칙을 직접 둔다(Gson 2.11+ 는 자체 규칙 포함).",
+      "changes": [
+        {
+          "file": "app/build.gradle.kts",
+          "before": "implementation(\"com.ones1ght.sdk:android:0.0.7\")",
+          "after": "implementation(\"com.ones1ght.sdk:android:0.0.8\")"
         }
       ]
     }

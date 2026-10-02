@@ -36,7 +36,7 @@ SDK が実際に動作するには、キーと空間設定が先に用意され�
 
 ```kotlin
 dependencies {
-    implementation("com.ones1ght.sdk:android:0.0.7")
+    implementation("com.ones1ght.sdk:android:0.0.8")
 }
 ```
 
