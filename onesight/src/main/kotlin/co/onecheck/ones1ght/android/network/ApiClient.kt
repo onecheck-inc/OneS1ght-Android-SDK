@@ -61,21 +61,36 @@ private fun defaultHttp(): OkHttpClient =
         .build()
 
 /**
- * 서버 통신 클라이언트 — 콘솔 SDK API 9종.
+ * 서버 통신 클라이언트 — 콘솔 SDK API 9종. **SDK 내부 전용이다.**
  *
- * [apiKey] 는 헤더에만 실린다 — 저장·로그 금지.
+ * 0.2 에서 internal 로 바뀐다(감사 SF-C1 · iOS K4) — 지금은 깨지 않으려고 공개로 두고 생성자·[apiKey]·[baseUrl] 에
+ * 경고만 단다. 엔드포인트는 이미 전부 internal 이라 고객이 이 객체로 할 수 있는 일은 없다. [DEFAULT_BASE_URL] 은
+ * 0.2 에서 `OneS1ght` 쪽으로 옮긴다(그때까지 그대로 쓴다).
+ *
+ * 키는 헤더에만 실린다 — 저장·로그 금지.
  */
 public class ApiClient private constructor(
-    public val apiKey: String,
-    public val baseUrl: String,
+    /** SDK 키 — 모듈 안에서 읽는 이름(공개 [apiKey] 는 0.2 에서 사라진다). */
+    internal val key: String,
+    /** 콘솔 SDK API 주소 — 모듈 안에서 읽는 이름(공개 [baseUrl] 은 0.2 에서 사라진다). */
+    internal val base: String,
     http: OkHttpClient,
 ) {
+    /** SDK 키. */
+    @Deprecated("0.2 에서 internal 로 바뀜", level = DeprecationLevel.WARNING)
+    public val apiKey: String get() = key
+
+    /** 콘솔 SDK API 주소. */
+    @Deprecated("0.2 에서 internal 로 바뀜", level = DeprecationLevel.WARNING)
+    public val baseUrl: String get() = base
+
     /**
      * 공개 생성자에는 OkHttpClient 를 받지 않는다 — okhttp 는 implementation 의존이라 공개 시그니처에
      * 나오면 고객 컴파일 클래스패스에 없는 타입이 된다(JavaApiSurfaceTest (e)). HTTP 클라이언트를 갈아끼우는
      * 건 모듈 안(테스트)에서만 [create] 로 한다 — 그 생성자를 internal 로 두면 JVM 에선 public 이라 Java 에 보여서
      * private 으로 막았다.
      */
+    @Deprecated("0.2 에서 internal 로 바뀜", level = DeprecationLevel.WARNING)
     @JvmOverloads
     public constructor(apiKey: String, baseUrl: String = DEFAULT_BASE_URL) : this(apiKey, baseUrl, defaultHttp())
 
@@ -90,7 +105,8 @@ public class ApiClient private constructor(
 
         /** HTTP 클라이언트를 주입하는 모듈 내부 팩토리 — @JvmSynthetic 이라 Java 에는 안 보인다. */
         @JvmSynthetic
-        internal fun create(apiKey: String, baseUrl: String, http: OkHttpClient): ApiClient = ApiClient(apiKey, baseUrl, http)
+        internal fun create(apiKey: String, baseUrl: String, http: OkHttpClient = defaultHttp()): ApiClient =
+            ApiClient(apiKey, baseUrl, http)
     }
 
     // MARK: - 엔드포인트 9종
@@ -145,9 +161,9 @@ public class ApiClient private constructor(
     /** `baseUrl.trimEnd('/') + path` 로 조립한다 — path 는 항상 "/" 로 시작해야 한다. */
     private fun request(path: String, method: String, body: ByteArray?): Request =
         Request.Builder()
-            .url(baseUrl.trimEnd('/') + path)
+            .url(base.trimEnd('/') + path)
             .method(method, body?.toRequestBody(JSON_MEDIA_TYPE))
-            .header("X-SDK-Key", apiKey)
+            .header("X-SDK-Key", key)
             .header("Content-Type", "application/json")
             .build()
 

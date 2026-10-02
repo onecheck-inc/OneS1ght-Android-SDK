@@ -115,9 +115,24 @@ public interface PositioningProvider {
     public fun apply(buildingId: String, floorId: String) {}
 
     /**
-     * 측위 설정(앵커·세션·존) 주입 (선택 채택 — 기본 no-op). start 전에도, 가동 중에도 불린다(층 전환·구역 갱신).
+     * 측위 설정(앵커·세션·존) 주입 (선택 채택 — 기본 no-op). start 전에도, 가동 중에도 불린다(층 전환·층 해제).
+     *
+     * 넘어온 값이 그 층의 **전부**다 — 빈 [PositioningConfig.anchors] 는 「앵커 없음(층 해제 포함)」이다. 구역만 바꿀
+     * 때는 코어가 [applyZones] 를 부른다.
      */
     public fun apply(config: PositioningConfig) {}
+
+    /**
+     * 구역만 바꾼다 — 앵커·세션은 그대로 둔다 (선택 채택 — 기본은 `apply(PositioningConfig(zones = zones))`).
+     * 코어의 구역 새로고침(refreshZones)이 부른다.
+     *
+     * 왜 따로 있나(감사 SP-C9): 예전엔 구역 갱신도 apply(config) 에 빈 앵커로 실어 보내, 빈 앵커가 「안 바뀜」과 「층
+     * 해제」를 함께 뜻했다. 그래서 내장 provider 는 빈 앵커를 무시했고, 층을 해제해도 옛 등록 로케이터 수가 남아
+     * 수신 점검(E4002) 문맥이 틀렸다. 기본 구현이 예전 호출과 같아 기존 provider 는 고칠 것이 없다.
+     */
+    public fun applyZones(zones: List<Zone>) {
+        apply(PositioningConfig(zones = zones))
+    }
 
     /**
      * 판정 영역이 바뀌었다 — 엔진이 지오펜스를 다시 읽게 하라 (선택 채택 — 기본 no-op).
@@ -151,8 +166,11 @@ public interface PositioningProviderDelegate {
     /** 존 진입/체류/이탈 판정 — SDK 가 events/zone 전송 (체류 DWELL 은 기기 안에서만 쓰므로 보내지 않는다). */
     public fun onZone(provider: PositioningProvider, zoneId: String, status: ZoneEventStatus, floorId: String?, atMs: Long)
 
-    /** 입장 트리거(빌딩 진입 감지) — 통지만. SDK 는 이걸로 아무것도 하지 않는다(건물·층 조회는 앱의 몫). */
-    public fun onEnter(provider: PositioningProvider, buildingId: String)
+    /**
+     * 입장 트리거(빌딩 진입 감지) — 통지만. SDK 는 이걸로 아무것도 하지 않는다(건물·층 조회는 앱의 몫).
+     * 선택 채택 — 기본 no-op(iOS `didEnter` 와 같다. 예전엔 필수라 코어가 빈 구현을 들고 있었다 — 감사 SP-C8).
+     */
+    public fun onEnter(provider: PositioningProvider, buildingId: String) {}
 
     /**
      * 엔진이 진단 코드를 올린다 — SDK 가 onDebugLog + 서버 로그(E-코드)로 옮긴다.

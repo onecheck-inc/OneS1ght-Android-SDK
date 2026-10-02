@@ -13,6 +13,7 @@ package co.onecheck.ones1ght.android.model
 import co.onecheck.ones1ght.android.internal.LenientListSerializer
 import co.onecheck.ones1ght.android.internal.LenientStringMapSerializer
 import co.onecheck.ones1ght.android.internal.parseLenientStringMap
+import co.onecheck.ones1ght.android.runtime.PositionRate
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -156,11 +157,15 @@ internal object TriggerSerializer : KSerializer<Trigger> {
     }
 }
 
-/** 서버가 값을 주지 않을 때 쓰는 기본값 — 종전 SDK 하드코딩과 같아 동작이 바뀌지 않는다. */
+/**
+ * 서버가 값을 주지 않을 때 쓰는 기본값 — 종전 SDK 하드코딩과 같아 동작이 바뀌지 않는다. **SDK 내부 전용이다** —
+ * 0.2 에서 internal 로 바뀐다(감사 SF-C1 · iOS K4).
+ */
+@Deprecated("0.2 에서 internal 로 바뀜", level = DeprecationLevel.WARNING)
 public object SdkDefaults {
-    public const val POSITION_RATE_HZ: Int = 4
-    public const val MIN_RATE_HZ: Int = 1
-    public const val MAX_RATE_HZ: Int = 100
+    public const val POSITION_RATE_HZ: Int = PositionRate.DEFAULT_HZ
+    public const val MIN_RATE_HZ: Int = PositionRate.MIN_HZ
+    public const val MAX_RATE_HZ: Int = PositionRate.MAX_HZ
 }
 
 // MARK: - 요청 (SDK → 서버)

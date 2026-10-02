@@ -24,7 +24,6 @@ package co.onecheck.ones1ght.android.runtime
 
 import co.onecheck.ones1ght.android.OneS1ght
 import co.onecheck.ones1ght.android.SdkError
-import co.onecheck.ones1ght.android.identity.IdentityStore
 import co.onecheck.ones1ght.android.internal.Iso8601
 import co.onecheck.ones1ght.android.model.Building
 import co.onecheck.ones1ght.android.model.ConfigChange
@@ -39,7 +38,6 @@ import co.onecheck.ones1ght.android.model.ReqVerify
 import co.onecheck.ones1ght.android.model.ReqZoneEvent
 import co.onecheck.ones1ght.android.model.ResSdkConfig
 import co.onecheck.ones1ght.android.model.ResZoneEvent
-import co.onecheck.ones1ght.android.model.SdkDefaults
 import co.onecheck.ones1ght.android.model.SdkLogEntry
 import co.onecheck.ones1ght.android.model.Trigger
 import co.onecheck.ones1ght.android.model.Zone
@@ -63,7 +61,8 @@ import kotlinx.coroutines.launch
 
 internal class SessionCoordinator(
     val api: ApiClient,
-    private val identity: IdentityStore,
+    @Suppress("DEPRECATION") // 0.2 에서 internal 로 바뀔 공개 타입 — SDK 안에서는 그대로 쓴다
+    private val identity: co.onecheck.ones1ght.android.identity.IdentityStore,
     /** verify 의 app_id — 안드로이드는 packageName (iOS bundleIdentifier 자리). */
     private val appId: String?,
     /** 코어 상태가 사는 곳. 운영은 `SupervisorJob + Dispatchers.Main.immediate`. */
@@ -78,7 +77,7 @@ internal class SessionCoordinator(
      */
     private val spaceClientFactory: (sdkKey: String, spaceKey: String, spaceHost: String) -> SpaceServiceClient =
         { sdk, space, host ->
-            SpaceServiceClient(sdk, space, api.http, consoleBase = api.baseUrl, spaceHost = host, clock = clock)
+            SpaceServiceClient(sdk, space, api.http, consoleBase = api.base, spaceHost = host, clock = clock)
         },
     /**
      * 실시간 수신 스트림을 만드는 자리. 스트림은 [scope] 위에서 onChange·onLog 를 부른다
@@ -88,7 +87,7 @@ internal class SessionCoordinator(
         onChange: (ConfigChange) -> Unit,
         onLog: (LogLevel, String) -> Unit,
     ) -> LiveConfigStream? = { onChange, onLog ->
-        LiveConfigStream(api.http, api.baseUrl, api.apiKey, scope, onChange, onLog)
+        LiveConfigStream(api.http, api.base, api.key, scope, onChange, onLog)
     },
     // 배치 정책 (사양서 §6.8 은 100건/5분 "권장" — 2026-08-20 300건/60초로 조정.
     // 4Hz 에서는 300건(=75초)보다 60초 타이머가 먼저 걸려 실질 60초·240건 주기가 된다.)
@@ -158,7 +157,7 @@ internal class SessionCoordinator(
         private set
 
     // 서버가 verify 로 내려주는 테넌트 설정
-    var positionRateHz: Int = SdkDefaults.POSITION_RATE_HZ
+    var positionRateHz: Int = PositionRate.DEFAULT_HZ
         private set
 
     /** 서버 전송용 좌표 다운샘플 기준 시각 — 판정 입력은 솎지 않는다. */
@@ -284,14 +283,14 @@ internal class SessionCoordinator(
         if (!verified.valid || !verified.positioningEnabled) throw SdkError.PositioningDisabled()
 
         // 테넌트 설정 반영 — 범위 밖·미회신은 기본값(4Hz)으로 접는다
-        val hz = verified.positionRateHz ?: SdkDefaults.POSITION_RATE_HZ
-        positionRateHz = hz.coerceIn(SdkDefaults.MIN_RATE_HZ, SdkDefaults.MAX_RATE_HZ)
+        val hz = verified.positionRateHz ?: PositionRate.DEFAULT_HZ
+        positionRateHz = hz.coerceIn(PositionRate.MIN_HZ, PositionRate.MAX_HZ)
         report(
             SdkInfoCode.INITIALIZED,
             "tenant=${verified.tenantCode ?: "?"}",
             message = SdkLocalized.t("coord.verifyPass", verified.tenantCode ?: "?"),
         )
-        if (positionRateHz != SdkDefaults.POSITION_RATE_HZ) {
+        if (positionRateHz != PositionRate.DEFAULT_HZ) {
             report(SdkInfoCode.RATE_APPLIED, "rate=$positionRateHz", message = SdkLocalized.t("coord.rateApplied", positionRateHz))
         }
         isPrepared = true
@@ -341,7 +340,7 @@ internal class SessionCoordinator(
             // 받은 주소를 못 쓴다(https 아님·URL 아님) — 기본 주소로 간다는 사실만 남긴다(주소는 키가 아니라 실어도 된다).
             log(LogLevel.WARN, "geo_base_url ignored (not https): ${cfg.geoBaseUrl}")
         }
-        spaceClient = spaceClientFactory(api.apiKey, key, spaceHost).also { c ->
+        spaceClient = spaceClientFactory(api.key, key, spaceHost).also { c ->
             // 서버 값에서 걸러낸 점·존·항목 — 조용히 넘기면 "구역이 안 보인다" 로만 드러난다.
             c.onDataWarning = { msg -> log(LogLevel.WARN, msg) }
             c.onDuplicateZoneName = { name, keptId, droppedId -> reportDuplicateZone(name, keptId, droppedId) }
@@ -461,7 +460,7 @@ internal class SessionCoordinator(
             floorState?.zones = zones
             // 구역을 전부 지웠을 때도 엔진에 반영해야 한다 — 안 그러면 삭제된 구역이 계속 발화한다.
             if (isRunning && contentChanged) {
-                provider?.apply(PositioningConfig(zones = zones))
+                provider?.applyZones(zones) // 구역만 — 앵커·세션은 그대로(감사 SP-C9)
                 // 바뀐 순간에만 엔진이 영역을 다시 읽게 한다 — 폴링마다 부르면 엔진이 계속 껐다 켜진다.
                 if (changed) {
                     log(LogLevel.WARN, SdkLocalized.t("zone.geofenceReload", zones.size))
@@ -897,9 +896,6 @@ internal class SessionCoordinator(
     private fun iso(ms: Long): String = Iso8601.format(ms)
 
     // MARK: - PositioningProviderDelegate
-
-    /** 입장 트리거 — 통지만 받는다. 건물·층 조회는 호스트 앱의 몫이라 SDK 는 움직이지 않는다. */
-    override fun onEnter(provider: PositioningProvider, buildingId: String) {}
 
     /** 엔진 진단 → 표준 경로(onLog + 서버 E-코드). */
     override fun onReport(provider: PositioningProvider, code: SdkErrorCode, context: String) {

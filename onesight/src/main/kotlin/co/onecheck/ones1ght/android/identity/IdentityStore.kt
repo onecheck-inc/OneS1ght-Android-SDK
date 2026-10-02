@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION") // 이 파일은 0.2 에서 internal 로 바뀔 KeyValueStore·IdentityStore 자체다 — 안에서 서로 쓴다
+
 package co.onecheck.ones1ght.android.identity
 
 //
@@ -17,7 +19,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** 방문 ID 발급기. [store] 는 SharedPreferences 자리(실기기: AndroidKeyValueStore). */
+/**
+ * 방문 ID 발급기. [store] 는 SharedPreferences 자리(실기기: AndroidKeyValueStore). **SDK 내부 전용이다** — 0.2 에서
+ * internal 로 바뀐다(감사 SF-C1 · iOS K4). 방문 ID 는 SDK 가 begin 마다 스스로 발급하므로 앱이 만들 일이 없다.
+ */
+@Deprecated("0.2 에서 internal 로 바뀜", level = DeprecationLevel.WARNING)
 public class IdentityStore private constructor(
     private val store: KeyValueStore,
     private val today: () -> String,

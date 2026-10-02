@@ -116,6 +116,28 @@ class MigrationsTest {
     }
 
     /** 같은 구간이 두 번 적히면 에이전트가 어느 쪽을 따를지 모른다. */
+    /**
+     * planned[] — 아직 나오지 않은 판의 계획(0.0.x 에서 @Deprecated 로 예고한 0.2 정리). 체인 밖이라 현재 버전보다 커야
+     * 하고, 항목마다 무엇을(api)·어떻게 바뀌나(change)·코드를 어떻게 고치나(action)가 있어야 한다.
+     */
+    @Test fun plannedStepsAreAheadAndExplained() {
+        val planned = json["planned"]?.jsonArray?.map { it.jsonObject } ?: emptyList()
+        val current = OneS1ght.SDK_VERSION.split('.').map { it.toInt() }
+        for (step in planned) {
+            val version = step["version"]?.jsonPrimitive?.contentOrNull ?: error("planned 에 version 이 없다")
+            val v = version.split('.').map { it.toInt() }
+            assertTrue("planned $version 은 현재 ${OneS1ght.SDK_VERSION} 보다 커야 한다", compareValues(v[0] * 1_000_000 + v[1] * 1_000 + v[2], current[0] * 1_000_000 + current[1] * 1_000 + current[2]) > 0)
+            assertTrue(migrations.none { it["to"]?.jsonPrimitive?.contentOrNull == version })
+            val items = step["items"]?.jsonArray?.map { it.jsonObject } ?: emptyList()
+            assertFalse("planned $version 에 항목이 없다", items.isEmpty())
+            for (item in items) {
+                for (k in listOf("api", "change", "action")) {
+                    assertFalse("planned $version 항목에 $k 가 없다: $item", item[k]?.jsonPrimitive?.contentOrNull.isNullOrEmpty())
+                }
+            }
+        }
+    }
+
     @Test fun noDuplicateMigrationSteps() {
         val pairs = migrations.map {
             "${it["from"]?.jsonPrimitive?.contentOrNull}→${it["to"]?.jsonPrimitive?.contentOrNull}"
