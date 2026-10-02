@@ -72,9 +72,13 @@ internal class SessionCoordinator(
     /**
      * 콘솔 키로 SpaceServiceClient 를 만드는 자리 — 테스트는 스텁 서버를 가리키게 주입한다.
      * 이게 없으면 콘솔 키로 만든 클라이언트가 실제 서비스로 나간다(iOS I3).
+     * [spaceHost] 는 콘솔 `geo_base_url` 을 [SpaceServiceClient.spaceHostFor] 로 검사한 값이다(SF-A11).
+     * 기본 조립은 콘솔 공간 조회도 initialize 의 baseUrl 로 보낸다(SF-A9 · iOS S15).
      */
-    private val spaceClientFactory: (sdkKey: String, spaceKey: String) -> SpaceServiceClient =
-        { sdk, space -> SpaceServiceClient(sdk, space, api.http) },
+    private val spaceClientFactory: (sdkKey: String, spaceKey: String, spaceHost: String) -> SpaceServiceClient =
+        { sdk, space, host ->
+            SpaceServiceClient(sdk, space, api.http, consoleBase = api.baseUrl, spaceHost = host, clock = clock)
+        },
     /**
      * 실시간 수신 스트림을 만드는 자리. 스트림은 [scope] 위에서 onChange·onLog 를 부른다
      * (Task 6 계약) — 여기서 다시 스레드를 옮기지 않는다. null 을 돌려주면 스트림 없이 돈다.
@@ -124,8 +128,6 @@ internal class SessionCoordinator(
 
     /** 콘솔이 내려준 나머지 — 호스트 앱이 지도·도면에 쓴다. */
     var googleMapKey: String? = null
-        private set
-    var spaceServiceKey: String? = null
         private set
     var spaceServiceBaseUrl: String? = null
         private set
@@ -319,7 +321,6 @@ internal class SessionCoordinator(
         }
 
         googleMapKey = cfg.googleMapKey
-        spaceServiceKey = cfg.geoPartnerKey
         spaceServiceBaseUrl = cfg.geoBaseUrl
 
         val key = cfg.geoSdkKey
@@ -330,7 +331,14 @@ internal class SessionCoordinator(
         }
 
         positioningLicense = key
-        spaceClient = spaceClientFactory(api.apiKey, key).also { c ->
+        val spaceHost = SpaceServiceClient.spaceHostFor(cfg.geoBaseUrl)
+        if (!cfg.geoBaseUrl.isNullOrBlank() && spaceHost == SpaceServiceClient.SPACE_HOST &&
+            cfg.geoBaseUrl.trimEnd('/') != SpaceServiceClient.SPACE_HOST.trimEnd('/')
+        ) {
+            // 받은 주소를 못 쓴다(https 아님·URL 아님) — 기본 주소로 간다는 사실만 남긴다(주소는 키가 아니라 실어도 된다).
+            log(LogLevel.WARN, "geo_base_url ignored (not https): ${cfg.geoBaseUrl}")
+        }
+        spaceClient = spaceClientFactory(api.apiKey, key, spaceHost).also { c ->
             // 서버 값에서 걸러낸 점·존·항목 — 조용히 넘기면 "구역이 안 보인다" 로만 드러난다.
             c.onDataWarning = { msg -> log(LogLevel.WARN, msg) }
             c.onDuplicateZoneName = { name, keptId, droppedId -> reportDuplicateZone(name, keptId, droppedId) }
@@ -708,8 +716,13 @@ internal class SessionCoordinator(
         removeLifecycleObservers()
     }
 
-    /** 고객사에게 그대로 넘긴다 — 전달 외에 하는 일이 없다. */
+    /**
+     * 고객사에게 그대로 넘긴다. SDK 가 하는 일은 하나 — 도면이 바뀌었으면 SDK 안의 도면 캐시를 버린다
+     * (안 버리면 앱이 floor() 를 다시 불러도 옛 도면이 온다 — 감사 SF-A15 · iOS S16). 무엇을 다시 받을지는
+     * 여전히 앱이 정한다.
+     */
     fun deliverConfigChange(change: ConfigChange) {
+        if (change is ConfigChange.PlanChanged) spaceClient?.invalidatePlan(change.floorId)
         onConfigChange?.invoke(change)
     }
 

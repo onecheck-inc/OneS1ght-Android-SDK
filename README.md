@@ -198,8 +198,8 @@ Your member ID never reaches OneS1ght — only `profileId` does. You keep the ma
 ⚠️ Use **age bands** rather than exact ages. Gender + exact age + interests + movement
 paths combined can become re-identifiable.
 
-⚠️ `identify` must be called after `initialize`. Calling it earlier means the value does
-not take effect.
+`identify` may be called before or after `initialize` — the value carries over to the session,
+including after `reset()` or re-initializing with another key.
 
 | Function | Purpose |
 |---|---|

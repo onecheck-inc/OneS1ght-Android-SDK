@@ -133,14 +133,6 @@ class OneS1ghtTest {
         assertTrue(OneS1ght.isInitialized)
     }
 
-    /** iOS 동작 그대로 — identify 를 initialize 보다 먼저 부르면 값이 전달되지 않는다. */
-    @Test fun identifyBeforeInitializeIsNotCarriedOver() {
-        OneS1ght.identify("p-early")
-        initialize()
-        val session = OneS1ght.floorSession()
-        assertThrows<SdkError.NotIdentified> { h.await { session.begin(h.mock) } }
-    }
-
     // MARK: - floorSession
 
     @Test fun floorSessionThrowsBeforeInitialize() {

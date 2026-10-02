@@ -322,13 +322,15 @@ internal object ResVerifySerializer : KSerializer<ResVerify> {
  * 콘솔이 내려주는 관련 키 — SDK 키 하나로 받는다. 전부 옵셔널이다. 서버는 채우지 못한 키를
  * null 로 두고 200 을 준다(부분 실패) — 하나를 필수로 만들면 그 키가 빈 테넌트에서
  * 초기화가 통째로 실패한다.
+ *
+ * ⚠️ `geo_partner_key`(쓰기 권한 파트너 키)는 **읽지 않는다** — SDK 는 쓸 데가 없고, 들고 있으면 기기에서
+ *    꺼낼 수 있다(감사 SF-A10). 서버가 아직 내려줘도 `ignoreUnknownKeys` 로 버려진다.
  */
 @Serializable
 internal data class ResSdkConfig(
     @SerialName("tenant_code") val tenantCode: String? = null,
     @SerialName("google_map_key") val googleMapKey: String? = null,
     @SerialName("geo_sdk_key") val geoSdkKey: String? = null,
-    @SerialName("geo_partner_key") val geoPartnerKey: String? = null,
     @SerialName("geo_base_url") val geoBaseUrl: String? = null,
 )
 

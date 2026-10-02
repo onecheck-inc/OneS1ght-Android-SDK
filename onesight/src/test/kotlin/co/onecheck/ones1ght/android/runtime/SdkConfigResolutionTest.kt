@@ -114,7 +114,6 @@ class SdkConfigResolutionTest {
         val (c, _) = prepared()
 
         assertEquals("AIza1", c.googleMapKey)
-        assertEquals("gpk_1", c.spaceServiceKey)
         assertEquals("https://space.example", c.spaceServiceBaseUrl)
     }
 

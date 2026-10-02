@@ -41,7 +41,6 @@ class SdkConfigFetchTest {
         assertEquals("acme", cfg.tenantCode)
         assertEquals("AIzaSyExample", cfg.googleMapKey)
         assertEquals("gsk_example", cfg.geoSdkKey)
-        assertEquals("gpk_example", cfg.geoPartnerKey)
         assertEquals("https://geospace.geoplan.io", cfg.geoBaseUrl)
     }
 
@@ -57,7 +56,6 @@ class SdkConfigFetchTest {
         assertEquals("acme", cfg.tenantCode)
         assertNull(cfg.googleMapKey)
         assertNull("빠진 필드도 null 이어야 한다", cfg.geoSdkKey)
-        assertNull(cfg.geoPartnerKey)
     }
 
     /** 서버가 필드를 늘려도 디코드가 깨지지 않아야 한다. */

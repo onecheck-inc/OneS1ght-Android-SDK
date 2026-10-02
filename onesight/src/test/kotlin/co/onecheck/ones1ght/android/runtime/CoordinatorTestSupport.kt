@@ -80,7 +80,7 @@ internal fun TestScope.makeCoordinator(
         scope = backgroundScope,
         lifecycle = lifecycle,
         clock = { BASE_MS + testScheduler.currentTime },
-        spaceClientFactory = { sdk, space ->
+        spaceClientFactory = { sdk, space, _ ->
             spaceClients?.add(sdk to space)
             SpaceServiceClient(sdk, space, api.http, consoleBase = base, spaceHost = server.url("/").toString())
         },
