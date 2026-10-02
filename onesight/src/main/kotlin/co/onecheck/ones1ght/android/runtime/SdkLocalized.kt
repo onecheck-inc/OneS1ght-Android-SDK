@@ -77,7 +77,7 @@ internal object SdkLocalized {
         "%([-+0 #]*)(\\d*)(\\.\\d+)?(?:hh|ll|h|l|q|z|j|t|L)?([@diouxXeEfFgGaAcsp%])",
     )
 
-    private fun toJavaFormat(raw: String): String =
+    internal fun toJavaFormat(raw: String): String =
         FORMAT_SPECIFIER.replace(raw) { m ->
             val flags = m.groupValues[1]
             val width = m.groupValues[2]

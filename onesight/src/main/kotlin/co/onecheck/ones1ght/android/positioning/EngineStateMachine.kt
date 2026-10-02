@@ -18,8 +18,13 @@ package co.onecheck.ones1ght.android.positioning
 import co.onecheck.ones1ght.android.runtime.LogLevel
 import co.onecheck.ones1ght.android.runtime.SdkLocalized
 
-/** 엔진 자체 상태. `IDLE` 이 아니면 엔진이 돌고 있다. */
-internal enum class Phase { IDLE, STARTING, SEARCHING, TRACKING, STOPPING }
+/**
+ * 엔진 자체 상태. `IDLE` 이 아니면 엔진이 돌고 있다.
+ *
+ * 공개 enum([UwbPositioningProvider.PositioningPhase])을 그대로 쓴다 — 예전엔 같은 다섯 값을 내부 `Phase` 로 한 벌
+ * 더 두고 변환 함수로 옮겼다(감사 SP-C4: 한쪽에만 값이 늘면 어긋난다).
+ */
+internal typealias Phase = UwbPositioningProvider.PositioningPhase
 
 /**
  * 엔진 상태 기계 — 실제 세션 열기/닫기는 [openSession]/[closeSession] 콜백에 위임한다

@@ -360,10 +360,13 @@ public object OneS1ght {
         JavaBridge.run(callback) { zone(buildingId, floorId, zoneId) }
     }
 
-    /** 로케이터 + 세션ID — sessionId 는 별도 API 가 아니라 이 응답에 함께 실려 온다. */
+    /**
+     * 로케이터 + 세션ID — sessionId 는 별도 API 가 아니라 이 응답에 함께 실려 온다. 로케이터는 층 단위로 조회하므로
+     * [buildingId] 는 지금 쓰이지 않는다(다른 공간 조회와 모양을 맞춘 인자 — 0.2 이름 정리 때 함께 본다).
+     */
     @JvmSynthetic
     public suspend fun locators(buildingId: String, floorId: String): FloorLocators =
-        onCore { requireCoordinator().locators(buildingId, floorId) }
+        onCore { requireCoordinator().locators(floorId) }
 
     @JvmStatic
     public fun locators(buildingId: String, floorId: String, callback: Callback<FloorLocators>) {

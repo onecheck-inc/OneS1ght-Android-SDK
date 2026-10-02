@@ -242,7 +242,7 @@ public class UwbPositioningProvider private constructor(
     /** 엔진 상태 — [PositioningPhase.IDLE] 이 아니면 엔진이 돌고 있다. */
     public val phase: PositioningPhase get() = _phase.value
 
-    /** 상태 기계의 단계 그대로 — 테스트·내부 판정용([phase] 는 publish 시점의 공개 사본). */
+    /** 상태 기계의 단계 그대로 — 테스트·내부 판정용([phase] 는 publish 시점의 사본). */
     internal val enginePhase: Phase get() = machine.phase
 
     /** 엔진이 돌고 있는가(탐색 중이든 추적 중이든). */
@@ -470,7 +470,7 @@ public class UwbPositioningProvider private constructor(
         val key = license.trim()
         if (key.isEmpty()) {
             log(LogLevel.ERROR, SdkLocalized.t("uwb.noLicense"))
-            onEngineError?.onEngineError(HUB_NO_LICENSE, "license not set")
+            onEngineError?.onEngineError(HubError.LICENSE_MISSING.code, "license not set")
             pendingOpenFailure = SdkErrorCode.KEY_UNAVAILABLE to "reason=engine_license_empty"
             return
         }
@@ -704,19 +704,20 @@ public class UwbPositioningProvider private constructor(
         sdkCode(code, message)?.let { report(it, "engine=$code $message") }
         // 시작 직후 끈 경우(STOPPING) — 시작이 접혔으면 onStopped 는 오지 않는다. 감시 타이머 5초를 기다리지 않고
         // 곧바로 멈춘 것으로 친다(감사 SP-B14: 끄고 바로 다시 켜면 5초 늦게 켜졌다).
-        if (machine.phase == Phase.STOPPING && code in START_ABORT_CODES) {
+        val hub = HubError.of(code)
+        if (machine.phase == Phase.STOPPING && hub?.abortsStart == true) {
             finishStopped()
             return
         }
         if (machine.phase != Phase.STARTING) return
-        when (code) {
-            in START_ABORT_CODES -> {
+        when {
+            hub?.abortsStart == true -> {
                 val wasRunning = machine.isRunning // 층 탐색만 하던 엔진(startDetection)이면 코어는 모른다
                 finishStopped()
                 if (wasRunning) notifyUnexpectedStop("engine=$code at start", isRetryable(code))
             }
-            HUB_ALREADY_STARTED -> machine.onOpened()
-            HUB_STOPPING -> {
+            hub == HubError.ALREADY_RUNNING -> machine.onOpened()
+            hub == HubError.START_WHILE_STOPPING -> {
                 // 시작 로그·층 감시·입장 트리거는 첫 시도에서 이미 나갔다 — 재시도는 재적재처럼 조용히.
                 // 층 탐색 전용(startDetection)이어도 다시 연다(SP-B4).
                 reloading = true
@@ -823,7 +824,7 @@ public class UwbPositioningProvider private constructor(
                 changed = true
             }
         }
-        _phase.set(machine.phase.toPublic())
+        _phase.set(machine.phase)
         _isRunning.set(machine.isRunning)
         _isPaused.set(machine.isPaused)
         _latestPosition.set(if (machine.acceptsPosition()) lastPosition else null)
@@ -854,76 +855,19 @@ public class UwbPositioningProvider private constructor(
         /** 화면 로그 보관 줄 수 — iOS 와 같다. */
         internal const val LOG_CAPACITY: Int = 200
 
-        private const val HUB_NO_LICENSE = 1
-        private const val HUB_ALREADY_STARTED = 2
-        private const val HUB_STOPPING = 8
-
-        /** 엔진 오류 3 의 문장 중 "Bluetooth 꺼짐" 을 가르는 구절 — iOS 와 같은 판정. */
-        private const val BLUETOOTH_POWERED_OFF = "powered off"
-
-        /** 엔진 오류 3 의 문장 중 "Bluetooth 미지원 기기" 를 가르는 구절(엔진 1.1.0). */
-        private const val BLUETOOTH_UNSUPPORTED = "unsupported on this device"
+        /**
+         * 시작 단계에서 엔진이 스스로 되돌리는(onStopped 없이 끝나는) 오류 번호 — [HubError.abortsStart] 의 번호판.
+         */
+        internal val START_ABORT_CODES: Set<Int> = HubError.entries.filter { it.abortsStart }.map { it.code }.toSet()
 
         /**
-         * 시작 단계에서 엔진이 스스로 되돌리는(onStopped 없이 끝나는) 오류 — 엔진 1.1.0 기준:
-         * 1 라이선스 미등록 · 3 Bluetooth · 7 위치 · 9 설정 누락 · 10 라이선스 거부 · 11 서버 미도달 ·
-         * 12 미지원 기기 · 13 스캔 과다.
+         * 엔진이 스스로 멈춘 뒤 다시 켜 볼 만한가 — 마지막 오류를 모르면(null·모르는 번호) 그렇다고 본다.
+         * 사람이 풀어야 하는 번호는 [HubError.needsPerson] 이 정한다.
          */
-        internal val START_ABORT_CODES: Set<Int> = setOf(1, 3, 7, 9, 10, 11, 12, 13)
+        internal fun isRetryable(hubError: Int?): Boolean = hubError?.let { HubError.of(it) }?.needsPerson != true
 
-        /**
-         * 다시 켜 봐야 같은 자리에서 접히는(사람이 풀어야 하는) 엔진 오류 — 1 라이선스 미등록 · 3 Bluetooth ·
-         * 7 위치 · 10 라이선스 거부(iOS #54 와 같다) + 안드로이드 전용 9 매니페스트 선언 누락(앱을 고쳐야 한다) ·
-         * 12 미지원 기기(기기를 바꿔야 한다). 11 라이선스 서버 미도달은 iOS 11 과 같이, 13 스캔 과다는 안드로이드
-         * 스캔 시작 제한(30초 창)이 풀리면 되므로 다시 켜 볼 만하다.
-         */
-        private val NOT_RETRYABLE_CODES: Set<Int> = setOf(1, 3, 7, 9, 10, 12)
-
-        /** 엔진이 스스로 멈춘 뒤 다시 켜 볼 만한가 — 마지막 오류를 모르면(null) 그렇다고 본다. */
-        internal fun isRetryable(hubError: Int?): Boolean = hubError == null || hubError !in NOT_RETRYABLE_CODES
-
-        /**
-         * 측위 엔진 오류 코드 → SDK E-코드. `null` 은 "로그로만 남길 것" — 2(중복 start)·8(정지 중 start)은
-         * 호출 순서 문제라 현장 진단 가치가 없고, 코드로 올리면 재시도마다 쌓여 진짜 오류를 덮는다.
-         *
-         * 13(BLE 스캔 시작이 너무 잦음 — 안드로이드가 앱당 스캔 시작 횟수를 제한한다)은 **E3007(층 미탐지)**
-         * 로 올린다. 층은 BLE 스캔으로만 찾으므로 결과가 같다(층을 못 찾아 좌표가 안 나온다). 원인이 스캔
-         * 제한이라는 사실은 문맥(`engine=13 …`)에 남는다 — 잠시 뒤 다시 시작하면 풀린다.
-         *
-         * [message] 는 엔진이 같이 준 문장이다. 오류 3 하나로 Bluetooth "꺼짐·권한·미지원" 이 다 오는데,
-         * 꺼짐은 빠른 설정에서 켜면 풀리고 권한은 설정 앱에서 풀어야 해 할 일이 다르다 — 그래서 꺼짐만
-         * 따로 E2004 로 올린다(iOS 0.1.24 와 같다). 엔진 1.1.0 은 꺼짐을 시작 때(어댑터 상태 확인)와 구동 중
-         * (상태 변경 방송) 모두 `bluetooth unavailable: powered off` 로 준다. 권한은
-         * `…: permission required — …`, 미지원은 `…: unsupported on this device` 다.
-         * 어댑터 상태를 SDK 가 따로 묻지 않는다 — 엔진 문장으로 충분하고, 새 권한을 요구하지 않는다.
-         *
-         * 감사 SP-B9 — 기존 코드 안에서 할 일이 맞는 곳으로 옮겼다(새 E-코드는 공개 enum 확장이라 만들지 않는다):
-         *  · 1 라이선스 미설정 · 10 라이선스 거부 → E1007(측위 키 문제). 엔진 라이선스는 콘솔이 주는 측위 키다 —
-         *    E1002 「SDK 키 무효」로 올리면 멀쩡한 SDK 키(ock_)를 의심하게 했다. ⚠️ iOS 는 아직 E1002 다.
-         *  · 3 + `unsupported on this device` → E2002(미지원 기기). ⚠️ iOS 는 아직 E2003 이다.
-         *  · 7(위치 권한·정밀도·서비스 꺼짐)·9(매니페스트 RANGING 선언 누락)는 E2003 그대로 — 맞는 기존 코드가
-         *    없다. 문맥 `engine=7 …`·`engine=9 …` 와 엔진 문장으로 갈린다.
-         */
-        internal fun sdkCode(hubError: Int, message: String = ""): SdkErrorCode? = when (hubError) {
-            1 -> SdkErrorCode.KEY_UNAVAILABLE // 라이선스(=콘솔 측위 키) 미설정
-            3 -> when {
-                message.contains(BLUETOOTH_POWERED_OFF, ignoreCase = true) ->
-                    SdkErrorCode.BLUETOOTH_OFF // Bluetooth 꺼짐 — 켜면 풀린다
-                message.contains(BLUETOOTH_UNSUPPORTED, ignoreCase = true) ->
-                    SdkErrorCode.DEVICE_NOT_SUPPORTED // Bluetooth 없는 기기 — 기기를 바꿔야 한다
-                else -> SdkErrorCode.PERMISSION_DENIED // Bluetooth 권한(근처 기기)
-            }
-            4 -> SdkErrorCode.LOCATORS_MISSING // 그 층의 앵커 정보 없음
-            5 -> SdkErrorCode.UWB_SESSION_FAILED // DL-TDoA 세션 오류
-            6 -> SdkErrorCode.AREA_JUDGE_FAILED // 영역 판정 오류
-            7 -> SdkErrorCode.PERMISSION_DENIED // 위치 불가(권한·정밀도·서비스 꺼짐)
-            9 -> SdkErrorCode.PERMISSION_DENIED // 매니페스트 RANGING 선언 누락(권한 계열)
-            10 -> SdkErrorCode.KEY_UNAVAILABLE // 서버가 라이선스(=콘솔 측위 키) 거부
-            11 -> SdkErrorCode.NETWORK // 라이선스 서버 미도달
-            12 -> SdkErrorCode.DEVICE_NOT_SUPPORTED // DL-TDoA 미지원 기기(OS 미달 포함)
-            13 -> SdkErrorCode.FLOOR_NOT_DETECTED // BLE 스캔 시작 제한 — 층 탐색 불가
-            else -> null // 2 · 8 · 미지의 코드
-        }
+        /** 측위 엔진 오류 코드 → SDK E-코드. 표는 [HubError.sdkCode] 한 곳에 있다(감사 SP-C4 · iOS K15). */
+        internal fun sdkCode(hubError: Int, message: String = ""): SdkErrorCode? = HubError.of(hubError)?.sdkCode(message)
 
         /** 측위 엔진 오류 코드표(1~13) — 로그 문구. */
         internal fun describe(code: Int): String =
@@ -945,15 +889,6 @@ public class UwbPositioningProvider private constructor(
         private fun realEngine(context: Context): HubEngine =
             if (Build.VERSION.SDK_INT >= MIN_POSITIONING_SDK) IntelligenceHubEngine(context) else UnavailableHubEngine()
     }
-}
-
-/** 상태 기계의 내부 단계 → 공개 단계. */
-private fun Phase.toPublic(): UwbPositioningProvider.PositioningPhase = when (this) {
-    Phase.IDLE -> UwbPositioningProvider.PositioningPhase.IDLE
-    Phase.STARTING -> UwbPositioningProvider.PositioningPhase.STARTING
-    Phase.SEARCHING -> UwbPositioningProvider.PositioningPhase.SEARCHING
-    Phase.TRACKING -> UwbPositioningProvider.PositioningPhase.TRACKING
-    Phase.STOPPING -> UwbPositioningProvider.PositioningPhase.STOPPING
 }
 
 /**

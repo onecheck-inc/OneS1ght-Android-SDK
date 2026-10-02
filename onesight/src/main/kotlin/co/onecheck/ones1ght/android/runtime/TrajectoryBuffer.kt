@@ -4,7 +4,7 @@ package co.onecheck.ones1ght.android.runtime
 //  TrajectoryBuffer.kt
 //  좌표 버퍼 — 인메모리(디스크 영속은 v2).
 //
-//  · append 로 축적 → flush 시 오래된 것부터 maxBatch(500)씩 잘라 전송(사양서 §6.5 상한)
+//  · append 로 축적 → flush 시 오래된 것부터 maxBatch([SdkLimits.MAX_PER_REQUEST])씩 잘라 전송(사양서 §6.5 상한)
 //  · 전송 성공한 배치만 제거 — 실패하면 유지 → 다음 flush 때 재시도(사양서 §9)
 //  · flush "트리거"(300건/60초/종료/백그라운드)는 SessionCoordinator 가 당긴다(다른 태스크)
 //
@@ -13,7 +13,7 @@ package co.onecheck.ones1ght.android.runtime
 
 import co.onecheck.ones1ght.android.model.PositionPoint
 
-internal class TrajectoryBuffer(private val maxBatch: Int = 500) {
+internal class TrajectoryBuffer(private val maxBatch: Int = SdkLimits.MAX_PER_REQUEST) {
 
     private val points = mutableListOf<PositionPoint>()
     private var isFlushing = false // 재진입 방지(트리거 중복 시 이중 전송 차단)

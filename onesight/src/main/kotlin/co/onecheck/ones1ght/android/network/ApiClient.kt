@@ -2,7 +2,7 @@ package co.onecheck.ones1ght.android.network
 
 //
 //  ApiClient.kt
-//  서버 통신 — OkHttp 경량 클라이언트 (사양서 §6 엔드포인트 5종 + config·profiles·logs = 10종)
+//  서버 통신 — OkHttp 경량 클라이언트 — verify·config·존 이벤트·좌표·프로필 4종·로그 = 9종
 //
 //  · 모든 요청: X-SDK-Key 헤더 + JSON. JWT/토큰 교환 없음 (사양서 §2)
 //  · 상태코드 → 타입화 에러([ApiError], 에러 본문 {detail} 파싱)
@@ -17,7 +17,6 @@ import co.onecheck.ones1ght.android.model.ReqProfile
 import co.onecheck.ones1ght.android.model.ReqSdkLogs
 import co.onecheck.ones1ght.android.model.ReqVerify
 import co.onecheck.ones1ght.android.model.ReqZoneEvent
-import co.onecheck.ones1ght.android.model.ResBuildings
 import co.onecheck.ones1ght.android.model.ResPositionBulk
 import co.onecheck.ones1ght.android.model.ResProfile
 import co.onecheck.ones1ght.android.model.ResProfileCreate
@@ -26,6 +25,7 @@ import co.onecheck.ones1ght.android.model.ResSdkConfig
 import co.onecheck.ones1ght.android.model.ResSdkLogs
 import co.onecheck.ones1ght.android.model.ResVerify
 import co.onecheck.ones1ght.android.model.ResZoneEvent
+import co.onecheck.ones1ght.android.runtime.SdkTimeouts
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -52,16 +52,16 @@ private val JSON_MEDIA_TYPE = "application/json".toMediaType()
 @Serializable
 private data class ErrorBody(val detail: String? = null)
 
-/** 헤더·바디 없이 GET/DELETE 를 포함한 모든 요청에 10초 타임아웃을 건다. */
+/** GET/DELETE 를 포함한 모든 요청에 [SdkTimeouts.API_SECONDS] 타임아웃을 건다. */
 private fun defaultHttp(): OkHttpClient =
     OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .writeTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(SdkTimeouts.API_SECONDS, TimeUnit.SECONDS)
+        .readTimeout(SdkTimeouts.API_SECONDS, TimeUnit.SECONDS)
+        .writeTimeout(SdkTimeouts.API_SECONDS, TimeUnit.SECONDS)
         .build()
 
 /**
- * 서버 통신 클라이언트 — 콘솔 SDK API 10종.
+ * 서버 통신 클라이언트 — 콘솔 SDK API 9종.
  *
  * [apiKey] 는 헤더에만 실린다 — 저장·로그 금지.
  */
@@ -81,7 +81,7 @@ public class ApiClient private constructor(
 
     /**
      * 같은 모듈의 SSE(Task 6)가 재사용한다. `http.newBuilder()` 로 스트리밍용 타임아웃(예:
-     * `readTimeout(0, …)`)만 바꿔 쓸 것 — 이 클라이언트 자체의 기본 타임아웃은 10초다.
+     * `readTimeout(0, …)`)만 바꿔 쓸 것 — 이 클라이언트 자체의 기본 타임아웃은 [SdkTimeouts.API_SECONDS] 다.
      */
     internal val http: OkHttpClient = http
 
@@ -93,7 +93,7 @@ public class ApiClient private constructor(
         internal fun create(apiKey: String, baseUrl: String, http: OkHttpClient): ApiClient = ApiClient(apiKey, baseUrl, http)
     }
 
-    // MARK: - 엔드포인트 10종
+    // MARK: - 엔드포인트 9종
 
     /** POST /auth/verify — 키 검증 + 클라 등록(초기화 1회). */
     internal suspend fun verify(req: ReqVerify): ResVerify = post("/auth/verify", req)
@@ -103,9 +103,6 @@ public class ApiClient private constructor(
      * 실패해도 초기화를 막지 않는다(호출부가 폴백한다).
      */
     internal suspend fun config(): ResSdkConfig = get("/config")
-
-    /** GET /positioning/buildings — 건물·층 목록(측위 활성화 시 1회). */
-    internal suspend fun buildings(): ResBuildings = get("/positioning/buildings")
 
     /** POST /events/zone — 존 입장/체류/퇴장(판정 즉시). */
     internal suspend fun sendZoneEvent(req: ReqZoneEvent): ResZoneEvent = post("/events/zone", req)

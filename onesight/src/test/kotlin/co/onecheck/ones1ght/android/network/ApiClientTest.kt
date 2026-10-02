@@ -121,15 +121,15 @@ class ApiClientTest {
         assertTrue("사람이 읽을 문장이 아니다: ${e.message}", e.message!!.contains("응답 해석 실패"))
     }
 
-    // ② buildings — GET 경로
-    @Test fun buildings_isGET() = runTest {
-        server.enqueue(MockResponse().setBody("""{ "synced_at": "s", "buildings": [] }"""))
+    // ② config — GET 경로 (예전 GET /positioning/buildings 는 쓰는 곳이 없어 지웠다 — 감사 SF-C2)
+    @Test fun config_isGET() = runTest {
+        server.enqueue(MockResponse().setBody("{}"))
 
-        client.buildings()
+        client.config()
 
         val req = server.takeRequest()
         assertEquals("GET", req.method)
-        assertEquals("/api/sdk/v1/positioning/buildings", req.path)
+        assertEquals("/api/sdk/v1/config", req.path)
     }
 
     // ③ 404 → notFound (detail 파싱 포함)
@@ -145,7 +145,7 @@ class ApiClientTest {
     @Test fun status401_mapsToInvalidKey() = runTest {
         server.enqueue(MockResponse().setResponseCode(401).setBody("""{ "detail": "bad key" }"""))
 
-        val e = assertThrowsSuspend<ApiError.InvalidKey> { client.buildings() }
+        val e = assertThrowsSuspend<ApiError.InvalidKey> { client.config() }
         assertEquals(ApiError.InvalidKey("bad key"), e)
     }
 
@@ -153,7 +153,7 @@ class ApiClientTest {
     @Test fun status403_mapsToForbidden() = runTest {
         server.enqueue(MockResponse().setResponseCode(403).setBody("""{ "detail": "other tenant" }"""))
 
-        val e = assertThrowsSuspend<ApiError.Forbidden> { client.buildings() }
+        val e = assertThrowsSuspend<ApiError.Forbidden> { client.config() }
         assertEquals(ApiError.Forbidden("other tenant"), e)
     }
 
@@ -161,7 +161,7 @@ class ApiClientTest {
     @Test fun status500_mapsToServer() = runTest {
         server.enqueue(MockResponse().setResponseCode(500).setBody("""{ "detail": "boom" }"""))
 
-        val e = assertThrowsSuspend<ApiError.Server> { client.buildings() }
+        val e = assertThrowsSuspend<ApiError.Server> { client.config() }
         assertEquals(ApiError.Server(500, "boom"), e)
     }
 
@@ -169,7 +169,7 @@ class ApiClientTest {
     @Test fun errorBodyNotJsonObject_detailIsNull() = runTest {
         server.enqueue(MockResponse().setResponseCode(500).setBody("이건 JSON 이 아니다"))
 
-        val e = assertThrowsSuspend<ApiError.Server> { client.buildings() }
+        val e = assertThrowsSuspend<ApiError.Server> { client.config() }
         assertNull(e.detail)
     }
 
@@ -267,7 +267,7 @@ class ApiClientTest {
         val badClient = ApiClient("test-key", offline.url("/api/sdk/v1").toString().trimEnd('/'))
         offline.shutdown()
 
-        val e = assertThrowsSuspend<ApiError.Network> { badClient.buildings() }
+        val e = assertThrowsSuspend<ApiError.Network> { badClient.config() }
         assertEquals(SdkErrorCode.NETWORK, e.code)
     }
 
@@ -365,9 +365,9 @@ class ApiClientTest {
 
     // 모든 요청 공통 — baseUrl 뒤에 그대로 붙고, 키·타입 헤더는 GET 에도 실린다
     @Test fun everyRequestCarriesSdkKeyAndContentTypeHeaders() = runTest {
-        server.enqueue(MockResponse().setBody("""{ "synced_at": "s", "buildings": [] }"""))
+        server.enqueue(MockResponse().setBody("{}"))
 
-        client.buildings()
+        client.config()
 
         val req = server.takeRequest()
         assertEquals("test-key", req.getHeader("X-SDK-Key"))

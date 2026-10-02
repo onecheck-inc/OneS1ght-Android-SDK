@@ -21,11 +21,13 @@ import co.onecheck.ones1ght.android.model.FloorState
 import co.onecheck.ones1ght.android.model.Locator
 import co.onecheck.ones1ght.android.model.Position
 import co.onecheck.ones1ght.android.model.Zone
+import co.onecheck.ones1ght.android.model.ZoneDefaults
 import co.onecheck.ones1ght.android.internal.decodeLenientList
 import co.onecheck.ones1ght.android.network.ApiClient
 import co.onecheck.ones1ght.android.network.ApiError
 import co.onecheck.ones1ght.android.network.pathSegment
 import co.onecheck.ones1ght.android.network.performJsonRequest
+import co.onecheck.ones1ght.android.runtime.SdkTimeouts
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -67,6 +69,17 @@ internal class SpaceServiceClient(
         internal const val PLAN_TTL_MS: Long = 10 * 60_000L
 
         /**
+         * 구역 폴리곤이 픽셀인지 가르는 여유 — 점 하나라도 도면 치수(미터)의 이 배수를 넘으면 픽셀로 본다(사양서 §4.2).
+         */
+        internal const val PIXEL_DETECT_MARGIN: Double = 1.5
+
+        /** 층 이름이 없을 때 대신 보여 줄 층 ID 앞부분 길이. */
+        private const val FLOOR_NAME_FALLBACK_LENGTH = 8
+
+        /** 이름 없는 층의 표시 이름 — 층 ID 앞부분. 네 곳(콘솔 목록·도면 유무 두 갈래)이 같은 규칙을 쓴다. */
+        internal fun fallbackFloorName(floorId: String): String = floorId.take(FLOOR_NAME_FALLBACK_LENGTH)
+
+        /**
          * 콘솔이 준 `geo_base_url` → 공간 서비스 주소. 없거나 URL 이 아니거나 https 가 아니면 [SPACE_HOST]
          * (감사 SF-A11: 예전엔 값을 무시하고 늘 하드코딩 주소였다 — 공간 서비스 호스트가 바뀌면 배포된 앱이
          * 앵커를 못 받는다). 공간 서비스 키가 실리므로 평문 http 는 받지 않는다 — 루프백(개발·테스트)만 예외.
@@ -79,11 +92,11 @@ internal class SpaceServiceClient(
         }
     }
 
-    /** 콘솔·공간 서비스 둘 다 20초 — [http] 의 다른 설정(예: 재시도 정책)은 그대로 물려받는다. */
-    private val http20: OkHttpClient = http.newBuilder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .writeTimeout(20, TimeUnit.SECONDS)
+    /** 콘솔·공간 서비스 둘 다 [SdkTimeouts.SPACE_SECONDS] — [http] 의 다른 설정(예: 재시도 정책)은 그대로 물려받는다. */
+    private val spaceHttp: OkHttpClient = http.newBuilder()
+        .connectTimeout(SdkTimeouts.SPACE_SECONDS, TimeUnit.SECONDS)
+        .readTimeout(SdkTimeouts.SPACE_SECONDS, TimeUnit.SECONDS)
+        .writeTimeout(SdkTimeouts.SPACE_SECONDS, TimeUnit.SECONDS)
         .build()
 
     /**
@@ -138,7 +151,7 @@ internal class SpaceServiceClient(
         val consoleFloors = fromConsole?.let { decodeLenientList(it.floors, ConsoleFloorDto.serializer(), dropped("floor")) }
         if (!consoleFloors.isNullOrEmpty()) {
             return consoleFloors.map {
-                Floor(id = it.floorId, name = it.name ?: it.floorId.take(8), hasPlan = it.hasPlan ?: false)
+                Floor(id = it.floorId, name = it.name ?: fallbackFloorName(it.floorId), hasPlan = it.hasPlan ?: false)
             }
         }
         val res = spaceGet<SpaceBuildingsResponse>("api/m/buildings")
@@ -147,7 +160,7 @@ internal class SpaceServiceClient(
     }
 
     /**
-     * 층 단건 — 도면 이미지까지 채워 반환. 실패 시 이름은 `floorId.take(8)`.
+     * 층 단건 — 도면 이미지까지 채워 반환. 실패 시 이름은 [fallbackFloorName].
      * base64 → PNG 바이트 변환은 Default 에서 한다 — 수 MB 도면을 코어(메인)에서 풀면 ANR 이었다(SF-A13).
      */
     suspend fun loadFloor(buildingId: String, floorId: String): Floor {
@@ -215,12 +228,12 @@ internal class SpaceServiceClient(
     private fun makeFloor(id: String, plan: ConsolePlanResponse?, withImage: Boolean): Floor {
         val img = plan?.plan?.image
         if (plan == null || img == null) {
-            return Floor(id = id, name = plan?.floorName ?: id.take(8), hasPlan = plan?.hasPlan ?: false)
+            return Floor(id = id, name = plan?.floorName ?: fallbackFloorName(id), hasPlan = plan?.hasPlan ?: false)
         }
         val heightM = img.widthM * img.imgH / img.imgW
         return Floor(
             id = id,
-            name = plan.floorName ?: id.take(8),
+            name = plan.floorName ?: fallbackFloorName(id),
             image = if (withImage) img.pngData() else null,
             hasPlan = plan.hasPlan,
             originX = img.originX,
@@ -343,12 +356,12 @@ internal class SpaceServiceClient(
                 id = z.zoneId,
                 name = z.name,
                 polygon = poly,
-                inDist = z.inDist ?: 3.0,
-                inCount = z.inCount ?: 0,
-                inCountInterval = z.inCountInterval ?: 0,
-                outPeriod = z.outPeriod ?: 0,
-                priority = z.priority ?: 1,
-                callInout = z.callInout ?: true,
+                inDist = z.inDist ?: ZoneDefaults.IN_DIST,
+                inCount = z.inCount ?: ZoneDefaults.IN_COUNT,
+                inCountInterval = z.inCountInterval ?: ZoneDefaults.IN_COUNT_INTERVAL,
+                outPeriod = z.outPeriod ?: ZoneDefaults.OUT_PERIOD,
+                priority = z.priority ?: ZoneDefaults.PRIORITY,
+                callInout = z.callInout ?: ZoneDefaults.CALL_INOUT,
                 dwellSeconds = z.dwellSeconds,
             )
         }
@@ -367,10 +380,10 @@ internal class SpaceServiceClient(
 
     /**
      * 존 폴리곤 미터 정규화 — 도면이 없으면 미터 그대로 쓴다. 도면이 있고 점 하나라도
-     * `x > widthM*1.5` 또는 `y > heightM*1.5` 면 픽셀로 보고 변환한다(spec §4.2).
+     * `x > widthM*`[PIXEL_DETECT_MARGIN] 또는 `y > heightM*`[PIXEL_DETECT_MARGIN] 면 픽셀로 보고 변환한다(spec §4.2).
      */
     private fun normalizeZones(raw: List<RawZone>, image: PlanImage?): List<Zone> {
-        if (image == null) return raw.map(::meterZone)
+        if (image == null) return raw.map { z -> z.toZone(z.polygon.map { Position(x = it[0], y = it[1]) }) }
         val widthM = image.widthM
         val heightM = widthM * image.imgH / image.imgW
         val scale = image.imgW / widthM
@@ -378,7 +391,7 @@ internal class SpaceServiceClient(
         val ox = image.originX
         val oy = image.originY
         return raw.map { z ->
-            val isPixel = z.polygon.any { it[0] > widthM * 1.5 || it[1] > heightM * 1.5 }
+            val isPixel = z.polygon.any { it[0] > widthM * PIXEL_DETECT_MARGIN || it[1] > heightM * PIXEL_DETECT_MARGIN }
             val pts = z.polygon.map { p ->
                 if (isPixel) {
                     Position(x = p[0] / scale + ox, y = (imgH - p[1]) / scale + oy)
@@ -386,33 +399,9 @@ internal class SpaceServiceClient(
                     Position(x = p[0], y = p[1])
                 }
             }
-            Zone(
-                id = z.id,
-                name = z.name,
-                polygon = pts,
-                inDist = z.inDist,
-                inCount = z.inCount,
-                inCountInterval = z.inCountInterval,
-                outPeriod = z.outPeriod,
-                priority = z.priority,
-                callInout = z.callInout,
-                dwellSeconds = z.dwellSeconds,
-            )
+            z.toZone(pts)
         }
     }
-
-    private fun meterZone(z: RawZone): Zone = Zone(
-        id = z.id,
-        name = z.name,
-        polygon = z.polygon.map { Position(x = it[0], y = it[1]) },
-        inDist = z.inDist,
-        inCount = z.inCount,
-        inCountInterval = z.inCountInterval,
-        outPeriod = z.outPeriod,
-        priority = z.priority,
-        callInout = z.callInout,
-        dwellSeconds = z.dwellSeconds,
-    )
 
     /** 목록 항목을 버렸다는 진단 — [onDataWarning] 으로. */
     private fun dropped(kind: String): (Int, JsonElement, String) -> Unit = { i, _, reason ->
@@ -431,7 +420,7 @@ internal class SpaceServiceClient(
             .get()
             .header("X-SDK-Key", sdkKey)
             .build()
-        return performJsonRequest(http20, req)
+        return performJsonRequest(spaceHttp, req)
     }
 
     /** 공간 서비스 공통 GET — `X-SDK-Key` + `Connection: close`. [path] 는 앞에 "/" 없이. */
@@ -442,7 +431,7 @@ internal class SpaceServiceClient(
             .header("X-SDK-Key", spaceKey)
             .header("Connection", "close")
             .build()
-        return performJsonRequest(http20, req)
+        return performJsonRequest(spaceHttp, req)
     }
 
     // MARK: - DTO — 존 원시 데이터(폴리곤 단위 미정 — normalizeZones 로 미터 정규화)
@@ -451,14 +440,28 @@ internal class SpaceServiceClient(
         val id: String,
         val name: String,
         val polygon: List<List<Double>>,
-        val inDist: Double = 3.0,
-        val inCount: Int = 0,
-        val inCountInterval: Int = 0,
-        val outPeriod: Int = 0,
-        val priority: Int = 1,
-        val callInout: Boolean = true,
-        val dwellSeconds: Int? = null,
-    )
+        val inDist: Double,
+        val inCount: Int,
+        val inCountInterval: Int,
+        val outPeriod: Int,
+        val priority: Int,
+        val callInout: Boolean,
+        val dwellSeconds: Int?,
+    ) {
+        /** 미터로 옮긴 [points] 로 [Zone] 을 만든다 — 존을 만드는 자리는 여기 하나다(감사 SF-C5: 예전엔 두 벌). */
+        fun toZone(points: List<Position>): Zone = Zone(
+            id = id,
+            name = name,
+            polygon = points,
+            inDist = inDist,
+            inCount = inCount,
+            inCountInterval = inCountInterval,
+            outPeriod = outPeriod,
+            priority = priority,
+            callInout = callInout,
+            dwellSeconds = dwellSeconds,
+        )
+    }
 }
 
 // MARK: - 콘솔 응답 DTO(snake_case — §4.2 콘솔 표)

@@ -24,6 +24,7 @@ package co.onecheck.ones1ght.android.zone
 
 import co.onecheck.ones1ght.android.model.Zone
 import co.onecheck.ones1ght.android.model.ZoneEvent
+import co.onecheck.ones1ght.android.model.ZoneEventStatus
 import co.onecheck.ones1ght.android.runtime.LogLevel
 import co.onecheck.ones1ght.android.runtime.SdkErrorCode
 import co.onecheck.ones1ght.android.runtime.SdkLocalized
@@ -135,13 +136,14 @@ internal class UwbAreaJudge(private val scheduler: DwellScheduler) {
             }
             return
         }
+        // 엔진 표기는 서버 표기(ZoneEventStatus.wire)와 같다 — 문자열을 따로 박지 않는다(감사 SP-C4).
         when (inOut) {
-            "IN" -> {
+            ZoneEventStatus.ENTER.wire -> {
                 activeZoneId = zone.id
                 onEvent?.invoke(ZoneEvent.Enter(zone, atMs))
                 startDwell(zone, atMs)
             }
-            "OUT" -> {
+            ZoneEventStatus.EXIT.wire -> {
                 if (activeZoneId == zone.id) reset()
                 onEvent?.invoke(ZoneEvent.Exit(zone, atMs))
             }

@@ -57,9 +57,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-/** 플랫폼 이름 — 서버는 자유 문자열로 저장한다(콘솔이 플랫폼별로 나눠 본다). */
-private const val PLATFORM_NAME = "Android"
-
 internal class SessionCoordinator(
     val api: ApiClient,
     private val identity: IdentityStore,
@@ -93,7 +90,7 @@ internal class SessionCoordinator(
     // 4Hz 에서는 300건(=75초)보다 60초 타이머가 먼저 걸려 실질 60초·240건 주기가 된다.)
     private val flushThreshold: Int = 300,
     private val flushIntervalMs: Long = 60_000,
-    maxPerRequest: Int = 500,
+    maxPerRequest: Int = SdkLimits.MAX_PER_REQUEST,
     /** 수신 진단 1회 확인 — 측위 시작 후 이 시간 뒤에 본다. 7초는 현장에서 쓰던 값이다. */
     private val receptionCheckDelayMs: Long = 7_000,
     /**
@@ -158,8 +155,6 @@ internal class SessionCoordinator(
 
     // 서버가 verify 로 내려주는 테넌트 설정
     var positionRateHz: Int = SdkDefaults.POSITION_RATE_HZ
-        private set
-    var remoteConfig: Map<String, String> = emptyMap()
         private set
 
     /** 서버 전송용 좌표 다운샘플 기준 시각 — 판정 입력은 솎지 않는다. */
@@ -230,23 +225,30 @@ internal class SessionCoordinator(
     private val logBuffer = SdkLogBuffer(send = ::sendLogs, scope = scope, canSend = { profileId != null })
 
     /**
-     * 코드를 남긴다 — onLog(시스템 언어 문구) + 서버(코드 + 문맥).
-     * 서버로는 문구를 보내지 않는다: 읽는 사람이 관리자라 콘솔이 관리자 화면 언어로 렌더링한다.
+     * 코드 붙은 사건을 남긴다 — 화면 로그(onDebugLog) **한 줄** + 서버(코드 + 문맥).
+     *
+     * 서버로는 문구를 보내지 않는다: 읽는 사람이 관리자라 콘솔이 관리자 화면 언어로 렌더링한다. 화면 줄은
+     * `[코드] 문구 — 문맥` 이고, 문구는 [message](현재 언어)가 있으면 그것을, 없으면 코드 요약(현재 언어 —
+     * [localizedSummary])을 쓴다. 줄의 등급은 코드의 세기(ERROR·WARN·INFO)와 같다.
+     *
+     * ⚠️ 호출부가 문구 로그를 따로 또 남기지 않는다. 예전엔 report 가 이미 한 줄을 남기는데 호출부가 번역 문구를
+     *    한 줄 더 찍어 같은 사건이 두 번 보였다(iOS K9 — 같은 결정).
      */
-    fun report(code: SdkCode, ctx: String = "") {
-        log("[${code.code}] ${code.summary}${if (ctx.isEmpty()) "" else " — $ctx"}")
+    fun report(code: SdkCode, ctx: String = "", message: String? = null) {
+        val text = message ?: localizedSummary(code)
+        log(code.level.toLogLevel(), "[${code.code}] $text${if (ctx.isEmpty()) "" else " — $ctx"}")
         logBuffer.append(SdkLogEntry(code = code.code, level = code.level.wire, message = ctx, at = iso(clock())))
     }
 
     /** 서버 통신 실패를 코드로 옮겨 남긴다. ApiError 가 아니면 network 로 본다. */
-    fun reportApi(error: Throwable, ctx: String = "") {
-        report((error as? ApiError)?.code ?: SdkErrorCode.NETWORK, ctx)
+    fun reportApi(error: Throwable, ctx: String = "", message: String? = null) {
+        report((error as? ApiError)?.code ?: SdkErrorCode.NETWORK, ctx, message)
     }
 
     private suspend fun sendLogs(batch: List<SdkLogEntry>): Boolean {
         // profileId 가 없으면 귀속할 곳이 없다 — 버퍼가 canSend 로 붙들고 있다가 identify 때 보낸다(SP-B7 · iOS S13).
         val profileId = profileId ?: return false
-        val req = ReqSdkLogs(profileId, PLATFORM_NAME, OneS1ght.SDK_VERSION, batch)
+        val req = ReqSdkLogs(profileId, SdkPlatform.NAME, OneS1ght.SDK_VERSION, batch)
         return try {
             api.sendLogs(req)
             true
@@ -280,12 +282,13 @@ internal class SessionCoordinator(
         // 테넌트 설정 반영 — 범위 밖·미회신은 기본값(4Hz)으로 접는다
         val hz = verified.positionRateHz ?: SdkDefaults.POSITION_RATE_HZ
         positionRateHz = hz.coerceIn(SdkDefaults.MIN_RATE_HZ, SdkDefaults.MAX_RATE_HZ)
-        remoteConfig = verified.remoteConfig ?: emptyMap()
-        log(SdkLocalized.t("coord.verifyPass", verified.tenantCode ?: "?"))
-        report(SdkInfoCode.INITIALIZED, "tenant=${verified.tenantCode ?: "?"}")
+        report(
+            SdkInfoCode.INITIALIZED,
+            "tenant=${verified.tenantCode ?: "?"}",
+            message = SdkLocalized.t("coord.verifyPass", verified.tenantCode ?: "?"),
+        )
         if (positionRateHz != SdkDefaults.POSITION_RATE_HZ) {
-            log(SdkLocalized.t("coord.rateApplied", positionRateHz))
-            report(SdkInfoCode.RATE_APPLIED, "rate=$positionRateHz")
+            report(SdkInfoCode.RATE_APPLIED, "rate=$positionRateHz", message = SdkLocalized.t("coord.rateApplied", positionRateHz))
         }
         isPrepared = true
     }
@@ -350,14 +353,12 @@ internal class SessionCoordinator(
      */
     private fun reportDuplicateZone(name: String, keptId: String, droppedId: String) {
         if (!reportedDuplicateZones.add(droppedId)) return
-        log(LogLevel.WARN, "zone $droppedId ($name) dropped: duplicate name of $keptId")
         report(SdkErrorCode.ZONE_MAPPING_FAILED, "duplicate zone name=$name kept=$keptId dropped=$droppedId")
     }
 
     /** 측위 키를 못 구했다는 사실을 남긴다. reason 은 고정 토큰이라 키 값이 실리지 않는다. */
     private fun reportKeyUnavailable(reason: String) {
-        log(LogLevel.ERROR, SdkLocalized.t("coord.keyUnavailable"))
-        report(SdkErrorCode.KEY_UNAVAILABLE, "reason=$reason")
+        report(SdkErrorCode.KEY_UNAVAILABLE, "reason=$reason", message = SdkLocalized.t("coord.keyUnavailable"))
     }
 
     // MARK: - 공간 조회 (엔드포인트 하나당 메서드 하나 — 공간 서비스 키를 못 구했으면 빈 값)
@@ -379,8 +380,7 @@ internal class SessionCoordinator(
      * ⚠️ 조회 실패는 던지지 않는다 — 빈 목록으로 떨어져 `positioningReady` 가 거짓이 된다.
      * 던지는 것은 초기화 전 호출(NotInitialized) 뿐이다.
      */
-    @Suppress("UNUSED_PARAMETER")
-    suspend fun locators(buildingId: String, floorId: String): FloorLocators {
+    suspend fun locators(floorId: String): FloorLocators {
         val client = spaceClient ?: throw SdkError.NotInitialized()
         return client.loadLocators(floorId) ?: FloorLocators(emptyList(), null)
     }
@@ -413,10 +413,10 @@ internal class SessionCoordinator(
         floorState = state
         currentFloor = floor
         // ⚠️ 로케이터 수와 존 수를 둘 다 이름 붙여 찍는다(예전에 하나로 뭉쳐 장애 분석을 헤맸다).
-        log(SdkLocalized.t("coord.floorLoaded", state.locators.size, state.zones.size, floor.id.take(8)))
         report(
             SdkInfoCode.FLOOR_SET,
             "building=$buildingId floor=${floor.id} locators=${state.locators.size} zones=${state.zones.size}",
+            message = SdkLocalized.t("coord.floorLoaded", state.locators.size, state.zones.size, floor.id.take(8)),
         )
         // "못 받았다"(E3006)와 "안 깔았다"(E3002)를 가른다 — 확인할 곳이 다르다.
         // ⚠️ 어느 쪽이든 도면·존 표시는 막지 않는다.
@@ -688,8 +688,7 @@ internal class SessionCoordinator(
         log(SdkLocalized.t("coord.stopFlush", buffer.count))
         flushPositions()
         if (buffer.count > 0) {
-            log(LogLevel.WARN, SdkLocalized.t("coord.pendingLost", buffer.count))
-            report(SdkErrorCode.PENDING_DROPPED, "points=${buffer.count}")
+            report(SdkErrorCode.PENDING_DROPPED, "points=${buffer.count}", message = SdkLocalized.t("coord.pendingLost", buffer.count))
         }
         report(SdkInfoCode.POSITIONING_OFF, "visitor=$visitorId")
         logBuffer.flush() // 세션 종료 — 잔여 로그도 내보낸다
@@ -770,7 +769,7 @@ internal class SessionCoordinator(
     /** 좌표 벌크 전송 (buffer 의 sender) — true = 200 */
     private suspend fun sendPositions(batch: List<PositionPoint>): Boolean {
         val profileId = profileId ?: return false
-        val req = ReqPositionBulk(profileId, visitorId, PLATFORM_NAME, batch)
+        val req = ReqPositionBulk(profileId, visitorId, SdkPlatform.NAME, batch)
         return try {
             val res = api.sendPositionLogs(req)
             log(LogLevel.INFO, SdkLocalized.t("coord.logsSent", batch.size, res.acceptedCount))
@@ -782,8 +781,7 @@ internal class SessionCoordinator(
         } catch (e: Exception) {
             positionRetryDelayMs = (positionRetryDelayMs * 2).coerceIn(POSITION_RETRY_MIN_MS, POSITION_RETRY_MAX_MS)
             positionRetryAt = clock() + positionRetryDelayMs
-            log(LogLevel.WARN, SdkLocalized.t("coord.logsFail", batch.size))
-            reportApi(e, "positions=${batch.size}")
+            reportApi(e, "positions=${batch.size}", message = SdkLocalized.t("coord.logsFail", batch.size))
             false
         }
     }
@@ -797,7 +795,7 @@ internal class SessionCoordinator(
         return id
     }
 
-    private fun makeVerifyRequest() = ReqVerify(platformName = PLATFORM_NAME, appId = appId, client = null)
+    private fun makeVerifyRequest() = ReqVerify(platformName = SdkPlatform.NAME, appId = appId)
 
     // MARK: - 배치 트리거 (300건 / 60초 / 백그라운드)
 
@@ -918,8 +916,12 @@ internal class SessionCoordinator(
         if (!retryable || attempt >= engineRestartDelaysMs.size) {
             // 사람이 풀어야 하는 원인(권한·Bluetooth·라이선스)은 엔진이 이미 제 코드(E2003·E2004 등)로 올렸다 —
             // E4001(ERROR)을 덧붙이면 같은 일이 「고장」 으로 두 번 찍힌다. 재시도를 다 쓴 것만 올린다.
-            if (retryable) report(SdkErrorCode.UWB_SESSION_FAILED, "engine stopped, session closed — $context")
-            log(LogLevel.WARN, SdkLocalized.t("coord.engineGaveUp", context))
+            val gaveUp = SdkLocalized.t("coord.engineGaveUp", context)
+            if (retryable) {
+                report(SdkErrorCode.UWB_SESSION_FAILED, "engine stopped, session closed — $context", message = gaveUp)
+            } else {
+                log(LogLevel.WARN, gaveUp)
+            }
             closingAfterEngineStop = true
             scope.launch {
                 stop()
@@ -934,8 +936,8 @@ internal class SessionCoordinator(
         report(
             SdkErrorCode.UWB_SESSION_FAILED,
             "engine stopped, retry ${attempt + 1}/$total in ${delayMs / 1000}s — $context",
+            message = SdkLocalized.t("coord.engineRetry", attempt + 1, total, delayMs / 1000),
         )
-        log(LogLevel.WARN, SdkLocalized.t("coord.engineRetry", attempt + 1, total, delayMs / 1000))
         engineRestartJob = scope.launch {
             delay(delayMs)
             engineRestartJob = null
@@ -1008,7 +1010,7 @@ internal class SessionCoordinator(
             zoneId = zoneId,
             status = status.wire,
             occurredAt = iso(atMs),
-            platformName = PLATFORM_NAME,
+            platformName = SdkPlatform.NAME,
         )
         val ctx = "zone=$zoneId status=${status.wire} dropped"
         scope.launch {
@@ -1026,8 +1028,7 @@ internal class SessionCoordinator(
                     null
                 }
                 if (retried == null) {
-                    log(LogLevel.ERROR, SdkLocalized.t("coord.zoneDropNet", status.wire))
-                    report(SdkErrorCode.NETWORK, ctx)
+                    report(SdkErrorCode.NETWORK, ctx, message = SdkLocalized.t("coord.zoneDropNet", status.wire))
                     return@launch
                 }
                 log(LogLevel.INFO, SdkLocalized.t("coord.zoneRetryOK", status.wire))
@@ -1035,8 +1036,7 @@ internal class SessionCoordinator(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                log(LogLevel.ERROR, SdkLocalized.t("coord.zoneDropErr", status.wire)) // 서버 500이면 여기
-                reportApi(e, ctx)
+                reportApi(e, ctx, message = SdkLocalized.t("coord.zoneDropErr", status.wire)) // 서버 500이면 여기
                 return@launch
             }
             onTriggers?.invoke(zoneId, res.triggers)
