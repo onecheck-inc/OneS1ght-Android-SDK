@@ -4,8 +4,12 @@ package co.onecheck.ones1ght.android.positioning
 //  PositioningProvider.kt
 //  측위 엔진 주입 계약 — SDK는 UWB를 모른다.
 //
-//  실제 구현: 측위 엔진(층 탐지·UWB 측위·영역 판정)을 감싼 어댑터(UwbPositioningProvider)가 이
-//  인터페이스를 구현해 콜백 3종(+선택 1종)을 쏜다. 패키지는 그 결과를 서버 계약에 맞춰 전송만 한다.
+//  내장 구현: 측위 엔진(층 탐지·UWB 측위·영역 판정)을 감싼 어댑터(UwbPositioningProvider). 커스텀 provider 는
+//  delegate·start()·stop() 만 채우면 되고 나머지는 기본 구현이 있다(선택 채택). provider 는 delegate 로 필수 3종
+//  (onPosition·onZone·onEnter) + 선택 2종(onReport·onStoppedUnexpectedly)을 올리고, 코어가 서버 계약에 맞춰 전송한다.
+//
+//  스레드 계약: SDK 는 이 인터페이스의 멤버를 **메인 스레드**(코어 디스패처)에서 부른다. 구현도 delegate 를 메인
+//  스레드에서 불러야 한다 — 코어 상태에는 잠금이 없다(엔진 스레드에서 오는 콜백은 provider 가 메인으로 넘긴다).
 //
 //  포팅 원본: PositioningProvider.swift.
 //
@@ -18,9 +22,8 @@ import co.onecheck.ones1ght.android.runtime.SdkErrorCode
 /**
  * 측위 설정 — 측위 엔진에 주입하는 "콘센트".
  *
- * ★ 소스 갈아끼우는 자리: 지금은 앱이 공간 서비스에서 받아 채워 넣고, 나중에 콘솔이
- *   도면·앵커·존을 프록시하면 그쪽에서 받아 같은 자리에 꽂는다. 소스가 바뀌어도 이
- *   구조체와 apply(config:)는 고정.
+ * 코어가 `setFloorMap` 으로 받은 층(로케이터·세션·존)을 여기 담아 [PositioningProvider.apply] (config) 로 꽂는다.
+ * 앱이 직접 만들어 넣을 수도 있다.
  *
  * [anchors] 는 [DoubleArray] 값을 담아 데이터 클래스 기본 equals/hashCode(참조 비교)가
  * 틀린 값을 주므로 내용 비교로 직접 구현한다.
@@ -105,10 +108,15 @@ public interface PositioningProvider {
     public val positioningDiagnostic: PositioningDiagnostic?
         get() = null
 
-    /** 콘솔 건물·층 반영 (선택 채택 — 기본 no-op). SDK 코어가 buildings 응답에서 뽑아 넣어준다. */
+    /**
+     * 콘솔 건물·층 ID 반영 (선택 채택 — 기본 no-op). 코어가 `setFloorMap` 으로 정한 층을 넣는다 — 층을 비우면
+     * 빈 문자열 두 개가 온다. 가동 중에도 불린다(층 전환).
+     */
     public fun apply(buildingId: String, floorId: String) {}
 
-    /** 측위 설정(앵커·세션) 주입 (선택 채택 — 기본 no-op). start 전에 호출. */
+    /**
+     * 측위 설정(앵커·세션·존) 주입 (선택 채택 — 기본 no-op). start 전에도, 가동 중에도 불린다(층 전환·구역 갱신).
+     */
     public fun apply(config: PositioningConfig) {}
 
     /**
@@ -118,25 +126,32 @@ public interface PositioningProvider {
      */
     public fun reloadGeofences() {}
 
+    /** 일시정지 중인가 (선택 채택 — 기본 false). */
     public val isPaused: Boolean
         get() = false
 
+    /**
+     * 좌표 **소비**만 멈춘다 — 엔진은 계속 돈다(선택 채택 — 기본 no-op). `FloorSession.pause()` 가 이걸 부른다 —
+     * 특정 provider 로 형변환하지 않으므로 커스텀 provider 도 같은 길로 멈춘다(iOS K14 가 고친 것과 같은 모양).
+     * 생명주기 정지·재시작(백그라운드)은 일시정지를 **유지**해야 한다 — 코어가 복귀 때 다시 건다.
+     */
     public fun pause() {}
 
+    /** 일시정지 해제 (선택 채택 — 기본 no-op). */
     public fun resume() {}
 }
 
 /**
- * [PositioningProvider] 가 부르는 콜백 — SDK 코어가 구현해 서버 계약으로 옮긴다.
+ * [PositioningProvider] 가 부르는 콜백 — SDK 코어가 구현해 서버 계약으로 옮긴다. **메인 스레드에서 부른다.**
  */
 public interface PositioningProviderDelegate {
-    /** 좌표 갱신(측위 fix) — SDK가 버퍼링 → positioning/logs */
+    /** 좌표 갱신(측위 fix) — SDK 가 다운샘플·버퍼링 → positioning/logs. [floorId] 가 null 이면 setFloorMap 의 층으로 귀속한다. */
     public fun onPosition(provider: PositioningProvider, coordinates: Coordinates, floorId: String?, atMs: Long)
 
-    /** 존 진입/체류/이탈 판정 — SDK가 events/zone 전송 */
+    /** 존 진입/체류/이탈 판정 — SDK 가 events/zone 전송 (체류 DWELL 은 기기 안에서만 쓰므로 보내지 않는다). */
     public fun onZone(provider: PositioningProvider, zoneId: String, status: ZoneEventStatus, floorId: String?, atMs: Long)
 
-    /** 입장 트리거(빌딩 진입 감지) — SDK가 buildings/floors 로드 시작 */
+    /** 입장 트리거(빌딩 진입 감지) — 통지만. SDK 는 이걸로 아무것도 하지 않는다(건물·층 조회는 앱의 몫). */
     public fun onEnter(provider: PositioningProvider, buildingId: String)
 
     /**

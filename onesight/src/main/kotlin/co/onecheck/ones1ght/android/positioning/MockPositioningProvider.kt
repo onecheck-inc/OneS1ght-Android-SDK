@@ -4,8 +4,9 @@ package co.onecheck.ones1ght.android.positioning
 //  MockPositioningProvider.kt
 //  테스트/데모용 가짜 측위 — 콜백을 프로그램적으로 발생시켜 SDK 파이프라인을 검증한다.
 //
-//  실기기·UWB 없이: mock.simulateEnter(...) → SDK가 floors 로드하는지,
-//  simulateZone(...) → events/zone 나가는지, simulatePosition(...) → 버퍼→벌크 나가는지.
+//  실기기·UWB 없이: simulateZone(...) → events/zone 나가는지, simulatePosition(...) → 버퍼→벌크 나가는지,
+//  simulateUnexpectedStop(...) → 코어가 다시 켜 보거나 세션을 닫는지. simulateEnter(...) 는 통지만 한다(코어는
+//  이걸로 아무것도 하지 않는다).
 //
 //  포팅 원본: MockPositioningProvider.swift.
 //

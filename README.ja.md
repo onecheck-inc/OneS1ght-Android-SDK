@@ -172,6 +172,37 @@ OneS1ght.permissions(activity, new Callback<PermissionStatus>() {
 ⚠️ 一度拒否されると、システムは再度ダイアログを表示しません — アプリの設定画面へ
 誘導してください。
 
+### アプリに統合される権限
+
+SDK のマニフェストが以下の権限を宣言しており、Gradle の**マニフェスト統合によってアプリに自動で追加されます** —
+ご自身で追加する必要はありません。
+
+| 権限 | 理由 |
+|---|---|
+| `INTERNET` · `ACCESS_NETWORK_STATE` · `CHANGE_NETWORK_STATE` | OneS1ght サーバー、測位エンジンのライセンス・ジオフェンス |
+| `RANGING` | UWB 測位 (Android 17+) |
+| `BLUETOOTH_SCAN` (`neverForLocation` なし) | エンジンが BLE スキャン結果からフロアを選びます |
+| `ACCESS_FINE_LOCATION` · `ACCESS_COARSE_LOCATION` | 測位に必要な正確な位置情報 |
+
+⚠️ 統合されるため、測位を開始しない画面しかなくても、アプリは位置情報・付近のデバイスを使うアプリとして扱われます
+(Play Console の申告対象)。地図・ゾーン・プロフィールにのみ SDK を使い、**`begin()` を呼ばない**アプリであれば、
+アプリの `AndroidManifest.xml` で測位権限を削除してください:
+
+```xml
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.RANGING" tools:node="remove" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" tools:node="remove" />
+</manifest>
+```
+
+結果: `permissions(activity)` はダイアログなしで `DENIED` を返し(宣言していない権限は Android が要求しません)、
+測位は開始できません — エンジンが停止し `E2003` が記録されます。初期化・地図・ゾーン・プロフィールはそのまま
+動作します。`INTERNET` と 2 つのネットワーク状態の権限は SDK が使うため削除しないでください。結果は Android Studio →
+`AndroidManifest.xml` → **Merged Manifest** タブで確認できます。
+
 ---
 
 ## Step 4: プロフィール

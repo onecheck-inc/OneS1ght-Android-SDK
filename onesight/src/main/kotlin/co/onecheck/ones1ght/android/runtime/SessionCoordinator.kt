@@ -4,10 +4,14 @@ package co.onecheck.ones1ght.android.runtime
 //  SessionCoordinator.kt
 //  라이프사이클 상태기계 (사양서 §5) — SDK의 두뇌
 //
-//  verify(키검증) → /config(관련 키) → provider 가동
-//    ├ onEnter(빌딩)   → 통지만 (건물·층은 호스트 앱의 몫)
-//    ├ onPosition(좌표) → 버퍼 적재 → 300건/60초/종료/백그라운드에 벌크 전송(실패 뒤 임계값 전송은 backoff)
-//    └ onZone(IN/OUT)  → events/zone 즉시 전송 (+network 1회 재시도) → triggers 호스트 전달
+//  prepare: verify(키검증) → /config(측위 키 등 — 실패해도 초기화는 성공, begin 에서 재시도)
+//  start:   provider 가동 (identify 가 앞에 있어야 한다 — 인증 게이팅)
+//    ├ onEnter(빌딩)          → 통지만 (건물·층은 호스트 앱의 몫)
+//    ├ onPosition(좌표)       → 다운샘플 후 버퍼 적재 → 300건/60초/종료/백그라운드에 벌크 전송(실패 뒤 임계값 전송은 backoff)
+//    ├ onZone(IN/OUT)         → events/zone 즉시 전송 (+network 1회 재시도) → triggers 호스트 전달. DWELL 은 안 보낸다
+//    ├ onReport(코드)         → 화면 로그 한 줄 + 서버 로그
+//    └ onStoppedUnexpectedly  → 다시 켜 보거나(3·10·30초) 세션을 닫는다(FloorSession.onStopped)
+//  · 실시간 수신(SSE): 층이 정해졌거나 측위가 도는 동안만 붙어 있다
 //
 //  · 인증 게이팅: profileId 없이 start 하면 수집 미시작 (서버는 기록만 하므로 클라가 막음)
 //  · 백그라운드: UWB 포그라운드 전용 → provider.stop + flush, 복귀 시 재개
@@ -962,7 +966,7 @@ internal class SessionCoordinator(
         if (keepPaused) p.pause()
     }
 
-    /** 좌표 fix — 층 설정 확보 + 버퍼 적재, 임계 도달 시 flush */
+    /** 좌표 fix — 앱 훅(onPosition) + 다운샘플 후 버퍼 적재, 임계를 넘는 순간 flush(실패 뒤엔 backoff). */
     override fun onPosition(provider: PositioningProvider, coordinates: Coordinates, floorId: String?, atMs: Long) {
         engineRestartAttempts = 0 // 다시 살아났다 — 다음 고장은 처음부터 센다
         onPosition?.invoke(coordinates) // 앱 훅 — 원속도 유지 (지도 렌더)

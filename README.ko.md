@@ -170,6 +170,37 @@ OneS1ght.permissions(activity, new Callback<PermissionStatus>() {
 ⚠️ 한 번 거부되면 시스템이 다시 팝업을 띄워 주지 않습니다 — 앱 설정 화면으로
 안내하세요.
 
+### 앱에 합쳐지는 권한
+
+SDK 매니페스트가 아래 권한을 선언하고, Gradle **매니페스트 병합이 앱에 자동으로 붙입니다** — 직접 넣을 필요가
+없습니다.
+
+| 권한 | 이유 |
+|---|---|
+| `INTERNET` · `ACCESS_NETWORK_STATE` · `CHANGE_NETWORK_STATE` | OneS1ght 서버, 측위 엔진 라이선스·지오펜스 |
+| `RANGING` | UWB 측위 (Android 17+) |
+| `BLUETOOTH_SCAN` (`neverForLocation` 없음) | 엔진이 BLE 스캔 결과로 층을 고릅니다 |
+| `ACCESS_FINE_LOCATION` · `ACCESS_COARSE_LOCATION` | 측위에 필요한 정밀 위치 |
+
+⚠️ 병합되기 때문에, 측위를 켜지 않는 화면만 있어도 앱은 위치·근처 기기를 쓰는 앱으로 취급됩니다(Play Console
+신고 대상). 지도·구역·프로필에만 SDK 를 쓰고 **`begin()` 을 부르지 않는** 앱이라면 앱의 `AndroidManifest.xml` 에서
+측위 권한을 지우세요:
+
+```xml
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.RANGING" tools:node="remove" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" tools:node="remove" />
+</manifest>
+```
+
+결과: `permissions(activity)` 는 팝업 없이 `DENIED` 를 돌려주고(선언하지 않은 권한은 Android 가 묻지 않습니다),
+측위는 시작되지 못합니다 — 엔진이 멈추고 `E2003` 이 남습니다. 초기화·지도·구역·프로필은 그대로 동작합니다.
+`INTERNET` 과 네트워크 상태 권한 두 개는 SDK 가 써야 하므로 지우지 마세요. 결과는 Android Studio →
+`AndroidManifest.xml` → **Merged Manifest** 탭에서 확인합니다.
+
 ---
 
 ## Step 4: 프로필

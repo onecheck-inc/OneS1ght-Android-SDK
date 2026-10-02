@@ -2,11 +2,12 @@ package co.onecheck.ones1ght.android.space
 
 //
 //  SpaceServiceClient.kt
-//  공간 서비스 연동 — 한 호스트, 두 키.
+//  공간 조회 — 두 호스트, 두 키.
 //
-//  · /api/m/floors/{id}/plan       (X-SDK-Key = 공간 서비스 키) → 도면 이미지(base64) + widthM + origin
-//  · /api/m/floors/{id}/anchors    (X-SDK-Key = 공간 서비스 키) → 앵커(도면 로컬 미터)
-//  · 존은 콘솔(X-SDK-Key = SDK 키)에서 — 파트너 키는 쓰기 권한이 있어 클라이언트 배포 금지
+//  · 콘솔(initialize 의 baseUrl, X-SDK-Key = SDK 키) — 건물·층 목록, 도면(plan 프록시), 구역. 기본 경로.
+//  · 공간 서비스(콘솔 /config 의 geo_base_url, X-SDK-Key = 공간 서비스 키) — 앵커(콘솔 미제공)와, 콘솔이
+//    실패·빈 값일 때의 건물·층·도면 폴백.
+//  · 파트너 키(쓰기 권한)는 받지도 쓰지도 않는다 — 클라이언트 배포 금지(감사 SF-A10).
 //
 //  ⚠️ SDK 내부 전용 — 호스트 앱은 이 타입을 모른다. 앵커·세션·도면·존이 어디서 오는지는
 //     SDK 사정으로 감춘다.

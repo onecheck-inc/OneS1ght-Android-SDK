@@ -173,6 +173,37 @@ resolves to `DENIED`.
 ⚠️ Once denied, guide the user to your app's Settings screen — the system does not offer
 a second in-app prompt for a permission the user has already refused.
 
+### Permissions merged into your app
+
+The SDK's manifest declares the permissions below, and Gradle's **manifest merger adds them to your app**
+automatically — you don't add them yourself.
+
+| Permission | Why |
+|---|---|
+| `INTERNET` · `ACCESS_NETWORK_STATE` · `CHANGE_NETWORK_STATE` | OneS1ght server; positioning engine license and geofences |
+| `RANGING` | UWB positioning (Android 17+) |
+| `BLUETOOTH_SCAN` (no `neverForLocation`) | The engine picks the floor from BLE scan results |
+| `ACCESS_FINE_LOCATION` · `ACCESS_COARSE_LOCATION` | Precise location for positioning |
+
+⚠️ Because they are merged, your app is treated as using location and nearby devices (Play Console declarations)
+even on screens that never start positioning. If your app uses the SDK only for maps, zones or profiles and
+**never calls `begin()`**, remove the positioning permissions in your app's `AndroidManifest.xml`:
+
+```xml
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.RANGING" tools:node="remove" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" tools:node="remove" />
+</manifest>
+```
+
+Result: `permissions(activity)` returns `DENIED` without a prompt (Android never prompts for an undeclared
+permission) and positioning cannot start — the engine stops and `E2003` is logged. Initialization, maps, zones and
+profiles keep working. Keep `INTERNET` and the two network-state permissions — the SDK needs them. Check the
+result in Android Studio → `AndroidManifest.xml` → **Merged Manifest** tab.
+
 ---
 
 ## Step 4: Profile
