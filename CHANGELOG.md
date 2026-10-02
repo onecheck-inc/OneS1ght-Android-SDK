@@ -9,15 +9,16 @@
 
 ---
 
-## [Unreleased]
+## [0.0.7] — 2026-10-02
 
 **공개 API 를 iOS SDK(main #55)와 똑같이 맞췄습니다.** 이름이 바뀐 API 는 옛 이름이 경고만 내고 그대로 동작하지만,
 고객이 쓸 일이 없던 내부 타입은 공개에서 내렸습니다(**Breaking**). 엔진이 스스로 꺼져도 세션이 「측위 중」에 굳지 않습니다.
 
+- **고객 앱 R8**: 진입점 `OneS1ght` 를 지우지 않는 규칙을 SDK 가 싣는다(범위는 이 한 클래스 — 앱 코드의 축소·난독화엔 영향 없음). 0.0.6 과 같은 결과물 모양이다.
+
 ### Breaking
 
-> 마이그레이션 지침은 [`Migrations/android.json`](Migrations/android.json) 의 `planned[]`(0.0.7) 에 있다 — 릴리스 때
-> `migrations[]` 로 옮긴다(릴리스 검사가 마지막 칸을 현재 버전에 묶어 두므로 [Unreleased] 동안에는 넣지 않는다).
+> 마이그레이션 지침은 [`Migrations/android.json`](Migrations/android.json) 의 `migrations[]` 마지막 칸(0.0.6 → 0.0.7)에 있다.
 
 **공개에서 내린 것(internal)** — README·스니펫이 안내한 적 없는 내부 부품입니다. 쓰고 있었다면 오른쪽으로 옮기세요.
 
