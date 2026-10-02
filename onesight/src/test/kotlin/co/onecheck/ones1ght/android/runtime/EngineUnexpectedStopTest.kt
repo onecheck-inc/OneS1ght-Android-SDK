@@ -29,36 +29,21 @@ class EngineUnexpectedStopTest {
 
     @get:Rule val server = MockWebServer()
 
-    private val routes = Routes()
+    private val fx = CoordinatorFixture(server) // 기본 응답(verify·logs·그 밖 {})이 이 테스트에 맞는다(감사 K16)
     private lateinit var p: MockPositioningProvider
-    private val lines = mutableListOf<Pair<LogLevel, String>>()
+    private val lines get() = fx.lines
 
     @Before
     fun setUp() {
-        server.dispatcher = routes
         p = MockPositioningProvider()
-        routes.handler = { path ->
-            when {
-                path.endsWith("/auth/verify") -> json(VERIFY_OK)
-                path.endsWith("/logs") -> json("""{ "accepted_count": 1 }""")
-                else -> json("{}")
-            }
-        }
     }
 
     private suspend fun TestScope.started(
         lifecycle: AppLifecycle? = null,
         delays: List<Long> = listOf(3_000L, 10_000L),
-    ): SessionCoordinator {
-        val c = makeCoordinator(server, flushThreshold = 1_000, lifecycle = lifecycle, engineRestartDelaysMs = delays)
-        c.onLog = { level, line -> lines += level to line }
-        c.prepare()
-        c.identify("pf_8a3c")
-        c.start(p)
-        return c
-    }
+    ): SessionCoordinator = with(fx) { started(p, lifecycle = lifecycle, flushThreshold = 1_000, engineRestartDelaysMs = delays) }
 
-    private fun e4001(): List<String> = lines.map { it.second }.filter { it.startsWith("[E4001]") }
+    private fun e4001(): List<String> = fx.codeLines("E4001")
 
     /** 다시 켜 볼 만하면 정해진 간격 뒤에 다시 켠다 — 세션은 그대로. */
     @Test fun retryableStopRestartsEngine() = runTest {

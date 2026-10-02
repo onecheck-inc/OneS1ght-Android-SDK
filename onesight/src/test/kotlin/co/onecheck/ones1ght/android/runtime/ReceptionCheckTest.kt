@@ -23,7 +23,6 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 
@@ -39,30 +38,15 @@ class ReceptionCheckTest {
 
     @get:Rule val server = MockWebServer()
 
-    private val routes = Routes()
-
-    @Before
-    fun setUp() {
-        server.dispatcher = routes
-        // 이 테스트가 보는 것은 진단 판정뿐이라, 서버는 무엇을 물어도 통과시킨다.
-        routes.handler = { path ->
-            if (path.endsWith("/auth/verify")) json(VERIFY_OK) else json("""{ "accepted_count": 0 }""")
-        }
-    }
+    // 이 테스트가 보는 것은 진단 판정뿐이라 공용 기본 응답(verify 통과·그 밖 통과)으로 충분하다(감사 K16).
+    private val fx = CoordinatorFixture(server)
 
     /** 진단을 붙인 채 측위를 켜고, 확인이 돌 때까지(가상 7초) 기다린 뒤 남은 로그를 돌려준다. */
     private suspend fun TestScope.runCheck(diagnostic: PositioningDiagnostic?): List<String> {
-        val c = makeCoordinator(server)
-        val lines = mutableListOf<String>()
-        c.onLog = { _, line -> lines.add(line) }
-
-        c.prepare()
-        c.identify("pf_8a3c")
-        c.start(DiagnosticProvider(diagnostic))
-
+        with(fx) { started(DiagnosticProvider(diagnostic)) }
         advanceTimeBy(7_001)
         runCurrent()
-        return lines
+        return fx.lines.map { it.second }
     }
 
     private fun hasCode(lines: List<String>, code: String) = lines.any { it.contains("[$code]") }

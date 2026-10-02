@@ -202,8 +202,10 @@ class UwbAreaJudgeTest {
     @Test fun applyZonesCancelsPendingDwell() {
         judge.apply(listOf(zone("zn_7", "정육 코너", dwell = 1)))
         judge.handleAreaEvent("IN", "정육 코너", 0)
+        assertEquals("체류 타이머가 걸려 있어야 취소를 볼 수 있다(감사 K6)", 1, scheduler.pending)
 
         judge.apply(emptyList()) // 층 전환 · 존 전부 삭제
+        assertEquals(0, scheduler.pending)
         scheduler.advanceBy(5_000)
 
         assertTrue("존이 사라졌는데 체류가 발화했다: $events", dwells.isEmpty())
@@ -243,6 +245,7 @@ class UwbAreaJudgeTest {
     @Test fun changingTheActiveZoneDefinitionResetsDwell() {
         judge.apply(listOf(zone("zn_7", "정육 코너", dwell = 2)))
         judge.handleAreaEvent("IN", "정육 코너", 0)
+        assertEquals("체류 타이머가 걸려 있어야 취소를 볼 수 있다(감사 K6)", 1, scheduler.pending)
 
         judge.apply(listOf(zone("zn_7", "정육 코너", dwell = 30)))
         scheduler.advanceBy(60_000)
@@ -256,7 +259,9 @@ class UwbAreaJudgeTest {
         judge.apply(listOf(zone("zn_7", "정육 코너", dwell = 1)))
 
         judge.handleAreaEvent("IN", "정육 코너", 0)
+        assertEquals("체류 타이머가 걸려 있어야 취소를 볼 수 있다(감사 K6)", 1, scheduler.pending)
         judge.handleAreaEvent("OUT", "정육 코너", 0)
+        assertEquals(0, scheduler.pending)
         scheduler.advanceBy(5_000)
 
         assertTrue(events.toString(), dwells.isEmpty())
@@ -266,8 +271,10 @@ class UwbAreaJudgeTest {
     @Test fun resetCancelsDwellButKeepsZones() {
         judge.apply(listOf(zone("zn_7", "정육 코너", dwell = 1)))
         judge.handleAreaEvent("IN", "정육 코너", 0)
+        assertEquals("체류 타이머가 걸려 있어야 취소를 볼 수 있다(감사 K6)", 1, scheduler.pending)
 
         judge.reset()
+        assertEquals(0, scheduler.pending)
         scheduler.advanceBy(5_000)
 
         assertTrue(dwells.isEmpty())

@@ -15,7 +15,10 @@ package co.onecheck.ones1ght.android.runtime
 import co.onecheck.ones1ght.android.identity.IdentityStore
 import co.onecheck.ones1ght.android.model.ConfigChange
 import co.onecheck.ones1ght.android.network.ApiClient
+import co.onecheck.ones1ght.android.positioning.PositioningProvider
 import co.onecheck.ones1ght.android.space.SpaceServiceClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.TestScope
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
@@ -112,6 +115,70 @@ internal fun TestScope.never(ms: Long = 200, message: String = "일어나면 안
         testScheduler.runCurrent()
         if (cond()) fail(message)
         Thread.sleep(5)
+    }
+}
+
+/**
+ * [scope] 의 코루틴이 전부 끝날 때까지 기다린다(조건 대기 — 감사 K16 · SF-T1). 고정 시간(Thread.sleep)을 재지 않고
+ * 「더 일어날 일이 없다」를 확인할 때 쓴다: 스트림을 stop() 한 뒤 수신 코루틴이 실제로 끝났으면, 그 뒤로는 재연결도
+ * 로그도 생길 수 없다. 끝나지 않으면(연결이 안 끊겼으면) 실패한다.
+ */
+internal fun awaitNoActiveChildren(scope: CoroutineScope, timeoutMs: Long = 5_000, message: String = "코루틴이 끝나지 않았다") {
+    val job = scope.coroutineContext[Job] ?: error("scope 에 Job 이 없다")
+    val deadline = System.nanoTime() + timeoutMs * 1_000_000
+    while (job.children.any { it.isActive }) {
+        if (System.nanoTime() > deadline) fail("$message (${timeoutMs}ms)")
+        Thread.yield()
+    }
+}
+
+/**
+ * 코디네이터 테스트 공용 준비 — 스텁 서버·경로·기본 응답·로그 수집·「가동까지」(감사 K16 · iOS CoordinatorFixture).
+ * 예전엔 테스트 파일마다 같은 verify 응답·prepare→identify→start 순서를 복사해 두었다.
+ */
+internal class CoordinatorFixture(val server: MockWebServer) {
+    val routes = Routes()
+
+    /** 코디네이터가 남긴 화면 로그(등급, 줄). */
+    val lines: MutableList<Pair<LogLevel, String>> = CopyOnWriteArrayList()
+
+    init {
+        server.dispatcher = routes
+        routes.handler = ::defaultResponse
+    }
+
+    /** 기본 응답 — verify 통과, 서버 로그 accepted, 그 밖은 빈 객체. 테스트가 [Routes.handler] 를 바꿔 덮는다. */
+    fun defaultResponse(path: String): MockResponse = when {
+        path.endsWith("/auth/verify") -> json(VERIFY_OK)
+        path.endsWith("/logs") -> json("""{ "accepted_count": 1 }""")
+        else -> json("{}")
+    }
+
+    /** 화면 로그에 [code] 줄이 있는가. */
+    fun hasCode(code: String): Boolean = lines.any { it.second.contains("[$code]") }
+
+    /** [code] 로 시작하는 줄들. */
+    fun codeLines(code: String): List<String> = lines.map { it.second }.filter { it.startsWith("[$code]") }
+
+    /** 코디네이터를 만들어 로그를 모으고 초기화 → 프로필 → 가동까지 한다. */
+    suspend fun TestScope.started(
+        provider: PositioningProvider,
+        profileId: String = "pf_8a3c",
+        lifecycle: AppLifecycle? = null,
+        flushThreshold: Int = 100,
+        engineRestartDelaysMs: List<Long> = listOf(3_000L, 10_000L, 30_000L),
+    ): SessionCoordinator {
+        val c = makeCoordinator(
+            server,
+            lifecycle = lifecycle,
+            flushThreshold = flushThreshold,
+            engineRestartDelaysMs = engineRestartDelaysMs,
+        )
+        c.onLog = { level, line -> lines += level to line }
+        c.prepare()
+        c.identify(profileId)
+        c.start(provider)
+        return c
     }
 }
 
