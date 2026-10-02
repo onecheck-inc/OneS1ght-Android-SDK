@@ -10,6 +10,7 @@ package co.onecheck.ones1ght.android.model
 //  여기는 "데이터 모양"만 — 로직 0. 통신은 network/, 조립은 runtime/ 담당(다른 태스크).
 //
 
+import co.onecheck.ones1ght.android.internal.LenientListSerializer
 import co.onecheck.ones1ght.android.internal.LenientStringMapSerializer
 import co.onecheck.ones1ght.android.internal.parseLenientStringMap
 import kotlinx.serialization.KSerializer
@@ -26,11 +27,11 @@ import kotlinx.serialization.encoding.decodeStructure
 import kotlinx.serialization.encoding.encodeStructure
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 
 // MARK: - 공용
@@ -127,7 +128,10 @@ internal object TriggerSerializer : KSerializer<Trigger> {
     override fun deserialize(decoder: Decoder): Trigger {
         val jsonDecoder = decoder as? JsonDecoder
             ?: throw SerializationException("Trigger 는 JSON 디코더에서만 쓸 수 있다")
-        val obj = jsonDecoder.decodeJsonElement().jsonObject
+        // ⚠️ `.jsonObject` 를 쓰지 않는다 — 객체가 아니면 IllegalArgumentException 이 SerializationException 을
+        //    잡는 자리를 지나 문서에 없는 예외로 샌다(감사 SF-A4).
+        val obj = jsonDecoder.decodeJsonElement() as? JsonObject
+            ?: throw SerializationException("Trigger 가 객체가 아니다")
 
         val triggerId = (obj["trigger_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
             ?: throw SerializationException("Trigger.trigger_id 가 없거나 문자열이 아니다")
@@ -270,7 +274,9 @@ internal object ResVerifySerializer : KSerializer<ResVerify> {
     override fun deserialize(decoder: Decoder): ResVerify {
         val jsonDecoder = decoder as? JsonDecoder
             ?: throw SerializationException("ResVerify 는 JSON 디코더에서만 쓸 수 있다")
-        val obj = jsonDecoder.decodeJsonElement().jsonObject
+        // ⚠️ 200 에 null·[] 이 와도 E5005(Decoding)로 끝나야 한다 — `.jsonObject` 는 IllegalArgumentException(SF-A4).
+        val obj = jsonDecoder.decodeJsonElement() as? JsonObject
+            ?: throw SerializationException("ResVerify 가 객체가 아니다")
 
         val valid = (obj["valid"] as? JsonPrimitive)?.booleanOrNull
             ?: throw SerializationException("ResVerify.valid 가 없거나 boolean 이 아니다")
@@ -380,13 +386,16 @@ internal data class ResFloorConfig(
     val anchors: List<String>,
 )
 
-/** POST /events/zone 응답. */
+/** POST /events/zone 응답. 시책은 하나씩 읽는다 — 하나가 깨져도 나머지 시책은 앱에 간다(SF-A5). */
 @Serializable
 internal data class ResZoneEvent(
     val accepted: Boolean,
     @SerialName("event_id") val eventId: String,
-    val triggers: List<@Serializable(with = TriggerSerializer::class) Trigger>,
+    @Serializable(with = LenientTriggerListSerializer::class) val triggers: List<Trigger>,
 )
+
+/** [ResZoneEvent.triggers] — 요소 단위로 관대하게. */
+internal object LenientTriggerListSerializer : LenientListSerializer<Trigger>(TriggerSerializer)
 
 /** POST /positioning/logs 응답. */
 @Serializable

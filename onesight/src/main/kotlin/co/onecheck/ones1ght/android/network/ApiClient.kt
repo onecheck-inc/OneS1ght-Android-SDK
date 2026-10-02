@@ -27,13 +27,16 @@ import co.onecheck.ones1ght.android.model.ResSdkConfig
 import co.onecheck.ones1ght.android.model.ResSdkLogs
 import co.onecheck.ones1ght.android.model.ResVerify
 import co.onecheck.ones1ght.android.model.ResZoneEvent
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -106,7 +109,7 @@ public class ApiClient private constructor(
     internal suspend fun buildings(): ResBuildings = get("/positioning/buildings")
 
     /** GET /positioning/floors/{floor_id} — 층 존 설정(층 진입 시 해당 층만). */
-    internal suspend fun floorConfig(floorId: String): ResFloorConfig = get("/positioning/floors/$floorId")
+    internal suspend fun floorConfig(floorId: String): ResFloorConfig = get("/positioning/floors/${pathSegment(floorId)}")
 
     /** POST /events/zone — 존 입장/체류/퇴장(판정 즉시). */
     internal suspend fun sendZoneEvent(req: ReqZoneEvent): ResZoneEvent = post("/events/zone", req)
@@ -119,15 +122,15 @@ public class ApiClient private constructor(
         post("/profiles", ReqProfile(attrs))
 
     /** GET /profiles/{id} */
-    internal suspend fun getProfile(id: String): ResProfile = get("/profiles/$id")
+    internal suspend fun getProfile(id: String): ResProfile = get("/profiles/${pathSegment(id)}")
 
     /** PUT /profiles/{id} — 속성 전체 교체. */
     internal suspend fun putProfile(id: String, attrs: Map<String, String>): ResProfile =
-        send("/profiles/$id", "PUT", ReqProfile(attrs))
+        send("/profiles/${pathSegment(id)}", "PUT", ReqProfile(attrs))
 
     /** DELETE /profiles/{id} — 본문 없음(Content-Type 헤더는 그대로 붙인다). */
     internal suspend fun deleteProfile(id: String): ResProfileDelete =
-        perform(request("/profiles/$id", "DELETE", null))
+        perform(request("/profiles/${pathSegment(id)}", "DELETE", null))
 
     /**
      * POST /logs — 관리자가 콘솔 로그 분석기에서 볼 줄을 적재한다. 서버가 느슨하게 받도록
@@ -163,9 +166,33 @@ public class ApiClient private constructor(
 // 상태코드→에러 매핑·IOException→Network·디코드→Decoding 은 SpaceServiceClient(공간 조회,
 // Task 5)도 그대로 써야 한다 — 여긴 유일한 정본이라 거기서 다시 만들지 않는다.
 
-/** `IOException` 은 [ApiError.Network] 로 바꾼다 — `enqueue` 콜백을 코루틴으로 잇는다. */
+/**
+ * 응답 본문 상한 — 도면(base64 PNG)이 가장 크다. 넘으면 끝까지 읽지 않고 E5005 로 끊는다(감사 SF-A13 —
+ * 상한이 없으면 수 MB 이상의 본문이 그대로 메모리에 올라 OOM 으로 갈 수 있었다).
+ */
+internal const val MAX_RESPONSE_BYTES: Long = 32L * 1024 * 1024
+
+/**
+ * 경로 변수 하나를 **한 경로 조각**으로 인코딩한다 — `/ ? #` 등은 퍼센트 인코딩(감사 SF-A16: 예전엔 문자열을
+ * 그대로 붙여 ID 에 `../` 가 들어가면 다른 엔드포인트를 쳤다). `.`·`..`·빈 값은 URL 정규화가 경로를
+ * 올려 버리므로 인코딩으로 막을 수 없다 — 그런 ID 의 자원은 없으니 [ApiError.NotFound] 로 끝낸다.
+ */
 @JvmSynthetic // 최상위 internal 함수는 이름이 망글링되지 않아 Java 에 보인다
-internal suspend fun executeHttpRequest(http: OkHttpClient, req: Request): Pair<Int, ByteArray> =
+internal fun pathSegment(id: String): String {
+    if (id.isEmpty() || id == "." || id == "..") throw ApiError.NotFound("invalid path segment")
+    return HttpUrl.Builder().scheme("https").host("h").addPathSegment(id).build().encodedPath.removePrefix("/")
+}
+
+/**
+ * `IOException` 은 [ApiError.Network] 로 바꾼다 — `enqueue` 콜백을 코루틴으로 잇는다. 본문은 OkHttp 스레드에서
+ * 읽고, [maxBytes] 를 넘으면 [ApiError.Decoding] 으로 끊는다.
+ */
+@JvmSynthetic // 최상위 internal 함수는 이름이 망글링되지 않아 Java 에 보인다
+internal suspend fun executeHttpRequest(
+    http: OkHttpClient,
+    req: Request,
+    maxBytes: Long = MAX_RESPONSE_BYTES,
+): Pair<Int, ByteArray> =
     suspendCancellableCoroutine { cont ->
         val call = http.newCall(req)
         cont.invokeOnCancellation { call.cancel() }
@@ -178,7 +205,12 @@ internal suspend fun executeHttpRequest(http: OkHttpClient, req: Request): Pair<
                 override fun onResponse(call: Call, response: Response) {
                     try {
                         response.use {
-                            cont.resume(it.code to (it.body?.bytes() ?: ByteArray(0)))
+                            val bytes = readCapped(it, maxBytes)
+                            if (bytes == null) {
+                                cont.resumeWithException(ApiError.Decoding("response body over $maxBytes bytes"))
+                            } else {
+                                cont.resume(it.code to bytes)
+                            }
                         }
                     } catch (e: IOException) {
                         // 헤더는 받았지만 본문을 읽는 중 끊긴 경우도 전송 실패다.
@@ -188,6 +220,16 @@ internal suspend fun executeHttpRequest(http: OkHttpClient, req: Request): Pair<
             },
         )
     }
+
+/** 본문을 [maxBytes] 까지만 읽는다 — 넘으면 null(끝까지 읽지 않는다). */
+private fun readCapped(response: Response, maxBytes: Long): ByteArray? {
+    val body = response.body ?: return ByteArray(0)
+    if (body.contentLength() > maxBytes) return null
+    val source = body.source()
+    source.request(maxBytes + 1)
+    if (source.buffer.size > maxBytes) return null
+    return source.buffer.readByteArray()
+}
 
 /** 상태코드 → [ApiError] 매핑(사양서 §9). 200~299 는 호출부가 직접 디코딩한다. */
 internal fun apiErrorForStatus(status: Int, detail: String?): ApiError =
@@ -210,14 +252,18 @@ internal fun errorDetailFrom(bytes: ByteArray): String? =
 /**
  * 요청 실행 + 2xx 디코딩 + 오류 매핑을 한 번에 한다 — [ApiClient] 와 `SpaceServiceClient`
  * (공간 조회, Task 5)가 공유한다. 타임아웃은 호출부가 건넨 [http] 그대로 쓴다.
+ *
+ * 디코딩은 [Dispatchers.Default] 에서 한다 — 부르는 쪽은 코어 디스패처(운영: 메인)라, 수 MB 도면 JSON 을
+ * 거기서 풀면 ANR 이었다(감사 SF-A13). 객체가 아닌 본문 등으로 kotlinx 가 던지는 IllegalArgumentException
+ * (SerializationException 의 부모)도 [ApiError.Decoding] 으로 옮긴다 — 문서에 없는 예외가 새지 않게(SF-A4).
  */
 @JvmSynthetic // 최상위 internal 함수는 이름이 망글링되지 않아 Java 에 보인다
 internal suspend inline fun <reified R> performJsonRequest(http: OkHttpClient, req: Request): R {
     val (status, bytes) = executeHttpRequest(http, req)
     if (status in 200 until 300) {
         return try {
-            SdkJson.decodeFromString<R>(bytes.decodeToString())
-        } catch (e: SerializationException) {
+            withContext(Dispatchers.Default) { SdkJson.decodeFromString<R>(bytes.decodeToString()) }
+        } catch (e: IllegalArgumentException) {
             throw ApiError.Decoding(detail = e.message)
         }
     }
