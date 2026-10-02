@@ -74,7 +74,10 @@ internal fun TestScope.makeCoordinator(
     liveFactory: ((ConfigChange) -> Unit, (LogLevel, String) -> Unit) -> LiveConfigStream? = { _, _ -> null },
 ): SessionCoordinator {
     val http = OkHttpClient.Builder().retryOnConnectionFailure(false).build()
-    val base = server.url("/api/sdk/v1").toString().trimEnd('/')
+    // 주소는 127.0.0.1 로 — "localhost" 는 IPv4·IPv6 두 경로로 풀리는데 MockWebServer 는 IPv4 에서만 듣는다. 첫 요청이
+    // 끊기면(DISCONNECT_AFTER_REQUEST) OkHttp 가 그 경로를 실패로 기록해 재시도는 ::1 로 가고, 자동 재시도를 끈 이
+    // 클라이언트는 거기서 바로 ConnectException 이 난다 — Linux 러너에서 구역 이벤트 재시도 테스트가 깨졌다(2026-10-02).
+    val base = server.url("/api/sdk/v1").newBuilder().host("127.0.0.1").build().toString().trimEnd('/')
     val api = ApiClient.create(apiKey, base, http)
     return SessionCoordinator(
         api = api,
