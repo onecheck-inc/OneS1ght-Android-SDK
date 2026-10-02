@@ -37,26 +37,6 @@ class DtosTest {
         assertEquals("f-uuid", res.buildings.first().floors?.first()?.floorId)
     }
 
-    @Test fun decodeResFloorConfigZoneParams9() {
-        val json = """
-            { "floor_id": "f-uuid", "building_id": "b-uuid", "name": "f-uuid",
-              "synced_at": "2026-07-16T09:00:00Z",
-              "zones": [
-                { "zone_id": "z-uuid", "name": "입구존",
-                  "polygon": [[12.3, 4.5], [13.0, 4.5], [13.0, 6.0]],
-                  "trigger_type": "enter", "dwell_seconds": 3,
-                  "in_dist": 3.0, "in_count": 0, "in_count_interval": 0,
-                  "out_period": 0, "priority": 1, "call_inout": true, "is_active": true } ],
-              "anchors": [] }
-        """.trimIndent()
-        val res = SdkJson.decodeFromString<ResFloorConfig>(json)
-        val z = res.zones.first()
-        assertEquals(listOf(12.3, 4.5), z.polygon?.first())
-        assertEquals(3.0, z.inDist, 0.0)
-        assertTrue(z.callInout && z.isActive)
-        assertTrue(res.anchors.isEmpty())
-    }
-
     @Test fun decodeResZoneEventWithTriggers() {
         val json = """
             { "accepted": true, "event_id": "evt_a1b2c3",

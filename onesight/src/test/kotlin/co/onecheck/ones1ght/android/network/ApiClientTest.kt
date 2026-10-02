@@ -132,11 +132,11 @@ class ApiClientTest {
         assertEquals("/api/sdk/v1/positioning/buildings", req.path)
     }
 
-    // ③ floors 404 → notFound (정상 분기용 — detail 파싱 포함)
-    @Test fun floor404_mapsToNotFound() = runTest {
+    // ③ 404 → notFound (detail 파싱 포함)
+    @Test fun status404_mapsToNotFound() = runTest {
         server.enqueue(MockResponse().setResponseCode(404).setBody("""{ "detail": "no zones" }"""))
 
-        val e = assertThrowsSuspend<ApiError.NotFound> { client.floorConfig("f-uuid") }
+        val e = assertThrowsSuspend<ApiError.NotFound> { client.getProfile("p-uuid") }
         assertEquals("no zones", e.detail)
         assertEquals(ApiError.NotFound("no zones"), e)
     }

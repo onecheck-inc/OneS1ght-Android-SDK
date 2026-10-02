@@ -105,10 +105,10 @@ public enum class SdkErrorCode(
     // 3xxx — 공간·설정
 
     /**
-     * 층이 정해지지 않은 채로 측위를 시작했다. 파이프라인은 돌지만 좌표가 나오지 않는다.
+     * 층 미지정 — 지금은 `setFloorMap(floor)` 를 건물 문맥 없이 불렀을 때([co.onecheck.ones1ght.android.SdkError.BuildingNotSet])의 코드다.
      *
-     * ⚠️ WARN 이다(0.1.19~). 엔진이 BLE 로 층을 스스로 찾으므로 층 없이 시작하는 것이
-     * 정상 경로다(엔진은 begin 해야 돌고, 돌아야 층을 찾는다).
+     * ⚠️ 층 없이 측위를 **시작**하는 것은 정상 경로라 이 코드를 서버로 올리지 않는다(iOS #54 와 같다 — 엔진이 BLE 로
+     * 층을 찾는다. 예전엔 시작마다 올라가 콘솔 로그가 덮였다). 층을 끝내 못 찾으면 [FLOOR_NOT_DETECTED](E3007).
      */
     FLOOR_NOT_SET("E3001", SdkLogLevel.WARN, "층 미지정"),
 

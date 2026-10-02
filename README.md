@@ -221,8 +221,8 @@ OneS1ght.setFloorMap(floors[0], buildingId = buildings[0].id)
 ```
 
 The positioning engine finds the floor by itself over BLE, the same as iOS — you can
-`begin()` without a floor and coordinates still come out (`E3001` WARN is logged once; that
-is the normal path). If no floor is found within 20 seconds, `E3007` is logged.
+`begin()` without a floor and coordinates still come out (that is the normal path — nothing is
+sent to the server; `onDebugLog` shows one INFO line). If no floor is found within 20 seconds, `E3007` is logged.
 
 `setFloorMap` fetches the floor's locators, UWB session ID and zones. Call it when you use
 **zone events**: the engine reports zone entry/exit by area **name**, and the SDK matches that
@@ -442,7 +442,7 @@ Every failure carries a code. Include it when contacting support.
 | `E2002` | Device does not support UWB |
 | `E2003` | Positioning permission denied |
 | `E2004` | Bluetooth is off |
-| `E3001` | No floor set — **WARN, expected: the engine finds the floor over BLE** |
+| `E3001` | No building for `setFloorMap(floor)` (`SdkError.BuildingNotSet`) — `begin()` without a floor is normal and is not logged |
 | `E3002` | No locators on floor |
 | `E3003` | No UWB session on floor |
 | `E3004` | No zones on floor |

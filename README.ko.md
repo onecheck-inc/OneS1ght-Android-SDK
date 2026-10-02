@@ -219,7 +219,7 @@ OneS1ght.setFloorMap(floors[0], buildingId = buildings[0].id)
 ```
 
 측위 엔진은 iOS 와 같이 BLE 로 층을 스스로 찾습니다 — 층 없이 `begin()` 해도 좌표가
-나옵니다(`E3001` WARN 이 한 번 남습니다. 정상 경로입니다). 20초 안에 층을 못 찾으면
+나옵니다(정상 경로라 서버로는 아무것도 올리지 않고, `onDebugLog` 에 INFO 한 줄만 남습니다). 20초 안에 층을 못 찾으면
 `E3007` 이 남습니다.
 
 `setFloorMap` 은 그 층의 로케이터·UWB 세션 ID·존을 받습니다. **구역 이벤트**를 쓰면 부르세요 —
@@ -438,7 +438,7 @@ initialize ─→ begin ─→ [UWB 좌표] ─┬─→ onPosition            (
 | `E2002` | UWB 미지원 기기 |
 | `E2003` | 측위 권한 거부 |
 | `E2004` | Bluetooth 꺼짐 |
-| `E3001` | 층 미지정 — **WARN, 정상: 엔진이 BLE 로 층을 찾는다** |
+| `E3001` | `setFloorMap(floor)` 의 건물 없음(`SdkError.BuildingNotSet`) — 층 없이 `begin()` 하는 것은 정상이라 남지 않는다 |
 | `E3002` | 층에 로케이터 없음 |
 | `E3003` | 층에 UWB 세션 없음 |
 | `E3004` | 층에 존 없음 |

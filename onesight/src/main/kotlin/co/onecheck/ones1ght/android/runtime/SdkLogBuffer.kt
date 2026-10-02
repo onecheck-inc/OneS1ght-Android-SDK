@@ -26,6 +26,12 @@ internal class SdkLogBuffer(
     private val hardLimit: Int = 2000,
     private val send: suspend (List<SdkLogEntry>) -> Boolean,
     private val scope: CoroutineScope,
+    /**
+     * 지금 보낼 수 있는가(귀속할 프로필이 있는가). 아니면 떼지 않고 붙들어 둔다 — [hardLimit] 안에서. 코어가
+     * 프로필이 생기는 순간(identify) [flush] 를 부른다(iOS S13 · 감사 SP-B7: 예전엔 떼어 낸 뒤 버려 초기화 중
+     * E1007 이 콘솔에 안 올라갔다).
+     */
+    private val canSend: () -> Boolean = { true },
 ) {
 
     private val entries = mutableListOf<SdkLogEntry>()
@@ -49,7 +55,7 @@ internal class SdkLogBuffer(
      * 보낸다 — 실패한 배치는 버린다(재시도하지 않는다).
      */
     suspend fun flush() {
-        if (isFlushing || entries.isEmpty()) return
+        if (isFlushing || entries.isEmpty() || !canSend()) return
         isFlushing = true
         try {
             while (entries.isNotEmpty()) {
