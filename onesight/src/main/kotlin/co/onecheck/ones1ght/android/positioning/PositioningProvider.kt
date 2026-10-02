@@ -144,4 +144,19 @@ public interface PositioningProviderDelegate {
      * 선택 채택 — 기본 no-op 이라 Mock 은 구현하지 않아도 된다.
      */
     public fun onReport(provider: PositioningProvider, code: SdkErrorCode, context: String) {}
+
+    /**
+     * **켜 달라고 했는데 엔진이 스스로 꺼졌다** — 시작이 접혔거나(권한·라이선스·Bluetooth 등), 돌다가 엔진
+     * 오류로 멈췄다. 부르는 쪽(SDK 코어)이 [PositioningProvider.stop] 한 경우에는 오지 않는다.
+     *
+     * 이게 없던 동안 코어는 세션을 "측위 중" 으로 둔 채 몰랐다. 그러면 앱의 `begin()` 은 "이미 측위 중" 으로
+     * 삼켜지고, 앱을 껐다 켜기 전엔 측위가 돌아오지 않았다(감사 SP-B1 · iOS #54 와 같은 수정).
+     *
+     * @param retryable 다시 켜 볼 만한가. 권한 거부·Bluetooth 꺼짐·라이선스 거부·미지원 기기처럼 사람이 풀어야
+     *   하는 것은 false.
+     * @param context 진단용 한 줄(로그·서버 E-코드 문맥에 실린다).
+     *
+     * 선택 채택 — 기본 no-op.
+     */
+    public fun onStoppedUnexpectedly(provider: PositioningProvider, retryable: Boolean, context: String) {}
 }

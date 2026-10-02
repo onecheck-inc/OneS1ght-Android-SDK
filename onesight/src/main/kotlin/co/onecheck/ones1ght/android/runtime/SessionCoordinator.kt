@@ -92,6 +92,14 @@ internal class SessionCoordinator(
     maxPerRequest: Int = 500,
     /** 수신 진단 1회 확인 — 측위 시작 후 이 시간 뒤에 본다. 7초는 현장에서 쓰던 값이다. */
     private val receptionCheckDelayMs: Long = 7_000,
+    /**
+     * 엔진이 **스스로** 꺼졌을 때 다시 켜 보는 간격 — 이만큼 해도 안 되면 세션을 닫는다(iOS #54 와 같은 값).
+     *
+     * 닫는 이유: 세션을 "측위 중" 으로 둔 채 엔진만 죽어 있으면 앱의 `begin()` 이 "이미 측위 중" 으로
+     * 삼켜져, 앱을 껐다 켜기 전엔 측위가 안 돌아왔다(감사 SP-B1). 닫으면 `FloorSession.isRunning` 이
+     * false 가 되어 앱이 알고(onStopped) 다시 연다.
+     */
+    private val engineRestartDelaysMs: List<Long> = listOf(3_000L, 10_000L, 30_000L),
 ) : PositioningProviderDelegate {
 
     /**
@@ -171,10 +179,30 @@ internal class SessionCoordinator(
 
     private var flushJob: Job? = null
     private var receptionCheckJob: Job? = null
+
+    /** 지금까지 엔진을 다시 켠 횟수 — 좌표가 한 번 나오거나 포그라운드로 돌아오면 0 으로. */
+    private var engineRestartAttempts = 0
+    private var engineRestartJob: Job? = null
+
+    /**
+     * 엔진이 다시 켜지지 않아 세션을 닫는 중인가 — 닫기(stop)는 flush 왕복을 기다리므로, 그 사이에 같은
+     * 세션을 다시 켜거나(재시도·포그라운드) 타이머를 거는 일이 없게 동기로 먼저 세운다.
+     */
+    private var closingAfterEngineStop = false
+
+    /**
+     * 앱이 화면에 떠 있는가 — 생명주기 통지로만 바꾼다(관찰 전엔 begin 을 부른 화면이 떠 있다고 본다).
+     * 안드로이드는 ProcessLifecycleOwner onStart/onStop 이라 알림창·전화 배너로는 바뀌지 않는다
+     * (iOS S7 의 「비활성」 함정이 없다) — 배경에서 건너뛴 재시도는 포그라운드 복귀가 대신 켠다.
+     */
+    private var appInForeground = true
     private var observingLifecycle = false
 
     /** 존 이벤트 응답의 개인화 액션 → 호스트 전달 (zoneId, triggers) */
     var onTriggers: ((String, List<Trigger>) -> Unit)? = null
+
+    /** 엔진이 스스로 멈춰 세션을 닫았다 → 호스트 전달(FloorSession.onStopped). 앱이 stop 한 경우에는 안 부른다. */
+    var onEngineStoppedSession: (() -> Unit)? = null
 
     /** 실시간 좌표 → 호스트 전달 (지도에 내 위치 찍기용 — 도면 로컬 미터) */
     var onPosition: ((Coordinates) -> Unit)? = null
@@ -468,8 +496,22 @@ internal class SessionCoordinator(
         lastRecordedAt = null
         report(SdkInfoCode.POSITIONING_ON, "visitor=$visitorId")
         provider.delegate = this
-        provider.start()
+        engineRestartJob?.cancel()
+        engineRestartJob = null
+        engineRestartAttempts = 0
+        closingAfterEngineStop = false
+        // ⚠️ isRunning 을 **먼저** 세운다. 엔진은 시작 안에서 동기로 접힐 수 있다(라이선스 없음·권한 이미 거부) —
+        //    그 알림(onStoppedUnexpectedly)이 isRunning=false 일 때 오면 무시돼, 세션은 「측위 중」 인 채 엔진만
+        //    죽은 상태로 남았다(iOS #54 와 같다).
         isRunning = true
+        try {
+            provider.start()
+        } catch (e: Throwable) {
+            isRunning = false
+            throw e
+        }
+        // 시작 안에서 이미 닫기로 했다(재시도 불가) — 타이머·스트림을 걸지 않는다. 닫기가 정리한다.
+        if (closingAfterEngineStop || !isRunning) return
         startFlushTimer()
         startReceptionCheck()
         ensureLiveStream()
@@ -575,6 +617,9 @@ internal class SessionCoordinator(
     }
 
     private suspend fun performStop() {
+        engineRestartJob?.cancel()
+        engineRestartJob = null
+        engineRestartAttempts = 0
         provider?.stop()
         flushJob?.cancel()
         flushJob = null
@@ -601,6 +646,7 @@ internal class SessionCoordinator(
         report(SdkInfoCode.POSITIONING_OFF, "visitor=$visitorId")
         logBuffer.flush() // 세션 종료 — 잔여 로그도 내보낸다
         isRunning = false
+        closingAfterEngineStop = false
     }
 
     // MARK: - 실시간 수신 (SSE)
@@ -729,7 +775,8 @@ internal class SessionCoordinator(
      * 정지가 flush 에 매달린 사이(isRunning 은 아직 true)에 provider 를 다시 켜면, 정지가 끝난 뒤
      * isRunning=false 인데 provider 만 도는 유령 세션이 남는다.
      */
-    private val runningAndNotStopping: Boolean get() = isRunning && stopInFlight == null
+    private val runningAndNotStopping: Boolean
+        get() = isRunning && stopInFlight == null && !closingAfterEngineStop
 
     /** observe() 호출 안에서 동기로 들어오는 통지(ProcessLifecycleOwner 의 catch-up)를 거르는 표시. */
     private var attachingObserver = false
@@ -745,6 +792,10 @@ internal class SessionCoordinator(
                 onBackground = {
                     if (!attachingObserver) {
                         scope.launch {
+                            appInForeground = false
+                            // 내려가면 다시 켜 보기를 멈춘다 — 배경에선 UWB 가 안 돈다. 돌아오면 아래에서 켠다.
+                            engineRestartJob?.cancel()
+                            engineRestartJob = null
                             if (runningAndNotStopping) { // 측위는 세션이 돌 때만, 정지 중이면 그 정지에 맡긴다
                                 provider?.stop()
                                 flushPositions()
@@ -769,6 +820,10 @@ internal class SessionCoordinator(
     }
 
     private fun onForegroundResumed() {
+        appInForeground = true
+        // 복귀는 새 기회다 — 내려가기 전의 재시도 횟수는 잊는다. 이 시작이 접히면 provider 가
+        // onStoppedUnexpectedly 로 알려 오고, 거기서 다시 켜 보거나 세션을 닫는다.
+        engineRestartAttempts = 0
         val active = runningAndNotStopping
         if (active) provider?.start()
         // 정지 중이면 스트림을 둘지 말지는 그 정지(performStop)가 정한다.
@@ -797,8 +852,50 @@ internal class SessionCoordinator(
         report(code, context)
     }
 
+    /**
+     * 엔진이 스스로 꺼졌다 — 다시 켜 보거나(포그라운드·재시도 가능·횟수 남음), 세션을 닫는다(iOS #54 와 같다).
+     *
+     * ⚠️ 그대로 두지 않는다. 세션이 "측위 중" 인 채 엔진만 죽어 있으면 앱의 `begin()` 이 삼켜지고,
+     *    화면은 「찾는 중」인데 아무것도 안 도는 상태가 앱을 껐다 켤 때까지 간다(감사 SP-B1).
+     */
+    override fun onStoppedUnexpectedly(provider: PositioningProvider, retryable: Boolean, context: String) {
+        if (!isRunning || stopInFlight != null || closingAfterEngineStop || this.provider !== provider) return
+        engineRestartJob?.cancel()
+        engineRestartJob = null
+        val attempt = engineRestartAttempts
+        if (!retryable || attempt >= engineRestartDelaysMs.size) {
+            // 사람이 풀어야 하는 원인(권한·Bluetooth·라이선스)은 엔진이 이미 제 코드(E2003·E2004 등)로 올렸다 —
+            // E4001(ERROR)을 덧붙이면 같은 일이 「고장」 으로 두 번 찍힌다. 재시도를 다 쓴 것만 올린다.
+            if (retryable) report(SdkErrorCode.UWB_SESSION_FAILED, "engine stopped, session closed — $context")
+            log(LogLevel.WARN, SdkLocalized.t("coord.engineGaveUp", context))
+            closingAfterEngineStop = true
+            scope.launch {
+                stop()
+                onEngineStoppedSession?.invoke()
+            }
+            return
+        }
+        engineRestartAttempts += 1
+        val delayMs = engineRestartDelaysMs[attempt]
+        val total = engineRestartDelaysMs.size
+        report(
+            SdkErrorCode.UWB_SESSION_FAILED,
+            "engine stopped, retry ${attempt + 1}/$total in ${delayMs / 1000}s — $context",
+        )
+        log(LogLevel.WARN, SdkLocalized.t("coord.engineRetry", attempt + 1, total, delayMs / 1000))
+        engineRestartJob = scope.launch {
+            delay(delayMs)
+            engineRestartJob = null
+            if (!runningAndNotStopping || this@SessionCoordinator.provider !== provider) return@launch
+            // 배경이면 켜지 않는다 — UWB 가 안 돈다. 포그라운드 복귀(onForegroundResumed)가 대신 켠다.
+            if (!appInForeground) return@launch
+            provider.start()
+        }
+    }
+
     /** 좌표 fix — 층 설정 확보 + 버퍼 적재, 임계 도달 시 flush */
     override fun onPosition(provider: PositioningProvider, coordinates: Coordinates, floorId: String?, atMs: Long) {
+        engineRestartAttempts = 0 // 다시 살아났다 — 다음 고장은 처음부터 센다
         onPosition?.invoke(coordinates) // 앱 훅 — 원속도 유지 (지도 렌더)
         // 안드로이드 provider 는 층을 모를 수 있다(null) — 지정된 층으로 귀속한다. 그것도 없으면
         // floor_id 없이는 서버 계약이 성립하지 않으므로 싣지 않는다.

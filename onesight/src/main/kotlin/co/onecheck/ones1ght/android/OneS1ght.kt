@@ -556,6 +556,7 @@ public object OneS1ght {
         c.onTriggers = { zoneId, triggers -> FloorSession.shared.onTriggers?.onTriggers(zoneId, triggers) }
         c.onPosition = { coord -> FloorSession.shared.onPosition?.onPosition(coord) }
         c.onConfigChange = { change -> FloorSession.shared.onConfigChanged?.onConfigChanged(change) }
+        c.onEngineStoppedSession = { FloorSession.shared.onStopped?.onStopped() }
         c.onLog = { level, line -> onDebugLog?.onLog(level, line) }
         coordinatorScope = scope
         return c

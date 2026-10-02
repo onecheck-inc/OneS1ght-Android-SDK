@@ -146,6 +146,12 @@ public class UwbPositioningProvider private constructor(
     /** OneS1ght.onDebugLog 로 가는 길. 앱의 [onLog] 를 덮지 않으려고 따로 둔다. */
     @Volatile internal var sessionLogSink: ((LogLevel, String) -> Unit)? = null
 
+    /** FloorSession.onFloorDetected 로 가는 길. 앱의 [onFloorDetected] 를 덮지 않으려고 따로 둔다. */
+    @Volatile internal var sessionFloorSink: ((Long?) -> Unit)? = null
+
+    /** 마지막 엔진 오류 번호 — 스스로 멈춘 이유가 사람이 풀어야 하는 것인지 가를 때 본다. 기동마다 비운다. */
+    private var lastHubError: Int? = null
+
     /**
      * 엔진 라이선스 키. 콘솔 `/config` 의 측위 키를 FloorSession 이 넣어 준다.
      * 비어 있으면 시작하지 않고 E1007 로 알린다 (조용한 실패 금지).
@@ -458,6 +464,7 @@ public class UwbPositioningProvider private constructor(
             return
         }
         generation += 1
+        lastHubError = null
         setDetectedFloor(null)
         try {
             engine.setLicense(key)
@@ -509,7 +516,10 @@ public class UwbPositioningProvider private constructor(
             pendingOpenFailure = null
             report(code, context)
             reloading = false
+            val wasRunning = machine.isRunning
             finishStopped()
+            // 라이선스 없음(E1007)·권한(SecurityException)은 사람이 풀어야 한다. 그 밖의 동기 예외는 다시 켜 볼 만하다.
+            if (wasRunning) notifyUnexpectedStop("engine did not start ($context)", retryable = code == SdkErrorCode.UWB_SESSION_FAILED)
             return
         }
         if (!machine.isRunning || !freshStart) return
@@ -561,10 +571,25 @@ public class UwbPositioningProvider private constructor(
         if (requested) {
             log(LogLevel.LOG, SdkLocalized.t("uwb.stopped"))
         } else {
-            // 오류 3·7·10 등 뒤의 자동 정지 — 자동 재개 없음. 앱이 "다시 시작" 을 안내한다.
+            // 오류 3·7·10 등 뒤의 자동 정지 — provider 는 스스로 다시 켜지 않는다. 코어에 알려(가동 중이었으면)
+            // 코어가 다시 켜 보거나 세션을 닫는다(감사 SP-B1).
             log(LogLevel.WARN, SdkLocalized.t("uwb.stoppedSelf"))
         }
+        val wasRunning = machine.isRunning
         finishStopped()
+        if (!requested && wasRunning) {
+            val last = lastHubError
+            notifyUnexpectedStop("engine stopped itself (last error ${last ?: "-"})", isRetryable(last))
+        }
+    }
+
+    /**
+     * 켜 달라고 했는데(측위 가동 중) 엔진이 꺼졌다 — 코어에 알린다. 다시 켤지·세션을 닫을지는 코어가 정한다.
+     * 상태를 다 정리한 뒤(finishStopped·publish 전) 부른다 — 코어가 곧바로 stop/start 해도 어긋나지 않게.
+     */
+    private fun notifyUnexpectedStop(context: String, retryable: Boolean) {
+        publish()
+        delegate?.onStoppedUnexpectedly(this, retryable, context)
     }
 
     /**
@@ -579,7 +604,7 @@ public class UwbPositioningProvider private constructor(
         reloading = false
         if (detectedFloorId != null) {
             setDetectedFloor(null)
-            if (!wasReloading) onFloorDetected?.onFloorDetected(null)
+            if (!wasReloading) emitFloorDetected(null)
         }
         machine.onClosed()
         if (!machine.isRunning) clearPosition()
@@ -597,7 +622,7 @@ public class UwbPositioningProvider private constructor(
         cancelFloorWatch() // 층을 찾았다 — 미탐지 감시 해제
         log(LogLevel.INFO, SdkLocalized.t("uwb.trackingStart", fid))
         checkFloorAgreement(fid)
-        onFloorDetected?.onFloorDetected(fid)
+        emitFloorDetected(fid)
     }
 
     /**
@@ -619,7 +644,7 @@ public class UwbPositioningProvider private constructor(
         setDetectedFloor(null)
         clearPosition()
         log(LogLevel.INFO, SdkLocalized.t("uwb.trackingStop", fid))
-        onFloorDetected?.onFloorDetected(null)
+        emitFloorDetected(null)
     }
 
     private fun handlePosition(fid: Long, x: Double, y: Double, z: Double) {
@@ -662,12 +687,17 @@ public class UwbPositioningProvider private constructor(
      * 끝나는 대로 다시 띄운다(재시작 경로 — onStopped 가 이어서 온다).
      */
     private fun handleError(code: Int, message: String) {
+        lastHubError = code
         log(LogLevel.ERROR, SdkLocalized.t("uwb.error", code, message, describe(code)))
         onEngineError?.onEngineError(code, message)
         sdkCode(code, message)?.let { report(it, "engine=$code $message") }
         if (machine.phase != Phase.STARTING) return
         when (code) {
-            in START_ABORT_CODES -> finishStopped()
+            in START_ABORT_CODES -> {
+                val wasRunning = machine.isRunning // 층 탐색만 하던 엔진(startDetection)이면 코어는 모른다
+                finishStopped()
+                if (wasRunning) notifyUnexpectedStop("engine=$code at start", isRetryable(code))
+            }
             HUB_ALREADY_STARTED -> machine.onOpened()
             HUB_STOPPING -> {
                 // 시작 로그·층 감시·입장 트리거는 첫 시도에서 이미 나갔다 — 재시도는 재적재처럼 조용히.
@@ -724,6 +754,12 @@ public class UwbPositioningProvider private constructor(
 
     /** 서버에 실을 층 ID — 엔진이 잡은 층이 있으면 그 번호, 없으면 콘솔에서 주입받은 값. */
     private fun currentFloorId(): String? = detectedFloorId?.toString() ?: floorId.ifEmpty { null }
+
+    /** 층 탐지·상실 → 앱 훅([onFloorDetected])과 세션 리스너(FloorSession.onFloorDetected) 둘 다. */
+    private fun emitFloorDetected(fid: Long?) {
+        onFloorDetected?.onFloorDetected(fid)
+        sessionFloorSink?.invoke(fid)
+    }
 
     private fun setDetectedFloor(fid: Long?) {
         _detectedFloorId.value = fid
@@ -813,6 +849,17 @@ public class UwbPositioningProvider private constructor(
          * 12 미지원 기기 · 13 스캔 과다.
          */
         internal val START_ABORT_CODES: Set<Int> = setOf(1, 3, 7, 9, 10, 11, 12, 13)
+
+        /**
+         * 다시 켜 봐야 같은 자리에서 접히는(사람이 풀어야 하는) 엔진 오류 — 1 라이선스 미등록 · 3 Bluetooth ·
+         * 7 위치 · 10 라이선스 거부(iOS #54 와 같다) + 안드로이드 전용 9 매니페스트 선언 누락(앱을 고쳐야 한다) ·
+         * 12 미지원 기기(기기를 바꿔야 한다). 11 라이선스 서버 미도달은 iOS 11 과 같이, 13 스캔 과다는 안드로이드
+         * 스캔 시작 제한(30초 창)이 풀리면 되므로 다시 켜 볼 만하다.
+         */
+        private val NOT_RETRYABLE_CODES: Set<Int> = setOf(1, 3, 7, 9, 10, 12)
+
+        /** 엔진이 스스로 멈춘 뒤 다시 켜 볼 만한가 — 마지막 오류를 모르면(null) 그렇다고 본다. */
+        internal fun isRetryable(hubError: Int?): Boolean = hubError == null || hubError !in NOT_RETRYABLE_CODES
 
         /**
          * 측위 엔진 오류 코드 → SDK E-코드. `null` 은 "로그로만 남길 것" — 2(중복 start)·8(정지 중 start)은

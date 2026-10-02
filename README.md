@@ -268,6 +268,7 @@ session.onZoneExit  = ZoneListener { zone -> hideCoupon(zone) }
 session.onZoneDwell = DwellListener { zone, seconds -> logDwell(zone, seconds) }
 session.onPosition  = PositionListener { coord -> mapView.moveMarker(coord) }
 session.onTriggers  = TriggersListener { zoneId, triggers -> handle(triggers) }
+session.onStopped   = SessionStoppedListener { showRestart() } // engine stopped and could not restart — session closed, call begin() again
 
 session.begin()
 …
@@ -354,7 +355,7 @@ re-establishes where you are.
 | Space | `buildings()` · `building(id)` · `floors(buildingId)` · `floor(b, f)` · `zones(b, f)` · `zone(b, f, z)` · `locators(b, f)` |
 | Floor | `setFloorMap(floor, buildingId)` · `refreshZones()` |
 | Positioning | `floorSession()` → `begin()` · `end()` · `pause()` · `resume()` · `isPaused` |
-| Session callbacks | `onZoneEnter` · `onZoneExit` · `onZoneDwell` · `onPosition` · `onTriggers` · `onConfigChanged` |
+| Session callbacks | `onZoneEnter` · `onZoneExit` · `onZoneDwell` · `onPosition` · `onTriggers` · `onConfigChanged` · `onFloorDetected` · `onStopped` |
 | Buffer | `send()` (upload now) · `empty()` (discard) |
 | Status | `isInitialized` · `isDeviceAvailable` · `deviceAvailability` · `onDebugLog` · `setLanguage(code)` · `SDK_VERSION` |
 | Console-provided values | `googleMapKey` |

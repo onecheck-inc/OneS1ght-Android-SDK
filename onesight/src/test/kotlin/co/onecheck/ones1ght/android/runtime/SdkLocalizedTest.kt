@@ -59,10 +59,10 @@ class SdkLocalizedTest {
         assertEquals("verify 통과 (tenant: acme-corp)", SdkLocalized.t("coord.verifyPass", "acme-corp"))
     }
 
-    /** 패키징된 JSON 이 109 키 × 3언어(ko/ja/en) 인지 — 리소스 유실·언어 누락을 잡는다. */
-    @Test fun jsonHas109KeysTimesThreeLanguages() {
+    /** 패키징된 JSON 이 111 키 × 3언어(ko/ja/en) 인지 — 리소스 유실·언어 누락을 잡는다. */
+    @Test fun jsonHas111KeysTimesThreeLanguages() {
         val table = SdkLocalized.table
-        assertEquals(109, table.size)
+        assertEquals(111, table.size)
         for ((key, entry) in table) {
             assertEquals("$key 의 언어 집합이 ko/ja/en 이 아니다", setOf("ko", "ja", "en"), entry.keys)
         }
