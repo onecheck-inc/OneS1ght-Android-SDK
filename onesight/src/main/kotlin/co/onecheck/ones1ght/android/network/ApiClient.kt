@@ -40,7 +40,9 @@ import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSink
 import okhttp3.Response
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -153,12 +155,28 @@ public class ApiClient private constructor(
     private fun request(path: String, method: String, body: ByteArray?): Request =
         Request.Builder()
             .url(base.trimEnd('/') + path)
-            .method(method, body?.toRequestBody(JSON_MEDIA_TYPE))
+            .method(method, body?.let { if (method == "POST") OneShotBody(it) else it.toRequestBody(JSON_MEDIA_TYPE) })
             .header("X-SDK-Key", key)
             .header("Content-Type", "application/json")
             .build()
 
     private suspend inline fun <reified R> perform(req: Request): R = performJsonRequest(http, req)
+}
+
+/**
+ * POST 본문 — **한 번 보낸 요청은 OkHttp 가 조용히 다시 보내지 않게** 한다(`isOneShot`).
+ *
+ * OkHttp 는 기본값(retryOnConnectionFailure)으로, 재사용하던 연결이 응답 전에 끊기면 요청을 새 연결로 다시 보낸다 —
+ * 서버가 이미 받아 처리한 POST 라도. 그러면 구역 이벤트·좌표·프로필 생성이 SDK 도 모르게 두 번 들어가
+ * 방문·체류 집계가 부풀고 주인 없는 프로필이 생긴다(2026-10-02 CI 조사에서 확인한 동작). 재시도는 SDK 가
+ * 명시적으로 하는 것(구역 이벤트 1회·좌표 backoff)만 둔다 — iOS URLSession 도 보낸 POST 를 다시 보내지 않는다.
+ * 연결 단계 실패(요청을 아직 안 보냄)의 자동 복구는 그대로다. GET·PUT·DELETE 는 멱등이라 건드리지 않는다.
+ */
+private class OneShotBody(private val bytes: ByteArray) : RequestBody() {
+    override fun contentType() = JSON_MEDIA_TYPE
+    override fun contentLength() = bytes.size.toLong()
+    override fun isOneShot() = true
+    override fun writeTo(sink: BufferedSink) { sink.write(bytes) }
 }
 
 // MARK: - 콘솔·공간 서비스 공유 헬퍼
