@@ -341,8 +341,13 @@ internal class SessionCoordinator(
     /**
      * 측위·판정에 쓸 층을 지정한다. 호출할 때마다 갱신되고, null 이면 비운다.
      * 가동 중에 부르면 즉시 층 전환 — 세션은 그대로, 엔진 주입값만 갈린다.
+     *
+     * @throws SdkError.BuildingNotSet [floor] 가 있는데 [buildingId] 가 없다. 층 상태는 그대로 둔다.
+     *   ⚠️ 감사 SF-A1: 예전엔 이 경우를 "층 해제" 로 처리해, 성공 콜백이 오는데 층이 비어 구역 이벤트가
+     *   0건이었다(E3009).
      */
     suspend fun setFloorMap(floor: Floor?, buildingId: String?) {
+        if (floor != null && buildingId == null) throw SdkError.BuildingNotSet()
         val previousFloor = floorState
         if (floor == null || buildingId == null) {
             floorState = null

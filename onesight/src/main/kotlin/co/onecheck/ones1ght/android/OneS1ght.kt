@@ -374,16 +374,22 @@ public object OneS1ght {
      * 층이 실린다). 구역 이벤트는 엔진이 영역 **이름**으로 주므로, 그 층의 콘솔 존이 있어야 zone_id 로
      * 옮겨진다 — 구역 이벤트·시책을 쓰려면 층을 지정한다(없으면 E3009). 엔진이 찾은 층과 다르면
      * E3008 로 알린다. 가동 중이면 즉시 반영된다.
-     * [buildingId] 를 생략하면 직전에 지정한 건물을 쓴다.
+     * [buildingId] 를 생략하면 직전에 지정한 건물을 쓴다. **처음 지정할 때는 건물을 함께 넘긴다** —
+     * [Floor] 에는 건물 정보가 없어서, 건물 인자도 직전 건물도 없으면 [SdkError.BuildingNotSet](E3001)을
+     * 던지고 층 상태는 그대로 둔다. [floor] 가 null(층 해제)이면 건물은 필요 없다.
+     *
+     * @throws SdkError.NotInitialized 초기화 전
+     * @throws SdkError.BuildingNotSet [floor] 가 있는데 건물을 알 수 없다(건물 인자 없음 · 직전 건물 없음)
      */
     @JvmSynthetic
     public suspend fun setFloorMap(floor: Floor?, buildingId: String? = null): Unit = onCore {
         val c = requireCoordinator()
-        c.setFloorMap(floor, buildingId ?: currentBuildingId)
-        currentBuildingId = if (floor == null) null else (buildingId ?: currentBuildingId)
+        val building = buildingId ?: currentBuildingId
+        c.setFloorMap(floor, building) // 건물을 모르면 여기서 BuildingNotSet — 아래 문맥도 그대로 남는다
+        currentBuildingId = if (floor == null) null else building
     }
 
-    /** [setFloorMap] 의 Java 판(직전 건물). */
+    /** [setFloorMap] 의 Java 판(직전 건물). 건물 문맥이 없으면 onError([SdkError.BuildingNotSet]). */
     @JvmStatic
     public fun setFloorMap(floor: Floor?, callback: Callback<Void?>) {
         JavaBridge.run(callback) {

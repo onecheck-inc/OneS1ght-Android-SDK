@@ -151,10 +151,24 @@ public class JavaInteropTest {
             assertTrue(floor.getHasPlan());
             assertNotNull("도면 이미지까지 받아야 한다", floor.getImage());
 
+            // 감사 SF-A1 — 건물 문맥이 없으면(첫 지정 · 건물 인자 없음) onError(SdkError.BuildingNotSet).
+            OneS1ght.setFloorMap(floor, new Callback<Void>() {
+                @Override public void onSuccess(Void r) { got[0] = "floor-set-without-building"; }
+                @Override public void onError(Throwable e) { got[0] = e; } });
+            h.drain();
+            assertTrue(String.valueOf(got[0]), got[0] instanceof SdkError.BuildingNotSet);
+            assertNull(OneS1ght.floorSession().getFloor());
+
             OneS1ght.setFloorMap(floor, "b1", new Callback<Void>() {
                 @Override public void onSuccess(Void r) { got[0] = "floor-set"; }
                 @Override public void onError(Throwable e) { got[0] = e; } });
             h.drain(); assertEquals("floor-set", got[0]);
+
+            // 건물을 한 번 지정한 뒤에는 생략해도 직전 건물을 쓴다.
+            OneS1ght.setFloorMap(floor, new Callback<Void>() {
+                @Override public void onSuccess(Void r) { got[0] = "floor-set-again"; }
+                @Override public void onError(Throwable e) { got[0] = e; } });
+            h.drain(); assertEquals("floor-set-again", got[0]);
 
             FloorSession s = OneS1ght.floorSession();
             assertEquals(floor, s.getFloor());
