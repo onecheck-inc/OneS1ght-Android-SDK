@@ -13,6 +13,12 @@ package co.onecheck.ones1ght.android.runtime
 //    └ onStoppedUnexpectedly  → 다시 켜 보거나(3·10·30초) 세션을 닫는다(FloorSession.onStopped)
 //  · 실시간 수신(SSE): 층이 정해졌거나 측위가 도는 동안만 붙어 있다
 //
+//  여기는 **순서를 정하는 자리**다. 일은 부품이 한다(감사 SP-C2 · iOS K7 — 한 타입에 책임 열 가지 넘게였다):
+//    SdkReporter          화면 로그 + 서버 로그(코드)
+//    UploadPipeline       다운샘플 · 좌표 버퍼 · 300건/60초 전송 · 실패 뒤 backoff
+//    LiveStreamController 실시간 연결의 수명·층 필터
+//    EngineSupervisor     엔진이 스스로 꺼졌을 때 다시 켜기/포기
+//
 //  · 인증 게이팅: profileId 없이 start 하면 수집 미시작 (서버는 기록만 하므로 클라가 막음)
 //  · 백그라운드: UWB 포그라운드 전용 → provider.stop + flush, 복귀 시 재개
 //  · ⚠️ 모든 상태는 주입된 [scope] 의 디스패처 한 곳에서만 바꾼다(운영: Main.immediate).
@@ -22,7 +28,6 @@ package co.onecheck.ones1ght.android.runtime
 //  여기 없다(iOS 와 같다 — 상태를 두 벌 두면 어긋난다).
 //
 
-import co.onecheck.ones1ght.android.OneS1ght
 import co.onecheck.ones1ght.android.SdkError
 import co.onecheck.ones1ght.android.internal.Iso8601
 import co.onecheck.ones1ght.android.model.Building
@@ -31,14 +36,10 @@ import co.onecheck.ones1ght.android.model.Coordinates
 import co.onecheck.ones1ght.android.model.Floor
 import co.onecheck.ones1ght.android.model.FloorLocators
 import co.onecheck.ones1ght.android.model.FloorState
-import co.onecheck.ones1ght.android.model.PositionPoint
-import co.onecheck.ones1ght.android.model.ReqPositionBulk
-import co.onecheck.ones1ght.android.model.ReqSdkLogs
 import co.onecheck.ones1ght.android.model.ReqVerify
 import co.onecheck.ones1ght.android.model.ReqZoneEvent
 import co.onecheck.ones1ght.android.model.ResSdkConfig
 import co.onecheck.ones1ght.android.model.ResZoneEvent
-import co.onecheck.ones1ght.android.model.SdkLogEntry
 import co.onecheck.ones1ght.android.model.Trigger
 import co.onecheck.ones1ght.android.model.Zone
 import co.onecheck.ones1ght.android.model.ZoneEventStatus
@@ -83,7 +84,7 @@ internal class SessionCoordinator(
      * 실시간 수신 스트림을 만드는 자리. 스트림은 [scope] 위에서 onChange·onLog 를 부른다
      * (Task 6 계약) — 여기서 다시 스레드를 옮기지 않는다. null 을 돌려주면 스트림 없이 돈다.
      */
-    private val liveFactory: (
+    liveFactory: (
         onChange: (ConfigChange) -> Unit,
         onLog: (LogLevel, String) -> Unit,
     ) -> LiveConfigStream? = { onChange, onLog ->
@@ -91,8 +92,8 @@ internal class SessionCoordinator(
     },
     // 배치 정책 (사양서 §6.8 은 100건/5분 "권장" — 2026-08-20 300건/60초로 조정.
     // 4Hz 에서는 300건(=75초)보다 60초 타이머가 먼저 걸려 실질 60초·240건 주기가 된다.)
-    private val flushThreshold: Int = 300,
-    private val flushIntervalMs: Long = 60_000,
+    flushThreshold: Int = 300,
+    flushIntervalMs: Long = 60_000,
     maxPerRequest: Int = SdkLimits.MAX_PER_REQUEST,
     /** 수신 진단 1회 확인 — 측위 시작 후 이 시간 뒤에 본다. 7초는 현장에서 쓰던 값이다. */
     private val receptionCheckDelayMs: Long = 7_000,
@@ -103,8 +104,31 @@ internal class SessionCoordinator(
      * 삼켜져, 앱을 껐다 켜기 전엔 측위가 안 돌아왔다(감사 SP-B1). 닫으면 `FloorSession.isRunning` 이
      * false 가 되어 앱이 알고(onStopped) 다시 연다.
      */
-    private val engineRestartDelaysMs: List<Long> = listOf(3_000L, 10_000L, 30_000L),
+    engineRestartDelaysMs: List<Long> = listOf(3_000L, 10_000L, 30_000L),
 ) : PositioningProviderDelegate {
+
+    // MARK: - 부품 — 일은 이쪽이 하고 코디네이터는 순서만 정한다(파일 머리말)
+
+    private val reporter = SdkReporter(api, scope, clock, profileId = { profileId })
+
+    private val uploads = UploadPipeline(
+        api = api,
+        reporter = reporter,
+        scope = scope,
+        clock = clock,
+        flushThreshold = flushThreshold,
+        flushIntervalMs = flushIntervalMs,
+        maxPerRequest = maxPerRequest,
+        owner = { profileId?.let { UploadPipeline.Owner(it, visitorId) } },
+    )
+
+    private val liveStream = LiveStreamController(
+        factory = liveFactory,
+        onChange = { change -> deliverConfigChange(change) },
+        onLog = { level, line -> log(level, line) },
+    )
+
+    private val supervisor = EngineSupervisor(scope, engineRestartDelaysMs, reporter)
 
     /**
      * nil 로 시작해 resolveKeysFromConsole() 이 콘솔 키로 채운다. 콘솔이 키를 못 주면
@@ -139,10 +163,8 @@ internal class SessionCoordinator(
     var keyResolutionFailed: Boolean = false
         private set
 
-    private val buffer = TrajectoryBuffer(maxPerRequest)
-
     /** 전송 대기 좌표 수. */
-    val pendingCount: Int get() = buffer.count
+    val pendingCount: Int get() = uploads.pendingCount
 
     // 상태
     var isPrepared: Boolean = false // initialize(=prepare) 성공 여부 = "세션 가능"
@@ -156,12 +178,8 @@ internal class SessionCoordinator(
     var profileId: String? = null
         private set
 
-    // 서버가 verify 로 내려주는 테넌트 설정
-    var positionRateHz: Int = PositionRate.DEFAULT_HZ
-        private set
-
-    /** 서버 전송용 좌표 다운샘플 기준 시각 — 판정 입력은 솎지 않는다. */
-    private var lastRecordedAt: Long? = null
+    /** 서버가 verify 로 내려준 좌표 전송 주기(Hz). */
+    val positionRateHz: Int get() = uploads.positionRateHz
 
     /** setFloorMap 결과 — start 시 provider 에 주입. */
     var floorState: FloorState? = null
@@ -173,12 +191,7 @@ internal class SessionCoordinator(
 
     val currentBuildingId: String? get() = floorState?.buildingId
 
-    private var flushJob: Job? = null
     private var receptionCheckJob: Job? = null
-
-    /** 지금까지 엔진을 다시 켠 횟수 — 좌표가 한 번 나오거나 포그라운드로 돌아오면 0 으로. */
-    private var engineRestartAttempts = 0
-    private var engineRestartJob: Job? = null
 
     /**
      * 엔진이 다시 켜지지 않아 세션을 닫는 중인가 — 닫기(stop)는 flush 왕복을 기다리므로, 그 사이에 같은
@@ -204,62 +217,32 @@ internal class SessionCoordinator(
     var onPosition: ((Coordinates) -> Unit)? = null
 
     /** SDK 내부 활동 로그 (디버그) — 등급은 부르는 쪽이 정한다. 안 적으면 LOG. */
-    var onLog: ((LogLevel, String) -> Unit)? = null
+    var onLog: ((LogLevel, String) -> Unit)?
+        get() = reporter.onLog
+        set(value) {
+            reporter.onLog = value
+        }
 
-    private fun log(msg: String) = log(LogLevel.LOG, msg)
+    private fun log(msg: String) = reporter.log(msg)
 
-    private fun log(level: LogLevel, msg: String) {
-        onLog?.invoke(level, msg)
-    }
+    private fun log(level: LogLevel, msg: String) = reporter.log(level, msg)
 
     /** 콘솔 변경 → 고객사 전달. SDK 는 이 신호로 아무것도 하지 않는다. */
     var onConfigChange: ((ConfigChange) -> Unit)? = null
 
-    private var live: LiveConfigStream? = null
-
-    /** 지금 붙어 있는 스트림이 어떤 층으로 구독했는지 — 재연결 여부 판단용. */
-    private var liveFilter: FloorState? = null
-
     /** 스트림이 붙어 있는가 (테스트·진단용). */
-    val hasLiveStream: Boolean get() = live != null
+    val hasLiveStream: Boolean get() = liveStream.isAttached
 
-    // MARK: - 서버 로그 (콘솔 로그 분석기)
+    // MARK: - 서버 로그 (콘솔 로그 분석기) — SdkReporter 로 넘긴다
 
-    private val logBuffer = SdkLogBuffer(send = ::sendLogs, scope = scope, canSend = { profileId != null })
-
-    /**
-     * 코드 붙은 사건을 남긴다 — 화면 로그(onDebugLog) **한 줄** + 서버(코드 + 문맥).
-     *
-     * 서버로는 문구를 보내지 않는다: 읽는 사람이 관리자라 콘솔이 관리자 화면 언어로 렌더링한다. 화면 줄은
-     * `[코드] 문구 — 문맥` 이고, 문구는 [message](현재 언어)가 있으면 그것을, 없으면 코드 요약(현재 언어 —
-     * [localizedSummary])을 쓴다. 줄의 등급은 코드의 세기(ERROR·WARN·INFO)와 같다.
-     *
-     * ⚠️ 호출부가 문구 로그를 따로 또 남기지 않는다. 예전엔 report 가 이미 한 줄을 남기는데 호출부가 번역 문구를
-     *    한 줄 더 찍어 같은 사건이 두 번 보였다(iOS K9 — 같은 결정).
-     */
+    /** 코드 붙은 사건을 남긴다 — 화면 로그 한 줄 + 서버 로그. 규칙은 [SdkReporter.report]. */
     fun report(code: SdkCode, ctx: String = "", message: String? = null) {
-        val text = message ?: localizedSummary(code)
-        log(code.level.toLogLevel(), "[${code.code}] $text${if (ctx.isEmpty()) "" else " — $ctx"}")
-        logBuffer.append(SdkLogEntry(code = code.code, level = code.level.wire, message = ctx, at = iso(clock())))
+        reporter.report(code, ctx, message)
     }
 
     /** 서버 통신 실패를 코드로 옮겨 남긴다. ApiError 가 아니면 network 로 본다. */
     fun reportApi(error: Throwable, ctx: String = "", message: String? = null) {
-        report((error as? ApiError)?.code ?: SdkErrorCode.NETWORK, ctx, message)
-    }
-
-    private suspend fun sendLogs(batch: List<SdkLogEntry>): Boolean {
-        // profileId 가 없으면 귀속할 곳이 없다 — 버퍼가 canSend 로 붙들고 있다가 identify 때 보낸다(SP-B7 · iOS S13).
-        val profileId = profileId ?: return false
-        val req = ReqSdkLogs(profileId, SdkPlatform.NAME, OneS1ght.SDK_VERSION, batch)
-        return try {
-            api.sendLogs(req)
-            true
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            false
-        }
+        reporter.reportApi(error, ctx, message)
     }
 
     // MARK: - 라이프사이클
@@ -284,7 +267,7 @@ internal class SessionCoordinator(
 
         // 테넌트 설정 반영 — 범위 밖·미회신은 기본값(4Hz)으로 접는다
         val hz = verified.positionRateHz ?: PositionRate.DEFAULT_HZ
-        positionRateHz = hz.coerceIn(PositionRate.MIN_HZ, PositionRate.MAX_HZ)
+        uploads.positionRateHz = hz.coerceIn(PositionRate.MIN_HZ, PositionRate.MAX_HZ)
         report(
             SdkInfoCode.INITIALIZED,
             "tenant=${verified.tenantCode ?: "?"}",
@@ -344,6 +327,8 @@ internal class SessionCoordinator(
             // 서버 값에서 걸러낸 점·존·항목 — 조용히 넘기면 "구역이 안 보인다" 로만 드러난다.
             c.onDataWarning = { msg -> log(LogLevel.WARN, msg) }
             c.onDuplicateZoneName = { name, keptId, droppedId -> reportDuplicateZone(name, keptId, droppedId) }
+            // 폴백 뒤로 숨던 키 문제(401·403)를 E1002·E5004 로 드러낸다 — 동작은 그대로(감사 SF-C7).
+            c.onAuthFailure = { e, ctx -> reportApi(e, ctx) }
         }
     }
 
@@ -530,12 +515,10 @@ internal class SessionCoordinator(
 
         // 방문 시작
         visitorId = identity.newVisitorId()
-        lastRecordedAt = null
+        uploads.beginSession()
         report(SdkInfoCode.POSITIONING_ON, "visitor=$visitorId")
         provider.delegate = this
-        engineRestartJob?.cancel()
-        engineRestartJob = null
-        engineRestartAttempts = 0
+        supervisor.reset()
         closingAfterEngineStop = false
         pauseToRestore = false
         // ⚠️ isRunning 을 **먼저** 세운다. 엔진은 시작 안에서 동기로 접힐 수 있다(라이선스 없음·권한 이미 거부) —
@@ -550,7 +533,7 @@ internal class SessionCoordinator(
         }
         // 시작 안에서 이미 닫기로 했다(재시도 불가) — 타이머·스트림을 걸지 않는다. 닫기가 정리한다.
         if (closingAfterEngineStop || !isRunning) return
-        startFlushTimer()
+        uploads.startTimer()
         startReceptionCheck()
         ensureLiveStream()
         observeAppLifecycleIfNeeded()
@@ -610,7 +593,7 @@ internal class SessionCoordinator(
         if (profileId != null) {
             report(SdkInfoCode.IDENTIFIED)
             // 프로필이 생기기 전에 쌓인 로그(초기화 중 E1007 등)를 이제 보낸다(SP-B7 · iOS S13).
-            scope.launch { logBuffer.flush() }
+            scope.launch { reporter.flush() }
         }
     }
 
@@ -632,16 +615,12 @@ internal class SessionCoordinator(
 
     /** 쌓인 좌표를 지금 전송 (300건/60초를 기다리지 않고 앞당김) — OneS1ght.send(). */
     suspend fun flush() {
-        flushPositions()
+        uploads.flush()
     }
 
     /** 쌓인 좌표를 전송 없이 폐기 — OneS1ght.empty(). */
     fun empty() {
-        buffer.clear()
-    }
-
-    private suspend fun flushPositions() {
-        buffer.flush(::sendPositions)
+        uploads.discard()
     }
 
     /**
@@ -668,33 +647,32 @@ internal class SessionCoordinator(
     }
 
     private suspend fun performStop() {
-        engineRestartJob?.cancel()
-        engineRestartJob = null
-        engineRestartAttempts = 0
+        supervisor.reset()
         provider?.stop()
-        flushJob?.cancel()
-        flushJob = null
+        uploads.stopTimer()
         receptionCheckJob?.cancel()
         receptionCheckJob = null
         // 층을 계속 보고 있으면 스트림은 그대로 둔다 — 측위를 껐다고 콘솔 변경까지 안 받을
         // 이유는 없다. ⚠️ iOS 는 여기서 isRunning 이 아직 true 인 채로 판정해 층이 없어도
         // 스트림·관찰자가 남았다(사양서 §4.3 "층이 지정됨 || 측위 중" 과 어긋남). 여기서는
         // 측위가 곧 꺼진다는 전제(running=false)로 판정한다. isRunning 자체는 맨 끝에 내린다.
-        if (!streamWanted(floorSet = floorState != null, running = false)) {
-            live?.stop()
-            live = null
-            liveFilter = null
+        if (!LiveStreamController.streamWanted(floorSet = floorState != null, running = false)) {
+            liveStream.detach()
             removeLifecycleObservers()
         } else {
             ensureLiveStream()
         }
-        log(SdkLocalized.t("coord.stopFlush", buffer.count))
-        flushPositions()
-        if (buffer.count > 0) {
-            report(SdkErrorCode.PENDING_DROPPED, "points=${buffer.count}", message = SdkLocalized.t("coord.pendingLost", buffer.count))
+        log(SdkLocalized.t("coord.stopFlush", uploads.pendingCount))
+        uploads.flush()
+        if (uploads.pendingCount > 0) {
+            report(
+                SdkErrorCode.PENDING_DROPPED,
+                "points=${uploads.pendingCount}",
+                message = SdkLocalized.t("coord.pendingLost", uploads.pendingCount),
+            )
         }
         report(SdkInfoCode.POSITIONING_OFF, "visitor=$visitorId")
-        logBuffer.flush() // 세션 종료 — 잔여 로그도 내보낸다
+        reporter.flush() // 세션 종료 — 잔여 로그도 내보낸다
         isRunning = false
         closingAfterEngineStop = false
         pauseToRestore = false
@@ -703,21 +681,12 @@ internal class SessionCoordinator(
     // MARK: - 실시간 수신 (SSE)
 
     /** 스트림이 붙어 있어야 하는가 — 층이 정해졌거나 측위가 도는 동안. */
-    val liveStreamWanted: Boolean get() = streamWanted(floorSet = floorState != null, running = isRunning)
+    val liveStreamWanted: Boolean
+        get() = LiveStreamController.streamWanted(floorSet = floorState != null, running = isRunning)
 
-    /** 필요하면 붙이고, 필터가 그대로면 아무것도 하지 않는다(멱등). */
+    /** 필요하면 붙이고, 필터가 그대로면 아무것도 하지 않는다(멱등) — [LiveStreamController.ensure]. */
     private fun ensureLiveStream() {
-        if (!liveStreamWanted) {
-            live?.stop()
-            live = null
-            return
-        }
-        if (live != null && !floorFilterChanged(liveFilter, floorState)) return
-        live?.stop()
-        val s = liveFactory({ change -> deliverConfigChange(change) }, { level, line -> log(level, line) })
-        s?.start(floorState?.buildingId, floorState?.floorId)
-        live = s
-        liveFilter = floorState
+        liveStream.ensure(liveStreamWanted, floorState)
     }
 
     /**
@@ -728,9 +697,7 @@ internal class SessionCoordinator(
      */
     suspend fun teardown() {
         stopInFlight?.await()
-        live?.stop()
-        live = null
-        liveFilter = null
+        liveStream.detach()
         removeLifecycleObservers()
     }
 
@@ -749,44 +716,9 @@ internal class SessionCoordinator(
      * 층을 비우는 것도 "바뀜"이다 — 다음 층을 고르는 중일 수 있다.
      */
     private fun restartLiveStreamIfFloorChanged(previousFloor: FloorState?) {
-        if (!floorFilterChanged(previousFloor, floorState)) return
+        if (!LiveStreamController.filterChanged(previousFloor, floorState)) return
         observeAppLifecycleIfNeeded() // 측위 없이 층만 봐도 배경 전환을 다뤄야 한다
         ensureLiveStream()
-    }
-
-    // MARK: - 전송
-
-    /**
-     * 좌표 전송 실패 뒤 임계값 전송을 다시 시도해도 되는 시각 — 실패할 때마다 [POSITION_RETRY_MIN_MS] 부터 두 배씩
-     * [POSITION_RETRY_MAX_MS] 까지 늘고, 성공하면 0. 60초 타이머·종료·send() 는 이것과 무관하게 보낸다.
-     *
-     * 왜: 오프라인에서 임계값을 넘긴 뒤엔 좌표(4Hz)마다 전송 → 실패 → E5001(ERROR) → 로그 전송까지 초당 최대
-     * 8요청이 났다(iOS S5).
-     */
-    private var positionRetryAt = 0L
-    private var positionRetryDelayMs = 0L
-
-    /** 임계값 전송이 이미 예약·진행 중인가 — 좌표마다 또 예약하지 않는다. */
-    private var thresholdFlushPending = false
-
-    /** 좌표 벌크 전송 (buffer 의 sender) — true = 200 */
-    private suspend fun sendPositions(batch: List<PositionPoint>): Boolean {
-        val profileId = profileId ?: return false
-        val req = ReqPositionBulk(profileId, visitorId, SdkPlatform.NAME, batch)
-        return try {
-            val res = api.sendPositionLogs(req)
-            log(LogLevel.INFO, SdkLocalized.t("coord.logsSent", batch.size, res.acceptedCount))
-            positionRetryDelayMs = 0L
-            positionRetryAt = 0L
-            true
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            positionRetryDelayMs = (positionRetryDelayMs * 2).coerceIn(POSITION_RETRY_MIN_MS, POSITION_RETRY_MAX_MS)
-            positionRetryAt = clock() + positionRetryDelayMs
-            reportApi(e, "positions=${batch.size}", message = SdkLocalized.t("coord.logsFail", batch.size))
-            false
-        }
     }
 
     // MARK: - verify 재료
@@ -800,17 +732,7 @@ internal class SessionCoordinator(
 
     private fun makeVerifyRequest() = ReqVerify(platformName = SdkPlatform.NAME, appId = appId)
 
-    // MARK: - 배치 트리거 (300건 / 60초 / 백그라운드)
-
-    private fun startFlushTimer() {
-        flushJob?.cancel()
-        flushJob = scope.launch {
-            while (isActive) {
-                delay(flushIntervalMs)
-                flushPositions()
-            }
-        }
-    }
+    // MARK: - 생명주기 (백그라운드 · 포그라운드)
 
     /**
      * 측위가 돌고 있고 내려가는 중도 아닌가 — 생명주기 처리가 provider 를 건드려도 되는 조건.
@@ -836,8 +758,7 @@ internal class SessionCoordinator(
                         scope.launch {
                             appInForeground = false
                             // 내려가면 다시 켜 보기를 멈춘다 — 배경에선 UWB 가 안 돈다. 돌아오면 아래에서 켠다.
-                            engineRestartJob?.cancel()
-                            engineRestartJob = null
+                            supervisor.cancel()
                             receptionCheckJob?.cancel() // 배경에서는 재지 않는다(SP-B8) — 복귀가 다시 건다
                             receptionCheckJob = null
                             if (runningAndNotStopping) { // 측위는 세션이 돌 때만, 정지 중이면 그 정지에 맡긴다
@@ -848,9 +769,9 @@ internal class SessionCoordinator(
                                     (p as? UwbPositioningProvider)?.exitActiveZoneBeforeBackground()
                                     p.stop()
                                 }
-                                flushPositions()
+                                uploads.flush()
                             }
-                            live?.stop() // 스트림은 언제나 끊는다
+                            liveStream.suspend() // 스트림은 언제나 끊는다
                         }
                     }
                 },
@@ -873,17 +794,16 @@ internal class SessionCoordinator(
         appInForeground = true
         // 복귀는 새 기회다 — 내려가기 전의 재시도 횟수는 잊는다. 이 시작이 접히면 provider 가
         // onStoppedUnexpectedly 로 알려 오고, 거기서 다시 켜 보거나 세션을 닫는다.
-        engineRestartAttempts = 0
+        supervisor.resetAttempts()
         val active = runningAndNotStopping
         if (active) {
             provider?.let(::restartKeepingPause)
             startReceptionCheck() // 복귀 후 다시 잰다(SP-B8)
         }
         // 정지 중이면 스트림을 둘지 말지는 그 정지(performStop)가 정한다.
-        if (!streamWanted(floorSet = floorState != null, running = active)) return
+        if (!LiveStreamController.streamWanted(floorSet = floorState != null, running = active)) return
         // 배경에서 끊긴 것 — 앞 연결을 확실히 닫고 새로 붙인다(중복 통지로 연결이 새지 않게).
-        live?.stop()
-        live = null
+        liveStream.forgetConnection()
         ensureLiveStream()
     }
 
@@ -910,42 +830,21 @@ internal class SessionCoordinator(
      */
     override fun onStoppedUnexpectedly(provider: PositioningProvider, retryable: Boolean, context: String) {
         if (!isRunning || stopInFlight != null || closingAfterEngineStop || this.provider !== provider) return
-        engineRestartJob?.cancel()
-        engineRestartJob = null
-        val attempt = engineRestartAttempts
-        if (!retryable || attempt >= engineRestartDelaysMs.size) {
-            // 사람이 풀어야 하는 원인(권한·Bluetooth·라이선스)은 엔진이 이미 제 코드(E2003·E2004 등)로 올렸다 —
-            // E4001(ERROR)을 덧붙이면 같은 일이 「고장」 으로 두 번 찍힌다. 재시도를 다 쓴 것만 올린다.
-            val gaveUp = SdkLocalized.t("coord.engineGaveUp", context)
-            if (retryable) {
-                report(SdkErrorCode.UWB_SESSION_FAILED, "engine stopped, session closed — $context", message = gaveUp)
-            } else {
-                log(LogLevel.WARN, gaveUp)
-            }
-            closingAfterEngineStop = true
-            scope.launch {
-                stop()
-                onEngineStoppedSession?.invoke()
-            }
-            return
-        }
-        engineRestartAttempts += 1
-        pauseToRestore = provider.isPaused // 다시 켜도 사용자가 건 일시정지는 그대로(iOS S20)
-        val delayMs = engineRestartDelaysMs[attempt]
-        val total = engineRestartDelaysMs.size
-        report(
-            SdkErrorCode.UWB_SESSION_FAILED,
-            "engine stopped, retry ${attempt + 1}/$total in ${delayMs / 1000}s — $context",
-            message = SdkLocalized.t("coord.engineRetry", attempt + 1, total, delayMs / 1000),
+        supervisor.handleUnexpectedStop(
+            retryable = retryable,
+            context = context,
+            beforeRetry = { pauseToRestore = provider.isPaused }, // 다시 켜도 사용자가 건 일시정지는 그대로(iOS S20)
+            canRestart = { runningAndNotStopping && this.provider === provider },
+            inForeground = { appInForeground },
+            restart = { restartKeepingPause(provider) },
+            giveUp = {
+                closingAfterEngineStop = true
+                scope.launch {
+                    stop()
+                    onEngineStoppedSession?.invoke()
+                }
+            },
         )
-        engineRestartJob = scope.launch {
-            delay(delayMs)
-            engineRestartJob = null
-            if (!runningAndNotStopping || this@SessionCoordinator.provider !== provider) return@launch
-            // 배경이면 켜지 않는다 — UWB 가 안 돈다. 포그라운드 복귀(onForegroundResumed)가 대신 켠다.
-            if (!appInForeground) return@launch
-            restartKeepingPause(provider)
-        }
     }
 
     /**
@@ -964,37 +863,12 @@ internal class SessionCoordinator(
 
     /** 좌표 fix — 앱 훅(onPosition) + 다운샘플 후 버퍼 적재, 임계를 넘는 순간 flush(실패 뒤엔 backoff). */
     override fun onPosition(provider: PositioningProvider, coordinates: Coordinates, floorId: String?, atMs: Long) {
-        engineRestartAttempts = 0 // 다시 살아났다 — 다음 고장은 처음부터 센다
+        supervisor.resetAttempts() // 다시 살아났다 — 다음 고장은 처음부터 센다
         onPosition?.invoke(coordinates) // 앱 훅 — 원속도 유지 (지도 렌더)
         // 안드로이드 provider 는 층을 모를 수 있다(null) — 지정된 층으로 귀속한다. 그것도 없으면
         // floor_id 없이는 서버 계약이 성립하지 않으므로 싣지 않는다.
         val floor = floorId ?: floorState?.floorId ?: return
-        // ⚠️ 서버 전송분만 솎는다. 존 판정(provider 내부)은 원속도 그대로.
-        if (!shouldRecord(atMs)) return
-        buffer.append(PositionPoint(floorId = floor, coordinates = coordinates, capturedAt = iso(atMs)))
-        // 임계값 전송 — 이미 예약됐거나 실패 뒤 대기 중이면 좌표마다 다시 걸지 않는다(iOS S5).
-        if (buffer.count >= flushThreshold && !thresholdFlushPending && clock() >= positionRetryAt) {
-            thresholdFlushPending = true
-            scope.launch {
-                try {
-                    flushPositions()
-                } finally {
-                    thresholdFlushPending = false
-                }
-            }
-        }
-    }
-
-    /**
-     * position_rate_hz 다운샘플 판정. 경계에 10% 여유를 둔다 — 4Hz 입력이면 간격이 0.25초
-     * 언저리로 흔들려, 정확히 1/rate 로 자르면 절반이 버려진다.
-     */
-    private fun shouldRecord(atMs: Long): Boolean {
-        val minGapMs = (1000.0 / positionRateHz) * 0.9
-        val last = lastRecordedAt
-        if (last != null && (atMs - last) < minGapMs) return false
-        lastRecordedAt = atMs
-        return true
+        uploads.record(coordinates, floor, atMs)
     }
 
     /** 존 판정 — 즉시 전송 (network 실패만 1회 재시도), triggers 는 호스트 콜백으로. DWELL 은 안 보낸다. */
@@ -1047,10 +921,6 @@ internal class SessionCoordinator(
         /** 수신 점검 — 엔진이 층을 잡았는지 보는 간격. */
         const val RECEPTION_POLL_MS: Long = 1_000L
 
-        /** 좌표 전송 실패 뒤 첫 대기 · 최대 대기(임계값 전송만 — 60초 타이머는 그대로). */
-        const val POSITION_RETRY_MIN_MS: Long = 5_000L
-        const val POSITION_RETRY_MAX_MS: Long = 60_000L
-
         /**
          * 엔진이 지오펜스를 다시 읽어야 하는가 — **어느 구역이 있느냐**만 본다(id 집합).
          * 구역을 다시 그리면 콘솔이 새 id 를 주므로 도형이 바뀐 경우도 여기서 잡힌다.
@@ -1058,14 +928,11 @@ internal class SessionCoordinator(
         fun geofencesChanged(old: List<Zone>, new: List<Zone>): Boolean =
             old.map { it.id }.toSet() != new.map { it.id }.toSet()
 
-        /**
-         * 스트림이 다시 구독해야 할 만큼 건물·층이 바뀌었는지 — buildingId·floorId 만 본다.
-         * 같은 층이면 zones 등 나머지가 바뀌어도 구독은 그대로다(그건 refreshZones 의 몫).
-         */
+        /** [LiveStreamController.filterChanged] 와 같다 — 기존 호출부(테스트)용 이름. */
         fun floorFilterChanged(previous: FloorState?, next: FloorState?): Boolean =
-            previous?.buildingId != next?.buildingId || previous?.floorId != next?.floorId
+            LiveStreamController.filterChanged(previous, next)
 
-        /** 스트림을 붙여 둘 조건 — 운영 경로(liveStreamWanted)도 이것을 쓴다. */
-        fun streamWanted(floorSet: Boolean, running: Boolean): Boolean = floorSet || running
+        /** [LiveStreamController.streamWanted] 와 같다 — 운영 경로(liveStreamWanted)도 그것을 쓴다. */
+        fun streamWanted(floorSet: Boolean, running: Boolean): Boolean = LiveStreamController.streamWanted(floorSet, running)
     }
 }

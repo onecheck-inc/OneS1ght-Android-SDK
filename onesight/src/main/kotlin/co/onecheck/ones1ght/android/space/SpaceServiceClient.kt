@@ -107,6 +107,22 @@ internal class SpaceServiceClient(
     var onDataWarning: ((String) -> Unit)? = null
 
     /**
+     * 조회 실패를 폴백·빈 값으로 삼킨 자리에서 그 실패가 **키 문제(401·403)** 였다 — 코어가 E1002·E5004 로 올린다.
+     *
+     * 왜(감사 SF-C7): 예전엔 ApiError 를 통째로 null 로 삼켜, 키가 폐기돼도 「건물 0개」·「구역 없음」으로만 보였다.
+     * 동작(폴백·빈 값)은 그대로 두고 사실만 남긴다 — 같은 (코드, 자리)는 클라이언트당 한 번만(폴링이 덮지 않게).
+     */
+    var onAuthFailure: ((ApiError, String) -> Unit)? = null
+
+    private val reportedAuthFailures = mutableSetOf<String>()
+
+    private fun noteSwallowed(e: ApiError, what: String) {
+        if (e !is ApiError.InvalidKey && e !is ApiError.Forbidden) return
+        if (!reportedAuthFailures.add("${e.code.code}:$what")) return
+        onAuthFailure?.invoke(e, "$what failed (fallback used)")
+    }
+
+    /**
      * 같은 이름의 구역을 버렸다 — 엔진은 영역을 **이름**으로만 알려 주므로 같은 이름 두 번째 구역은 매핑될 수
      * 없다(감사 SF-A12: 예전엔 로그 없이 버려 구역 하나가 원인 없이 사라졌다). 코어가 E3009 로 올린다.
      */
@@ -131,6 +147,7 @@ internal class SpaceServiceClient(
         val res = try {
             consoleGet<ConsoleBuildingsResponse>("/positioning/buildings")
         } catch (e: ApiError) {
+            noteSwallowed(e, "console buildings")
             return null
         }
         val out = decodeLenientList(res.buildings, ConsoleBuildingDto.serializer(), dropped("building"))
@@ -147,6 +164,7 @@ internal class SpaceServiceClient(
         val fromConsole = try {
             consoleGet<ConsoleFloorsResponse>("/positioning/buildings/${pathSegment(buildingId)}/floors")
         } catch (e: ApiError) {
+            noteSwallowed(e, "console floors")
             null
         }
         val consoleFloors = fromConsole?.let { decodeLenientList(it.floors, ConsoleFloorDto.serializer(), dropped("floor")) }
@@ -168,6 +186,7 @@ internal class SpaceServiceClient(
         val plan = try {
             consolePlan(buildingId, floorId)
         } catch (e: ApiError) {
+            noteSwallowed(e, "console plan")
             null
         }
         return withContext(Dispatchers.Default) { makeFloor(floorId, plan, withImage = true) }
@@ -253,6 +272,7 @@ internal class SpaceServiceClient(
         val res = try {
             consolePlan(buildingId, floorId)
         } catch (e: ApiError) {
+            noteSwallowed(e, "console plan")
             null
         }
         if (res != null) {
@@ -261,6 +281,7 @@ internal class SpaceServiceClient(
         val fallback = try {
             spaceGet<SpacePlanResponse>("api/m/floors/${pathSegment(floorId)}/plan")
         } catch (e: ApiError) {
+            noteSwallowed(e, "space plan")
             null
         }
         return fallback?.plan?.image
@@ -294,6 +315,7 @@ internal class SpaceServiceClient(
         val res = try {
             getAnchorsCached(floorId)
         } catch (e: ApiError) {
+            noteSwallowed(e, "space anchors")
             return null
         }
         return decodeLenientList(res.anchors, AnchorDto.serializer(), dropped("anchor"))
@@ -321,6 +343,7 @@ internal class SpaceServiceClient(
         try {
             consoleZones(buildingId, floorId)
         } catch (e: ApiError) {
+            noteSwallowed(e, "console zones")
             emptyList()
         }
 

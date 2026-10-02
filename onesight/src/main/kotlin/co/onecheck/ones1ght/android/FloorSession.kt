@@ -98,7 +98,7 @@ public class FloorSession internal constructor() {
         val context = OneS1ght.appContext
         if (OneS1ght.coordinatorRef == null || context == null) throw SdkError.NotInitialized()
 
-        val hub = builtInProvider ?: OneS1ght.builtInProviderFactory(context).also { builtInProvider = it }
+        val hub = builtInProvider ?: SdkWiring.builtInProviderFactory(context).also { builtInProvider = it }
         start(hub)
     }
 
@@ -204,7 +204,7 @@ public class FloorSession internal constructor() {
 
     /** 기기를 막는 곳 — initialize 는 기기를 보지 않는다. 내장 측위를 쓰는 begin 만 부른다. */
     private fun requirePositioningDevice() {
-        val capability = OneS1ght.deviceCapability
+        val capability = SdkWiring.deviceCapability
         if (capability.sdkInt < MIN_POSITIONING_SDK) throw SdkError.OsVersionTooLow()
         if (!capability.hasUwbHardware()) throw SdkError.DeviceNotSupported()
     }

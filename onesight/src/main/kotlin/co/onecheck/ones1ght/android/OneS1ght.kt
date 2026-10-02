@@ -37,7 +37,6 @@ package co.onecheck.ones1ght.android
 //
 
 import android.content.Context
-import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.annotation.MainThread
 import co.onecheck.ones1ght.android.model.Building
@@ -46,22 +45,13 @@ import co.onecheck.ones1ght.android.model.FloorLocators
 import co.onecheck.ones1ght.android.model.Zone
 import co.onecheck.ones1ght.android.network.ApiClient
 import co.onecheck.ones1ght.android.network.ApiError
-import co.onecheck.ones1ght.android.positioning.AndroidDeviceCapability
 import co.onecheck.ones1ght.android.positioning.DeviceCapability
 import co.onecheck.ones1ght.android.positioning.PositioningPermission
-import co.onecheck.ones1ght.android.positioning.PositioningProvider
-import co.onecheck.ones1ght.android.positioning.createBuiltInProvider
-import co.onecheck.ones1ght.android.runtime.AndroidAppLifecycle
-import co.onecheck.ones1ght.android.runtime.AndroidKeyValueStore
-import co.onecheck.ones1ght.android.runtime.AppLifecycle
 import co.onecheck.ones1ght.android.runtime.LogLevel
 import co.onecheck.ones1ght.android.runtime.SdkLocalized
 import co.onecheck.ones1ght.android.runtime.SessionCoordinator
-import co.onecheck.ones1ght.android.space.SpaceServiceClient
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withContext
 
@@ -243,7 +233,9 @@ public object OneS1ght {
 
         // ② 세션 구성 (최초 또는 재구성 후 1회)
         if (coordinator == null) {
-            coordinator = makeCoordinator(app, sdkKey, baseUrl)
+            val (c, scope) = SdkWiring.makeCoordinator(app, sdkKey, baseUrl, profileId)
+            coordinator = c
+            coordinatorScope = scope
             storedKey = sdkKey
         }
 
@@ -551,38 +543,6 @@ public object OneS1ght {
 
     private fun requireCoordinator(): SessionCoordinator = coordinator ?: throw SdkError.NotInitialized()
 
-    @Suppress("DEPRECATION") // IdentityStore — 0.2 에서 internal 로 바뀔 공개 타입, SDK 안에서는 그대로 쓴다
-    private fun makeCoordinator(app: Context, sdkKey: String, baseUrl: String): SessionCoordinator {
-        val (store, lifecycle) = platformFactory(app)
-        val scope = CoroutineScope(SupervisorJob() + dispatcher)
-        val api = ApiClient.create(sdkKey, baseUrl)
-        val endpoints = spaceEndpointsOverride
-        val c = SessionCoordinator(
-            api = api,
-            identity = co.onecheck.ones1ght.android.identity.IdentityStore(store),
-            appId = app.packageName,
-            scope = scope,
-            lifecycle = lifecycle,
-            spaceClientFactory = { sdk, space, spaceHost ->
-                if (endpoints == null) {
-                    // 콘솔 공간 조회도 initialize 의 baseUrl 로(SF-A9 · iOS S15), 공간 서비스는 콘솔 geo_base_url 로(SF-A11).
-                    SpaceServiceClient(sdk, space, api.http, consoleBase = baseUrl, spaceHost = spaceHost)
-                } else {
-                    SpaceServiceClient(sdk, space, api.http, consoleBase = endpoints.first, spaceHost = endpoints.second)
-                }
-            },
-        )
-        c.onTriggers = { zoneId, triggers -> FloorSession.shared.onTriggers?.onTriggers(zoneId, triggers) }
-        c.onPosition = { coord -> FloorSession.shared.onPosition?.onPosition(coord) }
-        c.onConfigChange = { change -> FloorSession.shared.onConfigChanged?.onConfigChanged(change) }
-        c.onEngineStoppedSession = { FloorSession.shared.onStopped?.onStopped() }
-        c.onLog = { level, line -> onDebugLog?.onLog(level, line) }
-        // 앱이 이미 넘긴 프로필을 새 세션에 잇는다 — initialize 전 identify·reset·키 교체 뒤에도(SF-A7 · iOS S12).
-        c.identify(profileId)
-        coordinatorScope = scope
-        return c
-    }
-
     /** 세션을 버린다 — 측위 정지 → 스트림·관찰자 정리 → 타이머 스코프 취소. */
     private suspend fun discardCoordinator() {
         val c = coordinator ?: return
@@ -596,72 +556,17 @@ public object OneS1ght {
     /** 코어 디스패처로 옮겨 탄다 — 코디네이터 상태는 여기서만 바뀐다. */
     internal suspend fun <T> onCore(block: suspend () -> T): T = withContext(dispatcher) { block() }
 
-    // MARK: - 주입 자리 (테스트 전용 — 운영은 기본값)
+    // MARK: - 주입 자리 — 조립·테스트 주입은 SdkWiring 에 있다(감사 SF-C6)
 
-    @Volatile
-    private var dispatcherOverride: CoroutineDispatcher? = null
+    /** 코어 디스패처 — [SdkWiring.dispatcher]. */
+    internal val dispatcher: CoroutineDispatcher get() = SdkWiring.dispatcher
 
-    /**
-     * 코어 디스패처. 운영은 `Dispatchers.Main.immediate`, 테스트는 StandardTestDispatcher.
-     * 기본값을 지연 조회하는 이유: JVM 테스트에는 메인 루퍼가 없어 미리 읽으면 터진다.
-     */
-    internal var dispatcher: CoroutineDispatcher
-        get() = dispatcherOverride ?: Dispatchers.Main.immediate
-        set(value) {
-            dispatcherOverride = value
-        }
-
-    private val defaultDeviceCapability: DeviceCapability by lazy { AndroidDeviceCapability(contextProvider = { appContext }) }
-
-    @Volatile
-    private var deviceCapabilityOverride: DeviceCapability? = null
-
-    /** 기기 판정. 운영은 OS 버전 + 측위 엔진의 UWB 하드웨어 조회, 테스트는 가짜. */
-    internal var deviceCapability: DeviceCapability
-        get() = deviceCapabilityOverride ?: defaultDeviceCapability
-        set(value) {
-            deviceCapabilityOverride = value
-        }
-
-    @Suppress("DEPRECATION") // KeyValueStore — 0.2 에서 internal
-    private val defaultPlatformFactory: (Context) -> Pair<co.onecheck.ones1ght.android.runtime.KeyValueStore, AppLifecycle?> =
-        { ctx -> AndroidKeyValueStore(ctx) to AndroidAppLifecycle() }
-
-    /** 영속 저장소·앱 생명주기. 운영은 SharedPreferences·ProcessLifecycleOwner. */
-    @Suppress("DEPRECATION") // KeyValueStore — 0.2 에서 internal
-    internal var platformFactory: (Context) -> Pair<co.onecheck.ones1ght.android.runtime.KeyValueStore, AppLifecycle?> =
-        defaultPlatformFactory
-
-    /**
-     * 내장 provider(측위 엔진) 생성. begin() 이 이미 OS 를 걸렀지만 그 판정은 주입 가능한 [deviceCapability]
-     * 를 거친다 — 엔진 클래스를 로드하는 이 자리에서는 실제 `SDK_INT` 로 한 번 더 막는다(API 37 미만에서
-     * 엔진을 건드리면 android.ranging 이 없어 NoClassDefFoundError 다).
-     */
-    private val defaultBuiltInProviderFactory: (Context) -> PositioningProvider = { ctx ->
-        if (Build.VERSION.SDK_INT >= MIN_POSITIONING_SDK) {
-            createBuiltInProvider(ctx, dispatcher, System::currentTimeMillis)
-        } else {
-            throw SdkError.OsVersionTooLow()
-        }
-    }
-
-    /**
-     * 공간 조회의 (콘솔 주소, 공간 서비스 주소). 운영은 null — 콘솔 공간 조회는 initialize 의 baseUrl,
-     * 공간 서비스는 콘솔 `/config` 의 geo_base_url 로 나간다. 테스트가 스텁 서버로 돌린다.
-     */
-    @Volatile
-    internal var spaceEndpointsOverride: Pair<String, String>? = null
-
-    /** FloorSession.begin() 이 한 번만 만드는 내장 provider. 테스트는 Mock 을 넣는다. */
-    internal var builtInProviderFactory: (Context) -> PositioningProvider = defaultBuiltInProviderFactory
+    /** 기기 판정 — [SdkWiring.deviceCapability]. */
+    private val deviceCapability: DeviceCapability get() = SdkWiring.deviceCapability
 
     /** 테스트가 갈아 끼운 자리를 운영 기본값으로 되돌린다. */
     internal fun restoreDefaultsForTest() {
-        dispatcherOverride = null
-        deviceCapabilityOverride = null
-        platformFactory = defaultPlatformFactory
-        builtInProviderFactory = defaultBuiltInProviderFactory
-        spaceEndpointsOverride = null
+        SdkWiring.restoreDefaults()
         appContext = null
         warnedEarlyAvailability = false
         currentBuildingId = null
