@@ -53,7 +53,7 @@ dependencyResolutionManagement {
 ```
 
 앱 모듈의 `minSdk` 는 **26 이상**이면 됩니다. 측위 자체는 Android 17(API 37) 이상에서만 동작합니다 —
-그 아래에서는 `deviceAvailability` 가 `OS_VERSION_TOO_LOW`, `permissions(activity)` 가 팝업 없이
+그 아래에서는 `deviceAvailability` 가 `OS_VERSION_TOO_LOW`, `requestPermission(activity)` 가 팝업 없이
 `UNSUPPORTED`, `begin()` 이 `SdkError.OsVersionTooLow`(`E2001`)입니다. 초기화·공간 조회·프로필 등
 나머지는 모든 지원 OS 에서 동작합니다.
 
@@ -62,7 +62,7 @@ dependencyResolutionManagement {
 > 0.0.4 에서 올라오나요? 고칠 것이 없습니다 — 0.0.5 는 API 를 더하기만 했습니다(앱이 측위 provider 를 직접
 > 만들어 상태를 지켜볼 수 있게 됨 — [CHANGELOG](CHANGELOG.md)).
 > 0.0.3 에서 올라오나요? 고칠 것이 없습니다 — 앱 `minSdk` 를 다시 낮춰도 됩니다(26 이상).
-> 0.0.2 에서 올라오나요? `permissions(activity)` 가 `BLUETOOTH_SCAN`
+> 0.0.2 에서 올라오나요? `requestPermission(activity)` 가 `BLUETOOTH_SCAN`
 > 도 함께 요청하고, `setFloorMap` 은 선택이 됐습니다 — [CHANGELOG](CHANGELOG.md) 참고.
 > 0.0.1 에서 올라오나요? 좌표도 바뀌었습니다(`co.onecheck.ones1ght:android` →
 > `com.ones1ght.sdk:android`). 패키지 이름은 같습니다.
@@ -123,7 +123,7 @@ when (OneS1ght.deviceAvailability) {
 ```
 
 throw 하지 않고 네트워크도 타지 않으며 기다리지도 않습니다. **`initialize` 다음에** 읽으세요 —
-UWB 확인에 `initialize`(또는 `permissions(activity)`)가 넘겨주는 앱 Context 가 필요합니다.
+UWB 확인에 `initialize`(또는 `requestPermission(activity)`)가 넘겨주는 앱 Context 가 필요합니다.
 그 전에 읽으면 판단할 수 없어 `DEVICE_NOT_SUPPORTED` 를 돌려줍니다(`onDebugLog` 에 WARN 이
 남습니다).
 
@@ -138,7 +138,7 @@ UWB 확인에 `initialize`(또는 `permissions(activity)`)가 넘겨주는 앱 C
 따로 받는 별도 단계가 없습니다.
 
 ```kotlin
-when (OneS1ght.permissions(activity)) {
+when (OneS1ght.requestPermission(activity)) {
     PermissionStatus.AUTHORIZED  -> { /* 측위 시작 가능 */ }
     PermissionStatus.DENIED      -> showSettingsGuide()      // 재요청 불가 — 설정 앱으로 안내
     PermissionStatus.UNSUPPORTED -> showUnsupportedNotice()
@@ -147,7 +147,7 @@ when (OneS1ght.permissions(activity)) {
 
 ```java
 // Java
-OneS1ght.permissions(activity, new Callback<PermissionStatus>() {
+OneS1ght.requestPermission(activity, new Callback<PermissionStatus>() {
     @Override public void onSuccess(PermissionStatus status) {
         if (status == PermissionStatus.AUTHORIZED) { /* 측위 시작 가능 */ }
     }
@@ -155,7 +155,7 @@ OneS1ght.permissions(activity, new Callback<PermissionStatus>() {
 });
 ```
 
-`permissions(activity)` 는 `ActivityResultRegistry` 로 `RANGING`(UWB) + `ACCESS_FINE_LOCATION`
+`requestPermission(activity)` 는 `ActivityResultRegistry` 로 `RANGING`(UWB) + `ACCESS_FINE_LOCATION`
 + `BLUETOOTH_SCAN`(근처 기기 — 엔진이 BLE 로 층을 찾습니다)을 함께 요청하므로, `onCreate` 이후
 아무 때나 불러도 안전합니다. `ACCESS_COARSE_LOCATION` 도 같이 요청합니다 — Android 12 이상은
 대략 위치를 함께 요청해야 정밀 위치를 고를 수 있게 해 주기 때문입니다.
@@ -196,7 +196,7 @@ SDK 매니페스트가 아래 권한을 선언하고, Gradle **매니페스트 �
 </manifest>
 ```
 
-결과: `permissions(activity)` 는 팝업 없이 `DENIED` 를 돌려주고(선언하지 않은 권한은 Android 가 묻지 않습니다),
+결과: `requestPermission(activity)` 는 팝업 없이 `DENIED` 를 돌려주고(선언하지 않은 권한은 Android 가 묻지 않습니다),
 측위는 시작되지 못합니다 — 엔진이 멈추고 `E2003` 이 남습니다. 초기화·지도·구역·프로필은 그대로 동작합니다.
 `INTERNET` 과 네트워크 상태 권한 두 개는 SDK 가 써야 하므로 지우지 마세요. 결과는 Android Studio →
 `AndroidManifest.xml` → **Merged Manifest** 탭에서 확인합니다.
@@ -233,8 +233,8 @@ OneS1ght.identify(profileId)
 | 함수 | 용도 |
 |---|---|
 | `createProfile(attrs)` | 생성 — `profileId` 반환 |
-| `getProfile(id)` | 조회 |
-| `putProfile(id, attrs)` | 속성 전체 교체 |
+| `fetchProfile(id)` | 조회 |
+| `replaceProfile(id, attrs)` | 속성 전체 교체 |
 | `deleteProfile(id)` | 삭제 |
 | `identify(profileId)` | 연결 — 측위 전에 필수 |
 
@@ -296,7 +296,11 @@ session.onZoneExit  = ZoneListener { zone -> hideCoupon(zone) }
 session.onZoneDwell = DwellListener { zone, seconds -> logDwell(zone, seconds) }
 session.onPosition  = PositionListener { coord -> mapView.moveMarker(coord) }
 session.onTriggers  = TriggersListener { zoneId, triggers -> handle(triggers) }
-session.onStopped   = SessionStoppedListener { showRestart() } // 엔진이 멈춰 다시 켜지 못해 세션이 닫힘 — begin() 으로 다시 시작
+session.onFloorDetected = SessionFloorListener { floorId -> /* Floor.id 와 같은 값 — 그 층으로 setFloorMap. null = 층을 잃음 */ }
+session.onStopped   = SessionStoppedListener { reason ->
+    // ENDED = 앱이 end() · ENGINE_FAILED = 엔진이 멈춰 다시 켜지 못해 SDK 가 닫음 — begin() 으로 다시 시작
+    if (reason == FloorSession.StopReason.ENGINE_FAILED) showRestart()
+}
 
 session.begin()
 …
@@ -325,9 +329,10 @@ session.begin(new Callback<Void>() {
 다시 부른 `begin()` 은 무시되므로, 사용자가 권한을 허용한 뒤에는 먼저 `end()` 를 부르고
 `begin()` 을 다시 부르세요.
 
-ℹ️ `begin(provider)`(테스트·데모용 커스텀·Mock 측위 소스)는 좌표만 공급합니다.
-`onZoneEnter` · `onZoneExit` · `onZoneDwell` 은 SDK 내장 측위(`begin()`)에서만 오며, 커스텀
-provider 로는 발화하지 않습니다.
+ℹ️ `begin(provider)` 는 커스텀 측위 소스를 받습니다. 구역 콜백(`onZoneEnter` · `onZoneExit` · `onZoneDwell`)·
+`onFloorDetected`·`pause()`/`resume()` 은 어느 provider 든 같은 길로 세션에 옵니다 —
+`PositioningProviderDelegate.onEmit` / `onFloorDetected` 와 `PositioningProvider.pause()`/`resume()`(전부 선택, 기본 구현 있음).
+커스텀 provider 는 `delegate`·`start()`·`stop()` 만 구현하면 됩니다.
 
 ℹ️ **측위 엔진 상태를 직접 지켜보기(0.0.5~).** 지도 화면처럼 엔진 상태가 필요하면 내장 provider 를
 직접 만들어 넣을 수 있습니다 — `begin()` 과 똑같이 다뤄지고(같은 기기 확인·구역 리스너·디버그 로그),
@@ -378,17 +383,24 @@ session.isPaused
 
 | 구분 | API |
 |---|---|
-| 초기화 | `initialize(context, sdkKey, baseUrl)` · `permissions(activity)` · `reset()` |
-| 프로필 | `createProfile(attrs)` · `getProfile(id)` · `putProfile(id, attrs)` · `deleteProfile(id)` · `identify(profileId)` |
+| 초기화 | `initialize(context, sdkKey, baseUrl)` · `requestPermission(activity)` · `reset()` |
+| 프로필 | `createProfile(attrs)` · `fetchProfile(id)` · `replaceProfile(id, attrs)` · `deleteProfile(id)` · `identify(profileId)` |
 | 공간 조회 | `buildings()` · `building(id)` · `floors(buildingId)` · `floor(b, f)` · `zones(b, f)` · `zone(b, f, z)` · `locators(b, f)` |
 | 층 지정 | `setFloorMap(floor, buildingId)` · `refreshZones()` |
 | 측위 | `floorSession()` → `begin()` · `end()` · `pause()` · `resume()` · `isPaused` |
 | 세션 콜백 | `onZoneEnter` · `onZoneExit` · `onZoneDwell` · `onPosition` · `onTriggers` · `onConfigChanged` · `onFloorDetected` · `onStopped` |
-| 버퍼 | `send()`(전송) · `empty()`(폐기) |
+| 버퍼 | `uploadPendingPositions()`(전송) · `discardPendingPositions()`(폐기) |
 | 조회 | `isInitialized` · `isDeviceAvailable` · `deviceAvailability` · `onDebugLog` · `setLanguage(code)` · `SDK_VERSION` |
 | 콘솔 제공 값 | `googleMapKey` |
 
-⚠️ `empty()` 는 쌓인 좌표를 **전송하지 않고 버립니다.** 전송은 `send()` 입니다.
+⚠️ `discardPendingPositions()` 는 쌓인 좌표를 **전송하지 않고 버립니다.** 전송은 `uploadPendingPositions()` 입니다.
+
+ℹ️ **이름이 바뀐 API(iOS SDK 와 같음).** 옛 이름도 경고만 내고 그대로 컴파일·동작합니다:
+`permissions(activity)` → `requestPermission(activity)` · `getProfile` → `fetchProfile` · `putProfile` → `replaceProfile` ·
+`send()` → `uploadPendingPositions()` · `empty()` → `discardPendingPositions()` · `ApiClient.DEFAULT_BASE_URL` → `OneS1ght.DEFAULT_BASE_URL`.
+
+⚠️ SDK 의 enum·sealed class(`ConfigChange` · `SdkErrorCode` · `ZoneEvent` · `FloorSession.StopReason` · `PermissionStatus` ·
+`DeviceAvailability` · `LogLevel`)는 마이너 판에서 갈래가 늘 수 있습니다 — `when` 에는 `else` 를 두세요.
 
 ⚠️ 앱이 직접 쓰는 콘솔 값은 `googleMapKey` 하나입니다. 측위 라이선스·공간 서비스
 주소는 SDK 가 내부에서만 쓰므로 밖으로 내주지 않습니다.

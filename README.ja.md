@@ -54,7 +54,7 @@ dependencyResolutionManagement {
 ```
 
 アプリモジュールの `minSdk` は **26 以上**であれば導入できます。測位そのものは Android 17(API 37) 以上でのみ
-動作します — それ未満では `deviceAvailability` が `OS_VERSION_TOO_LOW`、`permissions(activity)` は
+動作します — それ未満では `deviceAvailability` が `OS_VERSION_TOO_LOW`、`requestPermission(activity)` は
 ダイアログなしで `UNSUPPORTED`、`begin()` は `SdkError.OsVersionTooLow`(`E2001`)になります。初期化・空間取得・
 プロフィールなどそれ以外の機能は、すべての対応 OS で動作します。
 
@@ -63,7 +63,7 @@ dependencyResolutionManagement {
 > 0.0.4 から更新する場合: 変更は不要です — 0.0.5 は API の追加のみです(アプリが測位 provider を直接
 > 作成して状態を監視できるようになりました — [CHANGELOG](CHANGELOG.md))。
 > 0.0.3 から更新する場合: 変更は不要です — アプリの `minSdk` を 26 以上の値に戻して構いません。
-> 0.0.2 から更新する場合: `permissions(activity)` は
+> 0.0.2 から更新する場合: `requestPermission(activity)` は
 > `BLUETOOTH_SCAN` も一緒に要求し、`setFloorMap` は任意になりました — [CHANGELOG](CHANGELOG.md) 参照。
 > 0.0.1 から更新する場合: 座標も変わっています(`co.onecheck.ones1ght:android` →
 > `com.ones1ght.sdk:android`)。パッケージ名は同じです。
@@ -124,7 +124,7 @@ when (OneS1ght.deviceAvailability) {
 ```
 
 throw せず、ネットワークにもアクセスせず、待つこともありません。**`initialize` の後に**読んで
-ください — UWB の確認には `initialize`(または `permissions(activity)`)が渡すアプリの Context が
+ください — UWB の確認には `initialize`(または `requestPermission(activity)`)が渡すアプリの Context が
 必要です。それより前に読むと判定できず `DEVICE_NOT_SUPPORTED` を返します(`onDebugLog` に
 WARN が残ります)。
 
@@ -139,7 +139,7 @@ Android は測位に必要な権限を一度に要求します — iOS のよう
 先に個別取得するステップはありません。
 
 ```kotlin
-when (OneS1ght.permissions(activity)) {
+when (OneS1ght.requestPermission(activity)) {
     PermissionStatus.AUTHORIZED  -> { /* 測位開始可能 */ }
     PermissionStatus.DENIED      -> showSettingsGuide()      // 再要求は不可 — 設定アプリへ誘導
     PermissionStatus.UNSUPPORTED -> showUnsupportedNotice()
@@ -148,7 +148,7 @@ when (OneS1ght.permissions(activity)) {
 
 ```java
 // Java
-OneS1ght.permissions(activity, new Callback<PermissionStatus>() {
+OneS1ght.requestPermission(activity, new Callback<PermissionStatus>() {
     @Override public void onSuccess(PermissionStatus status) {
         if (status == PermissionStatus.AUTHORIZED) { /* 開始可能 */ }
     }
@@ -156,7 +156,7 @@ OneS1ght.permissions(activity, new Callback<PermissionStatus>() {
 });
 ```
 
-`permissions(activity)` は `ActivityResultRegistry` を通じて `RANGING`(UWB) +
+`requestPermission(activity)` は `ActivityResultRegistry` を通じて `RANGING`(UWB) +
 `ACCESS_FINE_LOCATION` + `BLUETOOTH_SCAN`(付近のデバイス — エンジンが BLE でフロアを検出します)を
 まとめて要求するため、`onCreate` 以降であればいつ呼び出しても安全です。`ACCESS_COARSE_LOCATION`
 も一緒に要求します — Android 12 以降は、おおよその位置情報を同時に要求しないと正確な位置情報を
@@ -198,7 +198,7 @@ SDK のマニフェストが以下の権限を宣言しており、Gradle の**�
 </manifest>
 ```
 
-結果: `permissions(activity)` はダイアログなしで `DENIED` を返し(宣言していない権限は Android が要求しません)、
+結果: `requestPermission(activity)` はダイアログなしで `DENIED` を返し(宣言していない権限は Android が要求しません)、
 測位は開始できません — エンジンが停止し `E2003` が記録されます。初期化・地図・ゾーン・プロフィールはそのまま
 動作します。`INTERNET` と 2 つのネットワーク状態の権限は SDK が使うため削除しないでください。結果は Android Studio →
 `AndroidManifest.xml` → **Merged Manifest** タブで確認できます。
@@ -235,8 +235,8 @@ OneS1ght.identify(profileId)
 | 関数 | 用途 |
 |---|---|
 | `createProfile(attrs)` | 作成 — `profileId` を返す |
-| `getProfile(id)` | 取得 |
-| `putProfile(id, attrs)` | 属性の全置換 |
+| `fetchProfile(id)` | 取得 |
+| `replaceProfile(id, attrs)` | 属性の全置換 |
 | `deleteProfile(id)` | 削除 |
 | `identify(profileId)` | 紐づけ — 測位前に必須 |
 
@@ -300,7 +300,11 @@ session.onZoneExit  = ZoneListener { zone -> hideCoupon(zone) }
 session.onZoneDwell = DwellListener { zone, seconds -> logDwell(zone, seconds) }
 session.onPosition  = PositionListener { coord -> mapView.moveMarker(coord) }
 session.onTriggers  = TriggersListener { zoneId, triggers -> handle(triggers) }
-session.onStopped   = SessionStoppedListener { showRestart() } // エンジンが停止し再起動できずセッションが閉じた — begin() で再開
+session.onFloorDetected = SessionFloorListener { floorId -> /* Floor.id と同じ値 — そのフロアで setFloorMap。null = フロアを見失った */ }
+session.onStopped   = SessionStoppedListener { reason ->
+    // ENDED = アプリが end() · ENGINE_FAILED = エンジンが停止し再起動できず SDK が閉じた — begin() で再開
+    if (reason == FloorSession.StopReason.ENGINE_FAILED) showRestart()
+}
 
 session.begin()
 …
@@ -329,9 +333,10 @@ session.begin(new Callback<Void>() {
 いる間に再度呼んだ `begin()` は無視されるため、ユーザーが権限を許可した後は、まず `end()`
 を呼んでから `begin()` を呼び直してください。
 
-ℹ️ `begin(provider)`(テスト・デモ用のカスタム・Mock 測位ソース)は座標だけを供給します。
-`onZoneEnter` ・ `onZoneExit` ・ `onZoneDwell` は SDK 内蔵の測位(`begin()`)からのみ届き、
-カスタム provider では発火しません。
+ℹ️ `begin(provider)` はカスタム測位ソースを受け取ります。ゾーンコールバック(`onZoneEnter` ・ `onZoneExit` ・ `onZoneDwell`)・
+`onFloorDetected`・`pause()`/`resume()` はどの provider でも同じ経路でセッションに届きます —
+`PositioningProviderDelegate.onEmit` / `onFloorDetected` と `PositioningProvider.pause()`/`resume()`(すべて任意、既定実装あり)。
+カスタム provider は `delegate`・`start()`・`stop()` だけを実装すれば十分です。
 
 ℹ️ **測位エンジンの状態を直接見る(0.0.5~)。** 地図画面のようにエンジンの状態が必要な場合は、内蔵
 provider を直接作成して渡せます — `begin()` と同じ扱いになり(同じ端末チェック・ゾーンリスナー・デバッグログ)、
@@ -382,17 +387,24 @@ session.isPaused
 
 | 区分 | API |
 |---|---|
-| 初期化 | `initialize(context, sdkKey, baseUrl)` · `permissions(activity)` · `reset()` |
-| プロフィール | `createProfile(attrs)` · `getProfile(id)` · `putProfile(id, attrs)` · `deleteProfile(id)` · `identify(profileId)` |
+| 初期化 | `initialize(context, sdkKey, baseUrl)` · `requestPermission(activity)` · `reset()` |
+| プロフィール | `createProfile(attrs)` · `fetchProfile(id)` · `replaceProfile(id, attrs)` · `deleteProfile(id)` · `identify(profileId)` |
 | 空間取得 | `buildings()` · `building(id)` · `floors(buildingId)` · `floor(b, f)` · `zones(b, f)` · `zone(b, f, z)` · `locators(b, f)` |
 | フロア指定 | `setFloorMap(floor, buildingId)` · `refreshZones()` |
 | 測位 | `floorSession()` → `begin()` · `end()` · `pause()` · `resume()` · `isPaused` |
 | セッションコールバック | `onZoneEnter` · `onZoneExit` · `onZoneDwell` · `onPosition` · `onTriggers` · `onConfigChanged` · `onFloorDetected` · `onStopped` |
-| バッファ | `send()`(送信) · `empty()`(破棄) |
+| バッファ | `uploadPendingPositions()`(送信) · `discardPendingPositions()`(破棄) |
 | 状態 | `isInitialized` · `isDeviceAvailable` · `deviceAvailability` · `onDebugLog` · `setLanguage(code)` · `SDK_VERSION` |
 | コンソール提供値 | `googleMapKey` |
 
-⚠️ `empty()` はバッファ内の座標を**送信せずに破棄します。** 送信は `send()` です。
+⚠️ `discardPendingPositions()` はバッファ内の座標を**送信せずに破棄します。** 送信は `uploadPendingPositions()` です。
+
+ℹ️ **名前が変わった API(iOS SDK と同じ)。** 旧名も警告を出すだけでそのままコンパイル・動作します:
+`permissions(activity)` → `requestPermission(activity)` · `getProfile` → `fetchProfile` · `putProfile` → `replaceProfile` ·
+`send()` → `uploadPendingPositions()` · `empty()` → `discardPendingPositions()` · `ApiClient.DEFAULT_BASE_URL` → `OneS1ght.DEFAULT_BASE_URL`.
+
+⚠️ SDK の enum・sealed class(`ConfigChange` · `SdkErrorCode` · `ZoneEvent` · `FloorSession.StopReason` · `PermissionStatus` ·
+`DeviceAvailability` · `LogLevel`)はマイナー版でケースが増えることがあります — `when` には `else` を置いてください。
 
 ⚠️ アプリが直接扱うコンソール値は `googleMapKey` の一つだけです。測位ライセンスと
 空間サービスのアドレスは SDK 内部でのみ使用し、外部には公開しません。

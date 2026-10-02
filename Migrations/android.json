@@ -7,7 +7,7 @@
     "changes[] 의 각 항목은 '무엇이 어떻게 바뀌었나' 가 아니라 '코드를 어떻게 고치나' 로 쓴다.",
     "읽는 쪽이 사람이 아니라 코딩 에이전트이고, 그 결과가 고객사 코드에 그대로 들어간다.",
     "0.0.1 은 첫 공개판이라 올라올 이전 버전이 없다 — 체인은 0.0.1→0.0.2 부터 시작한다.",
-    "planned[] 는 아직 나오지 않은 판의 계획이다(체인 밖) — 0.0.x 에서 @Deprecated 로 예고한 것을 판올림 때 migrations[] 로 옮긴다."
+    "planned[] 는 아직 나오지 않은 판의 계획이다(체인 밖) — main 에 들어갔지만 릴리스 전인 변경을 적어 두고, 판올림 때 migrations[] 로 옮긴다(릴리스 검사가 마지막 칸을 현재 버전에 묶으므로 그 전에는 migrations[] 에 넣지 않는다)."
   ],
   "migrations": [
     {
@@ -93,54 +93,99 @@
   ],
   "planned": [
     {
-      "version": "0.2.0",
+      "version": "0.0.7",
       "breaking": true,
-      "summary": "공개 범위 축소·이름 정리 예정(감사 SF-C1·SP-C6·K4·K13·SF-C4). 0.0.x 에서는 깨지 않고 대상에 @Deprecated(WARNING) 경고만 단다 — 아래는 계획이며 판올림 때 migrations[] 로 옮긴다.",
+      "summary": "공개 API 를 iOS SDK main(#55) 과 똑같이 맞췄다 — 이름이 바뀐 API 는 옛 이름이 경고만 내고 그대로 동작하고, 고객이 쓸 일이 없던 내부 타입은 공개에서 내렸다(Breaking). 다음 릴리스 때 이 항목을 migrations[] 로 옮긴다.",
       "items": [
         {
-          "api": "co.onecheck.ones1ght.android.network.ApiClient (생성자·apiKey·baseUrl)",
-          "change": "internal 로 바뀐다. 엔드포인트는 이미 internal 이라 이 객체로 할 수 있는 일이 없다. ApiClient.DEFAULT_BASE_URL 은 OneS1ght 쪽으로 옮긴다(iOS OneS1ght.defaultBaseURL 과 같은 자리).",
-          "action": "ApiClient(...) 를 만드는 코드는 지운다 — OneS1ght.initialize(context, sdkKey[, baseUrl]) 가 대신한다. ApiClient.DEFAULT_BASE_URL 을 읽는 코드는 0.2 의 OneS1ght 상수로 바꾼다(기본 주소면 인자를 생략해도 된다)."
+          "api": "OneS1ght.permissions(activity[, callback])",
+          "change": "이름 바뀜 → OneS1ght.requestPermission(activity[, callback]) (iOS requestPermission()). 옛 이름은 @Deprecated(WARNING) 로 그대로 동작한다.",
+          "action": "permissions( 를 requestPermission( 으로 바꾼다. 인자·반환(PermissionStatus)은 같다 — 확인만 하는 함수가 아니라 필요하면 시스템 권한 창을 띄운다."
         },
         {
-          "api": "co.onecheck.ones1ght.android.identity.IdentityStore",
-          "change": "internal 로 바뀐다. 방문 ID 는 SDK 가 begin 마다 스스로 발급한다.",
-          "action": "IdentityStore 를 만들거나 newVisitorId() 를 부르는 코드는 지운다 — 대신할 것이 없다(필요 없다)."
+          "api": "OneS1ght.getProfile(profileId[, callback])",
+          "change": "이름 바뀜 → OneS1ght.fetchProfile(profileId[, callback]) (iOS fetchProfile(_:)). 옛 이름은 deprecated 로 그대로 동작한다.",
+          "action": "getProfile( 를 fetchProfile( 으로 바꾼다."
         },
         {
-          "api": "co.onecheck.ones1ght.android.runtime.KeyValueStore · InMemoryKeyValueStore",
-          "change": "internal 로 바뀐다. 공개 API 어디에서도 받지 않는 SDK 내부 저장 계약·테스트용 구현이다.",
+          "api": "OneS1ght.putProfile(profileId, attributes[, callback])",
+          "change": "이름 바뀜 → OneS1ght.replaceProfile(profileId, attributes[, callback]) (iOS replaceProfile(_:attributes:)). 넘기지 않은 속성은 지워진다(동작은 같다).",
+          "action": "putProfile( 를 replaceProfile( 로 바꾼다."
+        },
+        {
+          "api": "OneS1ght.send([callback])",
+          "change": "이름 바뀜 → OneS1ght.uploadPendingPositions([callback]) (iOS uploadPendingPositions()).",
+          "action": "send( 를 uploadPendingPositions( 로 바꾼다."
+        },
+        {
+          "api": "OneS1ght.empty()",
+          "change": "이름 바뀜 → OneS1ght.discardPendingPositions() (iOS discardPendingPositions()). 전송 중에 불러도 안전하다.",
+          "action": "OneS1ght.empty() 를 OneS1ght.discardPendingPositions() 로 바꾼다."
+        },
+        {
+          "api": "OneS1ght.building(buildingId = …)",
+          "change": "매개변수 이름 buildingId → id (iOS building(id:)). 위치 인자로 부르면 고칠 것이 없다.",
+          "action": "이름 붙인 인자 building(buildingId = x) 만 building(id = x) 로 바꾼다."
+        },
+        {
+          "api": "network.ApiClient.DEFAULT_BASE_URL",
+          "change": "OneS1ght.DEFAULT_BASE_URL 로 옮겼다(iOS ApiClient.defaultBaseURL → OneS1ght.defaultBaseURL). 옛 상수는 deprecated 로 남는다.",
+          "action": "ApiClient.DEFAULT_BASE_URL 을 OneS1ght.DEFAULT_BASE_URL 로 바꾸고 network.ApiClient import 를 지운다(기본 주소면 initialize 의 baseUrl 인자를 생략해도 된다)."
+        },
+        {
+          "api": "network.ApiClient 생성자·apiKey·baseUrl",
+          "change": "공개에서 내렸다(Breaking — iOS K4 와 같다). 타입과 deprecated DEFAULT_BASE_URL 만 남는다. 엔드포인트는 원래 internal 이라 이 객체로 할 수 있는 일이 없었다.",
+          "action": "ApiClient(...) 를 만드는 코드는 지운다 — OneS1ght.initialize(context, sdkKey[, baseUrl]) 가 대신한다. 프로필은 OneS1ght.createProfile·fetchProfile·replaceProfile·deleteProfile."
+        },
+        {
+          "api": "identity.IdentityStore",
+          "change": "internal 로 내렸다(Breaking — iOS K4). 방문 ID 는 SDK 가 begin 마다 발급한다.",
+          "action": "IdentityStore 를 만들거나 newVisitorId() 를 부르는 코드는 지운다 — 대신할 것이 없다."
+        },
+        {
+          "api": "runtime.KeyValueStore · runtime.InMemoryKeyValueStore",
+          "change": "internal 로 내렸다(Breaking — iOS 는 SecureStore·KeychainSecureStore 를 지웠다). 공개 API 어디에서도 받지 않던 내부 저장 계약이다.",
           "action": "구현하거나 만드는 코드는 지운다 — 대신할 것이 없다."
         },
         {
-          "api": "co.onecheck.ones1ght.android.model.SdkDefaults",
-          "change": "internal 로 바뀐다(서버가 전송 주기를 안 줄 때의 내부 기본값).",
+          "api": "model.SdkDefaults",
+          "change": "internal 로 내렸다(Breaking — iOS K4).",
           "action": "POSITION_RATE_HZ·MIN_RATE_HZ·MAX_RATE_HZ 를 읽는 코드는 값(4·1·100)을 앱에 직접 두거나 지운다."
         },
         {
-          "api": "co.onecheck.ones1ght.android.positioning.MockPositioningProvider",
-          "change": "internal(또는 별도 테스트 아티팩트)로 바뀐다 — 테스트용 타입이 배포 AAR 에 공개돼 있었다.",
+          "api": "positioning.MockPositioningProvider",
+          "change": "internal 로 내렸다(Breaking — iOS K4).",
           "action": "가짜 측위가 필요하면 PositioningProvider 를 직접 구현한다 — delegate·start()·stop() 만 채우면 되고 나머지는 기본 구현이 있다. simulateZone/simulatePosition 은 delegate?.onZone(...)/onPosition(...) 호출로 옮긴다."
         },
         {
-          "api": "UwbPositioningProvider.AnchorDiagnostic",
-          "change": "data class → 일반 class. 같은 값을 두 번 싣는 matched(=received)·canPosition(=hasFix) 를 지운다. 공개 data class 는 필드를 하나 더해도 copy·componentN 이 바뀌어 바이너리 호환이 깨진다.",
-          "action": "matched → received, canPosition → hasFix 로 바꾼다. copy()·구조 분해(val (a, b) = diagnostic)를 쓰면 이름으로 읽게 고친다."
-        },
-        {
           "api": "ConfigChange.Companion(빈 공개 companion)",
-          "change": "지운다 — SDK 내부 파싱 확장의 받침이었을 뿐이다.",
-          "action": "ConfigChange.Companion 을 직접 참조하는 코드는 없을 것이다 — 있으면 지운다."
+          "change": "internal 로 내렸다 — SDK 내부 파싱 확장의 받침이었을 뿐이다(iOS 에는 없는 자리).",
+          "action": "ConfigChange.Companion 을 직접 참조하는 코드가 있으면 지운다."
         },
         {
-          "api": "이름 정리(iOS K13 과 함께) — OneS1ght.permissions(activity) · send() · empty() · getProfile · putProfile · Trigger.type(문자열)",
-          "change": "권한 창을 띄우는 함수·모호한 send/empty·HTTP 동사 이름을 의도가 드러나는 이름으로 바꾸고(iOS 후보: requestPermission · uploadPendingPositions · discardPendingPositions · fetchProfile · replaceProfile), Trigger.type 은 알려진 값을 상수로 연다. 옛 이름은 한 판 동안 deprecated 로 남긴다 — 이름은 사용자 승인 후 확정.",
-          "action": "0.2 에서 deprecated 경고가 뜨는 자리를 경고 문구의 새 이름으로 바꾼다."
+          "api": "FloorSession.onStopped · SessionStoppedListener (0.0.6 이후 main 에만 있던 것)",
+          "change": "리스너가 이유를 받는다 — SessionStoppedListener { reason -> } (FloorSession.StopReason.ENDED | ENGINE_FAILED, iOS onStopped: (StopReason) -> Void). end()·reset()·키 교체 때도 ENDED 로 온다(예전 main 은 엔진 포기 때만 불렀다).",
+          "action": "SessionStoppedListener { … } 를 SessionStoppedListener { reason -> if (reason == FloorSession.StopReason.ENGINE_FAILED) … } 로 바꾼다. when 으로 나누면 else 를 둔다(이유가 늘 수 있다)."
         },
         {
-          "api": "ApiError.NotFound",
-          "change": "클라이언트가 없는 자원을 찾은 경우를 계약 불일치(E5003)와 가르는 별도 타입·코드를 둔다(감사 SF-C4). 공개 sealed 계층이 바뀌므로 when 으로 ApiError 를 전부 나누는 코드는 새 갈래를 더해야 한다.",
-          "action": "when (e) { is ApiError.… } 로 전부 나누는 곳에 새 하위 타입 갈래를 더한다(else 가 있으면 고칠 것 없음)."
+          "api": "FloorSession.onFloorDetected (0.0.6 이후 main 에만 있던 것)",
+          "change": "타입이 SessionFloorListener(floorId: String?) 로 바뀌었다 — Floor.id 와 같은 문자열(iOS (String?) -> Void). 엔진 층 번호(Long?)는 UwbPositioningProvider.onFloorDetected(FloorDetectedListener) 가 그대로 준다.",
+          "action": "session.onFloorDetected = SessionFloorListener { floorId -> … } 로 바꾸고, 받은 값을 floors(buildingId) 의 Floor.id 와 바로 비교한다(toString 불필요)."
+        },
+        {
+          "api": "PositioningProvider.applyZones (0.0.6 이후 main 에만 있던 것)",
+          "change": "공개 계약에서 뺐다 — iOS 에 없다. 구역 새로고침은 iOS 와 같이 앵커가 빈 apply(PositioningConfig(zones = …)) 로 온다(내장 provider 는 SDK 안에서 따로 받는다).",
+          "action": "커스텀 provider 에서 applyZones 를 override 했으면 지우고, apply(config) 에서 config.anchors 가 비고 zones 만 있으면 구역 갱신으로 처리한다."
+        },
+        {
+          "api": "PositioningProviderDelegate · PositioningProvider (추가)",
+          "change": "delegate 에 onFloorDetected(provider, floorId: String?) · onEmit(provider, event: ZoneEvent) 가 생겼다(iOS didDetectFloor·didEmit, 기본 구현 있음). 커스텀 provider 가 이걸 부르면 FloorSession.onFloorDetected·onZoneEnter/Exit/Dwell 로 이어진다. pause()/resume()/isPaused 도 어느 provider 든 FloorSession.pause() 가 부른다.",
+          "action": "고칠 것은 없다. 커스텀 provider 의 구역·층을 앱 콜백으로 받고 싶으면 delegate?.onEmit(this, event)·delegate?.onFloorDetected(this, floorId) 를 부른다."
+        },
+        {
+          "api": "UwbPositioningProvider.stop()/start() · AnchorDiagnostic.matched/canPosition · Trigger",
+          "change": "동작 바뀜(iOS #55): 내장 provider 의 stop()/start() 가 일시정지를 풀지 않는다(FloorSession 의 begin()/end() 는 예전처럼 일시정지 없이 시작·종료). Trigger.triggerId 는 서버가 빼면 \"\", type 은 빼면 \"generic\"(예전엔 그 트리거가 버려졌다). AnchorDiagnostic.matched·canPosition 은 iOS 에도 있어 deprecated 예고를 거뒀다.",
+          "action": "provider 를 직접 stop()/start() 하고 일시정지가 풀리기를 기대했다면 resume() 을 부른다. triggerId 가 빈 문자열일 수 있음을 처리한다."
         }
       ]
     }

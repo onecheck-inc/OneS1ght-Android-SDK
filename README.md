@@ -54,7 +54,7 @@ dependencyResolutionManagement {
 ```
 
 Your app module needs `minSdk = 26` or higher. Positioning itself runs only on Android 17 (API 37)+ —
-below that `deviceAvailability` is `OS_VERSION_TOO_LOW`, `permissions(activity)` returns `UNSUPPORTED`
+below that `deviceAvailability` is `OS_VERSION_TOO_LOW`, `requestPermission(activity)` returns `UNSUPPORTED`
 without a prompt, and `begin()` throws `SdkError.OsVersionTooLow` (`E2001`). Everything else
 (initialize, spaces, profiles) works on every supported OS.
 
@@ -63,7 +63,7 @@ without a prompt, and `begin()` throws `SdkError.OsVersionTooLow` (`E2001`). Eve
 > Upgrading from 0.0.4? Nothing to change — 0.0.5 only adds API (an app can now create the positioning
 > provider itself and observe its state; see [CHANGELOG](CHANGELOG.md)).
 > Upgrading from 0.0.3? Nothing to change — you may lower your app's `minSdk` back (26+).
-> Upgrading from 0.0.2? `permissions(activity)` now also asks for
+> Upgrading from 0.0.2? `requestPermission(activity)` now also asks for
 > `BLUETOOTH_SCAN`, and `setFloorMap` became optional — see [CHANGELOG](CHANGELOG.md).
 > Upgrading from 0.0.1? The coordinates also changed (`co.onecheck.ones1ght:android` →
 > `com.ones1ght.sdk:android`); package names are the same.
@@ -124,7 +124,7 @@ when (OneS1ght.deviceAvailability) {
 ```
 
 This never throws, makes no network call and never waits. Read it **after `initialize`** —
-the UWB check needs the app context that `initialize` (or `permissions(activity)`) hands
+the UWB check needs the app context that `initialize` (or `requestPermission(activity)`) hands
 over. Read before that, it cannot tell and answers `DEVICE_NOT_SUPPORTED` (with a WARN in
 `onDebugLog`).
 
@@ -139,7 +139,7 @@ Android requests the positioning permissions in one call — there is no separat
 "location manager" step like on iOS.
 
 ```kotlin
-when (OneS1ght.permissions(activity)) {
+when (OneS1ght.requestPermission(activity)) {
     PermissionStatus.AUTHORIZED  -> { /* ready to start positioning */ }
     PermissionStatus.DENIED      -> showSettingsGuide()      // no re-prompt — send to Settings
     PermissionStatus.UNSUPPORTED -> showUnsupportedNotice()
@@ -148,7 +148,7 @@ when (OneS1ght.permissions(activity)) {
 
 ```java
 // Java
-OneS1ght.permissions(activity, new Callback<PermissionStatus>() {
+OneS1ght.requestPermission(activity, new Callback<PermissionStatus>() {
     @Override public void onSuccess(PermissionStatus status) {
         if (status == PermissionStatus.AUTHORIZED) { /* ready */ }
     }
@@ -156,7 +156,7 @@ OneS1ght.permissions(activity, new Callback<PermissionStatus>() {
 });
 ```
 
-`permissions(activity)` requests `RANGING` (UWB) + `ACCESS_FINE_LOCATION` + `BLUETOOTH_SCAN`
+`requestPermission(activity)` requests `RANGING` (UWB) + `ACCESS_FINE_LOCATION` + `BLUETOOTH_SCAN`
 (nearby devices — the engine detects the floor over BLE) together through
 `ActivityResultRegistry`, so it is safe to call any time after `onCreate`. It also asks for
 `ACCESS_COARSE_LOCATION`, because Android 12+ only offers precise location when approximate
@@ -199,7 +199,7 @@ even on screens that never start positioning. If your app uses the SDK only for 
 </manifest>
 ```
 
-Result: `permissions(activity)` returns `DENIED` without a prompt (Android never prompts for an undeclared
+Result: `requestPermission(activity)` returns `DENIED` without a prompt (Android never prompts for an undeclared
 permission) and positioning cannot start — the engine stops and `E2003` is logged. Initialization, maps, zones and
 profiles keep working. Keep `INTERNET` and the two network-state permissions — the SDK needs them. Check the
 result in Android Studio → `AndroidManifest.xml` → **Merged Manifest** tab.
@@ -235,8 +235,8 @@ including after `reset()` or re-initializing with another key.
 | Function | Purpose |
 |---|---|
 | `createProfile(attrs)` | Create, returns `profileId` |
-| `getProfile(id)` | Read |
-| `putProfile(id, attrs)` | Replace all attributes |
+| `fetchProfile(id)` | Read |
+| `replaceProfile(id, attrs)` | Replace all attributes |
 | `deleteProfile(id)` | Delete |
 | `identify(profileId)` | Attach — required before positioning |
 
@@ -299,7 +299,11 @@ session.onZoneExit  = ZoneListener { zone -> hideCoupon(zone) }
 session.onZoneDwell = DwellListener { zone, seconds -> logDwell(zone, seconds) }
 session.onPosition  = PositionListener { coord -> mapView.moveMarker(coord) }
 session.onTriggers  = TriggersListener { zoneId, triggers -> handle(triggers) }
-session.onStopped   = SessionStoppedListener { showRestart() } // engine stopped and could not restart — session closed, call begin() again
+session.onFloorDetected = SessionFloorListener { floorId -> /* same value as Floor.id — setFloorMap that floor; null = lost */ }
+session.onStopped   = SessionStoppedListener { reason ->
+    // ENDED = you called end() · ENGINE_FAILED = the engine stopped and could not restart; call begin() again
+    if (reason == FloorSession.StopReason.ENGINE_FAILED) showRestart()
+}
 
 session.begin()
 …
@@ -328,9 +332,10 @@ does not throw: the session starts but produces no positions, and `E2003` is log
 second `begin()` while that session is still running is ignored — so after the user grants
 the permission, call `end()` first and then `begin()` again.
 
-ℹ️ `begin(provider)` (a custom or mock positioning source, for tests and demos) feeds
-positions only. `onZoneEnter` · `onZoneExit` · `onZoneDwell` come from the SDK's built-in
-positioning (`begin()`) and do not fire for a custom provider.
+ℹ️ `begin(provider)` takes a custom positioning source. Zone callbacks (`onZoneEnter` · `onZoneExit` ·
+`onZoneDwell`), `onFloorDetected` and `pause()`/`resume()` reach the session the same way for any provider —
+through `PositioningProviderDelegate.onEmit` / `onFloorDetected` and `PositioningProvider.pause()`/`resume()`
+(all optional, with default implementations). A custom provider only has to implement `delegate`, `start()`, `stop()`.
 
 ℹ️ **Watching the positioning engine yourself (0.0.5+).** A map screen that needs the engine's
 own state can create the built-in provider and pass it in — it is treated exactly like `begin()`
@@ -381,17 +386,24 @@ re-establishes where you are.
 
 | Group | API |
 |---|---|
-| Setup | `initialize(context, sdkKey, baseUrl)` · `permissions(activity)` · `reset()` |
-| Profile | `createProfile(attrs)` · `getProfile(id)` · `putProfile(id, attrs)` · `deleteProfile(id)` · `identify(profileId)` |
+| Setup | `initialize(context, sdkKey, baseUrl)` · `requestPermission(activity)` · `reset()` |
+| Profile | `createProfile(attrs)` · `fetchProfile(id)` · `replaceProfile(id, attrs)` · `deleteProfile(id)` · `identify(profileId)` |
 | Space | `buildings()` · `building(id)` · `floors(buildingId)` · `floor(b, f)` · `zones(b, f)` · `zone(b, f, z)` · `locators(b, f)` |
 | Floor | `setFloorMap(floor, buildingId)` · `refreshZones()` |
 | Positioning | `floorSession()` → `begin()` · `end()` · `pause()` · `resume()` · `isPaused` |
 | Session callbacks | `onZoneEnter` · `onZoneExit` · `onZoneDwell` · `onPosition` · `onTriggers` · `onConfigChanged` · `onFloorDetected` · `onStopped` |
-| Buffer | `send()` (upload now) · `empty()` (discard) |
+| Buffer | `uploadPendingPositions()` (upload now) · `discardPendingPositions()` (discard) |
 | Status | `isInitialized` · `isDeviceAvailable` · `deviceAvailability` · `onDebugLog` · `setLanguage(code)` · `SDK_VERSION` |
 | Console-provided values | `googleMapKey` |
 
-⚠️ `empty()` **discards** buffered coordinates without sending. Use `send()` to upload.
+⚠️ `discardPendingPositions()` **discards** buffered coordinates without sending. Use `uploadPendingPositions()` to upload.
+
+ℹ️ **Renamed APIs (same as the iOS SDK).** The old names still compile and work, with a deprecation warning:
+`permissions(activity)` → `requestPermission(activity)` · `getProfile` → `fetchProfile` · `putProfile` → `replaceProfile` ·
+`send()` → `uploadPendingPositions()` · `empty()` → `discardPendingPositions()` · `ApiClient.DEFAULT_BASE_URL` → `OneS1ght.DEFAULT_BASE_URL`.
+
+⚠️ SDK enums and sealed classes (`ConfigChange` · `SdkErrorCode` · `ZoneEvent` · `FloorSession.StopReason` · `PermissionStatus` ·
+`DeviceAvailability` · `LogLevel`) can gain cases in a minor version — keep an `else` branch in `when`.
 
 ⚠️ `googleMapKey` is the only console value your app touches. The positioning license and
 the space-service address are used inside the SDK only and are not exposed — your app
