@@ -394,9 +394,12 @@ internal class SessionCoordinator(
         return try {
             val zones = client.loadZones(state.buildingId, state.floorId)
             val changed = geofencesChanged(state.zones, zones)
+            // 내용(id·이름·도형·체류 초 등)이 하나라도 다른가 — 같으면 provider 를 건드리지 않는다.
+            // ⚠️ 감사 SP-B2: 폴링마다 apply 하면 판정기의 체류 타이머가 지워져 DWELL 이 안 떴다.
+            val contentChanged = zones != state.zones
             floorState?.zones = zones
             // 구역을 전부 지웠을 때도 엔진에 반영해야 한다 — 안 그러면 삭제된 구역이 계속 발화한다.
-            if (isRunning) {
+            if (isRunning && contentChanged) {
                 provider?.apply(PositioningConfig(zones = zones))
                 // 바뀐 순간에만 엔진이 영역을 다시 읽게 한다 — 폴링마다 부르면 엔진이 계속 껐다 켜진다.
                 if (changed) {

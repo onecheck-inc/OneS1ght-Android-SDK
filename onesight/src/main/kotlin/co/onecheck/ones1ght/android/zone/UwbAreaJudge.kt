@@ -61,12 +61,23 @@ internal class UwbAreaJudge(private val scheduler: DwellScheduler) {
     // MARK: - 존 주입
 
     /**
-     * 콘솔 존 교체 (층 전환·폴링). 판정 상태는 버린다 —
-     * 사라진 존의 IN 상태가 남으면 이탈 이벤트가 영영 안 나온다.
+     * 콘솔 존 교체 (층 전환·폴링).
+     *
+     * - 내용이 같은 목록이면 아무것도 안 한다 — 판정 상태·체류 타이머·경고 이력 그대로.
+     * - 지금 안에 있는 존이 새 목록에 **정의 그대로**(id·이름·도형·체류 초 등 전부 같음) 남아 있으면
+     *   그 존의 판정 상태와 체류 타이머를 유지한다.
+     * - 그 존이 사라졌거나 정의가 바뀌었으면 판정 상태를 버린다 — 사라진 존의 IN 상태가 남으면
+     *   이탈 이벤트가 영영 안 나오고, 바뀐 존을 옛 기준으로 발화하면 틀린 시책이 나간다.
+     *
+     * ⚠️ 감사 SP-B2: 예전엔 무조건 버렸다. 앱이 구역을 주기적으로 다시 받으면(온보딩 앱 5초) 그때마다
+     *    체류 타이머가 지워져 DWELL 이 사실상 안 떴다 — 엔진은 IN 을 다시 주지 않아 복구도 없다.
      */
     fun apply(zones: List<Zone>) {
+        if (zones == this.zones) return
+        val active = activeZoneId?.let { id -> this.zones.firstOrNull { it.id == id } }
+        val keepActive = active != null && zones.any { it == active }
         this.zones = zones
-        reset()
+        if (!keepActive) reset()
         warnedNames.clear()
 
         // 엔진 영역 이벤트에 ID 가 없다 → name 이 키. 중복이면 #2, #3… 로 유일화
