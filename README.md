@@ -17,6 +17,7 @@ over BLE and judges zones itself) and (with two platform-forced exceptions, see
 | Item | Requirement |
 |---|---|
 | Positioning | **Android 17 (API 37)+** · UWB **DL-TDoA** capable device · Bluetooth LE (floor detection) |
+| Tested devices | Google Pixel 10 Pro · Samsung Galaxy S25+ (SM-S936N, Android 17). Other models are untested — UWB chip features differ by device, so check positioning on your target devices first |
 | Package | **Android 8.0 (API 26)+** (`minSdk 26`). Below Android 17, or on devices without UWB, the app runs normally; only positioning stays inactive (`OS_VERSION_TOO_LOW` / `E2001`) |
 | Build | `compileSdk` / `targetSdk` 37, JVM target 17 |
 | Language | Works from Java 8+ / Kotlin 1.9+ apps |
