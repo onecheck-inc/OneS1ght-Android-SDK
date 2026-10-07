@@ -87,13 +87,13 @@ internal enum class HubError(val code: Int) {
      *
      * [message] 는 엔진이 같이 준 문장이다. 오류 3 하나로 Bluetooth "꺼짐·권한·미지원" 이 다 오는데, 꺼짐은 빠른
      * 설정에서 켜면 풀리고 권한은 설정 앱에서 풀어야 해 할 일이 다르다 — 그래서 꺼짐만 따로 E2004 로 올린다
-     * (iOS 0.1.24 와 같다). 엔진 1.1.0 은 꺼짐을 시작 때와 구동 중 모두 `bluetooth unavailable: powered off` 로
+     * (iOS 0.1.24 와 같다). 엔진 1.1.0(1.1.1 도 같은 문장)은 꺼짐을 시작 때와 구동 중 모두 `bluetooth unavailable: powered off` 로
      * 준다. 권한은 `…: permission required — …`, 미지원은 `…: unsupported on this device` 다.
      *
      * 감사 SP-B9 — 기존 코드 안에서 할 일이 맞는 곳으로 옮겼다(새 E-코드는 공개 enum 확장이라 만들지 않는다):
      *  · 1 라이선스 미설정 · 10 라이선스 거부 → E1007(측위 키 문제). 엔진 라이선스는 콘솔이 주는 측위 키다 —
-     *    E1002 「SDK 키 무효」로 올리면 멀쩡한 SDK 키(ock_sdk_)를 의심하게 했다. ⚠️ iOS 는 아직 E1002 다.
-     *  · 3 + `unsupported on this device` → E2002(미지원 기기). ⚠️ iOS 는 아직 E2003 이다.
+     *    E1002 「SDK 키 무효」로 올리면 멀쩡한 SDK 키(ock_sdk_)를 의심하게 했다. iOS 도 0.2.1 부터 E1007 이다.
+     *  · 3 + `unsupported on this device` → E2002(미지원 기기). iOS 도 0.2.1 부터 E2002 다.
      *  · 7(위치 권한·정밀도·서비스 꺼짐)·9(매니페스트 RANGING 선언 누락)는 E2003 그대로 — 맞는 기존 코드가 없다.
      *  · 13(스캔 과다)은 **E3007(층 미탐지)**. 층은 BLE 스캔으로만 찾으므로 결과가 같다. 원인은 문맥
      *    (`engine=13 …`)에 남는다 — 잠시 뒤 다시 시작하면 풀린다.

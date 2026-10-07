@@ -93,7 +93,7 @@ kotlin {
 // 어느 쪽이든 assembleRelease 는 계정 없이는 실패해야 한다 — 스텁이 실린 release
 // AAR 이 배포되는 사고를 막기 위해서다.
 //
-// 세 AAR 모두 res/ 가 없고 R.txt 가 비어 있다(1.1.0 · 2.0.0 · 2.1.0 기준 확인) — 클래스만 실으면 된다.
+// 세 AAR 모두 res/ 가 없고 R.txt 가 비어 있다(1.1.1 · 2.0.0 · 2.1.0 기준 확인) — 클래스만 실으면 된다.
 // 엔진 매니페스트의 권한은 우리 매니페스트(src/main/AndroidManifest.xml)가 같은 것을 선언한다.
 // gpa-prm 매니페스트의 usesCleartextTraffic 은 싣지 않는다 — 엔진 서버 통신은 https 뿐이다.
 // ---------------------------------------------------------------------------
@@ -124,7 +124,9 @@ if (hasGeoplanEngineCreds) {
 
     dependencies {
         // 통합 엔진이 하위 두 엔진(판정 · DL-TDoA)을 런타임 의존으로 부른다 — POM 에 적힌 판 그대로.
-        add(geoplanEngine.name, "kr.geoplan.android.lib:gpa-ihub:1.1.0")
+        // 1.1.1 — Galaxy S25+(SM-S936N) 에서 UWB 세션이 열리지 않던 문제 수정(1.1.0 은 onError(5) · UNSUPPORTED(3)).
+        // POM 은 판 번호 말고 1.1.0 과 같다(하위 엔진·전이 의존 그대로), 공개 API 도 같다.
+        add(geoplanEngine.name, "kr.geoplan.android.lib:gpa-ihub:1.1.1")
         add(geoplanEngine.name, "kr.geoplan.android.lib:gpa-prm:2.0.0")
         add(geoplanEngine.name, "kr.geoplan.android.lib:gpa-dltdoa:2.1.0")
     }
@@ -134,7 +136,7 @@ if (hasGeoplanEngineCreds) {
     // 모든 의존성을 막으므로 쓰지 않고, 엔진 AAR 3개만 여기서 대조한다.
     // 엔진 판을 올리면 위 dependencies 와 이 표를 함께 고친다(`shasum -a 256 <AAR>` 값).
     val engineAarSha256 = mapOf(
-        "gpa-ihub-1.1.0.aar" to "f8e55a1e239b54bfad399698f4bb1c57741618147adf35c4730c1917a9225d2d",
+        "gpa-ihub-1.1.1.aar" to "2e097966917e45e079436bfb037f6e9e7b7aea53abb1960c14ffe79f4f278f8c",
         "gpa-prm-2.0.0.aar" to "c1ce0dbcaf44762165a415f2daa7a02b5f482e4a95e3617623ff22c37241f729",
         "gpa-dltdoa-2.1.0.aar" to "48263fd40b3083b9599cc0b83206da09610625bb306e40c7a1a6207e2e58f964",
     )
@@ -216,7 +218,7 @@ if (hasGeoplanEngineCreds) {
     // 엔진 AAR 의 proguard.txt 가 있으면 우리 consumer-rules.pro 와 합쳐 별도 머지본으로
     // 내보낸다(레포에 커밋된 consumer-rules.pro 원본은 건드리지 않는다). 이 머지본이
     // consumer-rules.pro 자리를 그대로 대체한다 — 둘 다 등록하면 내용이 두 번 실린다.
-    // (1.1.0 · 2.0.0 · 2.1.0 에는 proguard.txt 가 없다 — 생기면 자동으로 실린다.)
+    // (1.1.1 · 2.0.0 · 2.1.0 에는 proguard.txt 가 없다 — 생기면 자동으로 실린다.)
     val mergedConsumerRules = layout.buildDirectory.file("geoplanEngine/merged-consumer-rules.pro")
     val mergeEngineProguardRules = tasks.register("mergeGeoplanEngineProguardRules") {
         dependsOn(extractEngineAar)

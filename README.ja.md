@@ -16,6 +16,7 @@
 | 項目 | 要件 |
 |---|---|
 | 測位 | **Android 17 (API 37) 以上** ・ UWB **DL-TDoA** 対応端末 ・ Bluetooth LE(フロア検出) |
+| 検証済み端末 | Google Pixel 10 Pro ・ Samsung Galaxy S25+ (SM-S936N, Android 17)。その他の機種は未検証です — 端末ごとに UWB チップの機能が異なるため、対象端末で測位できるか先に確認してください |
 | パッケージ導入 | **Android 8.0 (API 26) 以上**(`minSdk 26`)。Android 17 未満や UWB 非搭載端末でもアプリは正常に動作し、測位のみ無効になります(`OS_VERSION_TOO_LOW` / `E2001`) |
 | ビルド環境 | `compileSdk` / `targetSdk` 37、JVM target 17 |
 | 言語 | Java 8+ / Kotlin 1.9+ のアプリで利用可能 |

@@ -16,6 +16,7 @@
 | 항목 | 요구사항 |
 |---|---|
 | 측위 동작 | **Android 17 (API 37)+** · UWB **DL-TDoA** 지원 기기 · Bluetooth LE(층 탐지) |
+| 검증 기기 | Google Pixel 10 Pro · Samsung Galaxy S25+ (SM-S936N, Android 17). 그 밖의 기종은 검증 전입니다 — 기기마다 UWB 칩 기능이 달라, 대상 기기에서 측위가 되는지 먼저 확인하세요 |
 | 패키지 추가 | **Android 8.0 (API 26)+** (`minSdk 26`). Android 17 미만이거나 UWB 가 없는 기기에서도 앱은 정상 동작하고 측위만 비활성(`OS_VERSION_TOO_LOW` / `E2001`) |
 | 빌드 환경 | `compileSdk` / `targetSdk` 37, JVM target 17 |
 | 언어 | Java 8+ / Kotlin 1.9+ 앱에서 사용 가능 |

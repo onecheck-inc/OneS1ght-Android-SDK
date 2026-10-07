@@ -135,6 +135,25 @@ class UwbProviderLogicTest {
         assertTrue("입장 트리거도 없다", delegate.enters.isEmpty())
     }
 
+    /**
+     * 빈 라이선스로 엔진만 띄워도(startDetection) 앱 훅(엔진 오류 1)만이 아니라 코어에도 E1007 이 간다 —
+     * 화면 로그·훅만으로는 콘솔에 안 올라간다. iOS 0.2.1(#57 testEmptyLicenseReportsKeyUnavailable)과 같은 동작.
+     */
+    @Test fun startDetectionWithEmptyLicenseReportsE1007AndEngineHook() {
+        val engineErrors = mutableListOf<Int>()
+        provider.onEngineError = EngineErrorListener { code, _ -> engineErrors += code }
+        provider.license = "  "
+
+        provider.startDetection()
+        flush()
+
+        assertEquals(0, engine.starts)
+        assertEquals(listOf(SdkErrorCode.KEY_UNAVAILABLE), delegate.codes())
+        assertEquals(listOf(HubError.LICENSE_MISSING.code), engineErrors)
+        assertEquals(Phase.IDLE, provider.enginePhase)
+        assertFalse(provider.isRunning)
+    }
+
     /** 라이선스는 start 직전에 엔진에 등록한다(앞뒤 공백 제거). 로그에 키가 새지 않는다. */
     @Test fun startRegistersLicenseListenerThenStarts() {
         provider.license = "  lic-0123456789 "

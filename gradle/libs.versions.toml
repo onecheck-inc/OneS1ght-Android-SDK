@@ -17,7 +17,7 @@ androidxLifecycleProcess = "2.8.7"     # stdlib 1.x 대 (2.11.0 은 2.1.20)
 # 하한 선언일 뿐이라 고객 앱이 더 새 activity 를 쓰면 그쪽으로 올라간다.
 androidxActivity = "1.9.3"             # core 1.13 · stdlib 1.8 대 (1.13 은 core 1.18 → stdlib 2.1.20)
 
-# 측위 엔진(gpa-ihub 1.1.0 → gpa-prm 2.0.0 · gpa-dltdoa 2.1.0)의 전이 의존. 엔진 POM 에 적힌 버전과
+# 측위 엔진(gpa-ihub 1.1.1 → gpa-prm 2.0.0 · gpa-dltdoa 2.1.0)의 전이 의존. 엔진 POM 에 적힌 버전과
 # 같아야 한다(어긋나면 링크 단계에서 NoSuchMethodError 등으로 깨질 수 있다).
 # 전부 순수 Java 라 kotlin-stdlib 를 끌어오지 않는다. androidx.core 는 하한 선언이다 — androidx.activity 가
 # 이미 더 새 판(1.13, stdlib 1.8 대)을 가져오므로 실제로는 그쪽으로 올라간다.
