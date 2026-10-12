@@ -111,7 +111,7 @@ OneS1ght.initialize(context, "ock_sdk_…", new Callback<Void>() {
 **想定されるログ**
 
 ```
-[I1001] Initialized — tenant=itoku
+[I1001] Initialized — tenant=YOUR_TENANT
 ```
 
 ### 端末の対応可否を先に確認

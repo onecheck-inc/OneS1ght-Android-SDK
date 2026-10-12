@@ -111,7 +111,7 @@ step (Step 5) — only your app knows which floor to use.
 **Expected logs**
 
 ```
-[I1001] Initialized — tenant=itoku
+[I1001] Initialized — tenant=YOUR_TENANT
 ```
 
 ### Check device support first

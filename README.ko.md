@@ -110,7 +110,7 @@ OneS1ght.initialize(context, "ock_sdk_…", new Callback<Void>() {
 **예상 로그**
 
 ```
-[I1001] Initialized — tenant=itoku
+[I1001] Initialized — tenant=YOUR_TENANT
 ```
 
 ### 기기 지원 여부 먼저 확인
