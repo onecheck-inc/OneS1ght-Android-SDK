@@ -44,7 +44,7 @@
 
 ### Breaking
 
-> 마이그레이션 지침은 [`Migrations/android.json`](Migrations/android.json) 의 `migrations[]` 마지막 칸(0.0.6 → 0.0.7)에 있다.
+> 마이그레이션 지침은 [`Migrations/android.json`](Migrations/android.json) 의 `migrations[]` 중 0.0.6 → 0.0.7 칸에 있다.
 
 **공개에서 내린 것(internal)** — README·스니펫이 안내한 적 없는 내부 부품입니다. 쓰고 있었다면 오른쪽으로 옮기세요.
 
@@ -319,8 +319,18 @@ implementation("com.ones1ght.sdk:android:0.0.5")
    없습니다. 층을 지정하지 않고 `begin()` 하면 파이프라인은 돌아도 좌표가 나오지
    않습니다(`E3001`, WARN).
 
+> **지금 남은 차이(0.0.9 기준).** 3번은 0.0.3 에서 없어졌습니다(엔진이 BLE 로 층을 찾음). 플랫폼이 강제하는 차이는
+> 1·2번 두 가지이고, 그 밖에 동작 차이 하나 — 건물 없이 처음 `setFloorMap(floor)` 를 부르면 안드로이드만
+> `SdkError.BuildingNotSet`(E3001)으로 거절합니다(0.0.7, iOS 는 조용히 층을 비움). README 첫 단락도 이 기준입니다.
+
 그 밖의 이름·인자 순서·기본값·동작·오류 코드 26개·서버 계약은 iOS 와 같습니다.
 
+[0.0.9]: https://github.com/onecheck-inc/OneS1ght-Android-SDK/releases/tag/v0.0.9
+[0.0.8]: https://github.com/onecheck-inc/OneS1ght-Android-SDK/releases/tag/v0.0.8
+[0.0.7]: https://github.com/onecheck-inc/OneS1ght-Android-SDK/releases/tag/v0.0.7
+[0.0.6]: https://github.com/onecheck-inc/OneS1ght-Android-SDK/releases/tag/v0.0.6
+[0.0.5]: https://github.com/onecheck-inc/OneS1ght-Android-SDK/releases/tag/v0.0.5
+[0.0.4]: https://github.com/onecheck-inc/OneS1ght-Android-SDK/releases/tag/v0.0.4
 [0.0.3]: https://github.com/onecheck-inc/OneS1ght-Android-SDK/releases/tag/v0.0.3
 [0.0.2]: https://github.com/onecheck-inc/OneS1ght-Android-SDK/releases/tag/v0.0.2
 [0.0.1]: https://github.com/onecheck-inc/OneS1ght-Android-SDK/releases/tag/v0.0.1
