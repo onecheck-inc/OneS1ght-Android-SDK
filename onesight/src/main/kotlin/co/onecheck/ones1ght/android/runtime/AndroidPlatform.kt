@@ -9,6 +9,7 @@ package co.onecheck.ones1ght.android.runtime
 
 import android.content.Context
 import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 
@@ -72,4 +73,11 @@ internal class AndroidAppLifecycle : AppLifecycle {
         observer?.let { ProcessLifecycleOwner.get().lifecycle.removeObserver(it) }
         observer = null
     }
+
+    /**
+     * 프로세스의 지금 상태 — 첫 액티비티가 onStart 를 지나야 STARTED 다(2026-10-16). 액티비티 onCreate 안이나
+     * 서비스·리시버에서 깨어난 프로세스는 CREATED 라 false — 코디네이터가 엔진을 화면에 올 때까지 미룬다.
+     */
+    override val isInForeground: Boolean
+        get() = ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
 }

@@ -22,6 +22,7 @@ package co.onecheck.ones1ght.android.runtime
 //
 //  · 인증 게이팅: profileId 없이 start 하면 수집 미시작 (서버는 기록만 하므로 클라가 막음)
 //  · 백그라운드: UWB 포그라운드 전용 → provider.stop + flush, 복귀 시 재개
+//    앱이 화면에 없을 때 begin 되면 세션만 열고 엔진은 화면에 올 때까지 미룬다(2026-10-16 · iOS #67)
 //  · ⚠️ 모든 상태는 주입된 [scope] 의 디스패처 한 곳에서만 바꾼다(운영: Main.immediate).
 //    iOS 의 `@MainActor` 자리다 — 잠금이 없는 대신 다른 스레드에서 부르면 안 된다.
 //
@@ -208,6 +209,23 @@ internal class SessionCoordinator(
      */
     private var appInForeground = true
     private var observingLifecycle = false
+
+    /**
+     * 세션은 열렸는데 엔진은 **앱이 화면에 올 때까지** 꺼 둔 상태 — 화면 밖에서 시작했거나 배경으로 내려갔다.
+     *
+     * ⚠️ 2026-10-16 (iOS #67 과 같은 규칙): 화면 없이 깨어난 프로세스(서비스·리시버·WorkManager·액티비티 onCreate
+     *    안)에서 begin() 하면 엔진이 배경에서 켜졌다. 그 경로엔 배경 통지(onStop)가 오지 않아 엔진·층 미탐지 감시·
+     *    수신 점검이 화면 없이 걸린 채 남았고, 복귀의 provider.start() 는 이미 「도는 중」 이라 아무 일도 하지 않았다.
+     *    그래서 엔진은 앱이 화면에 있을 때만 켜고, 켜야 할 일이 남았다는 사실은 이 깃발 하나로 든다.
+     */
+    var engineAwaitingForeground: Boolean = false
+        private set
+
+    /**
+     * 앱이 화면에 떠 있는가(지금 값) — start 가 엔진을 켤지 미룰지 정할 때 본다. 테스트가 바꿔 끼운다.
+     * 생명주기가 없으면(주입 안 함) 예전처럼 떠 있다고 본다.
+     */
+    var isAppActive: () -> Boolean = { lifecycle?.isInForeground ?: true }
 
     /** 존 이벤트 응답의 개인화 액션 → 호스트 전달 (zoneId, triggers) */
     var onTriggers: ((String, List<Trigger>) -> Unit)? = null
@@ -539,6 +557,19 @@ internal class SessionCoordinator(
         //    그 알림(onStoppedUnexpectedly)이 isRunning=false 일 때 오면 무시돼, 세션은 「측위 중」 인 채 엔진만
         //    죽은 상태로 남았다(iOS #54 와 같다).
         isRunning = true
+        // 앱이 화면에 없으면 세션만 열고 엔진은 미룬다 — 화면에 오면 포그라운드 통지가 한 번 켠다
+        // (engineAwaitingForeground 주석, 2026-10-16). 수신 점검도 엔진과 함께 건다. 방문 ID·positioningOn·
+        // 실시간 수신·생명주기 관찰은 예전 그대로다(iOS #67 과 같다).
+        if (!isAppActive()) {
+            engineAwaitingForeground = true
+            appInForeground = false // 화면 밖이다 — 재시도 감독도 배경으로 본다
+            log(LogLevel.INFO, SdkLocalized.t("coord.engineDeferred"))
+            uploads.startTimer()
+            ensureLiveStream()
+            observeAppLifecycleIfNeeded()
+            return
+        }
+        engineAwaitingForeground = false
         try {
             provider.start()
         } catch (e: Throwable) {
@@ -707,6 +738,7 @@ internal class SessionCoordinator(
         isRunning = false
         closingAfterEngineStop = false
         pauseToRestore = false
+        engineAwaitingForeground = false // 끝난 세션은 화면에 와도 켜지 않는다(2026-10-16)
         // 앱에 알린다 — 엔진이 포기해 닫힌 세션을 앱이 모르면 화면은 「찾는 중」 에 머문다(iOS S6).
         onSessionClosed?.invoke(reason)
     }
@@ -775,6 +807,11 @@ internal class SessionCoordinator(
     private val runningAndNotStopping: Boolean
         get() = isRunning && stopInFlight == null && !closingAfterEngineStop
 
+    // 종료: iOS 는 willTerminate 에서 엔진을 끄고 남은 비콘 영역을 지운다(iOS #67). 안드로이드는 해당 없다(2026-10-16) —
+    //   믿을 만한 종료 콜백이 없고(Application.onTerminate 는 에뮬레이터 전용), 엔진(gpa-ihub 1.1.1)의 BLE 스캔은
+    //   콜백형 startScan·리시버는 런타임 등록이라 프로세스와 함께 사라진다. 앱을 다시 깨우는 것(PendingIntent 스캔·
+    //   지오펜스·알람·매니페스트 리시버·서비스)은 엔진에 없다 — 프로세스가 죽은 뒤 남아 앱을 배경에서 띄울 것이 없다.
+
     /** observe() 호출 안에서 동기로 들어오는 통지(ProcessLifecycleOwner 의 catch-up)를 거르는 표시. */
     private var attachingObserver = false
 
@@ -802,6 +839,9 @@ internal class SessionCoordinator(
                                     (p as? UwbPositioningProvider)?.exitActiveZoneBeforeBackground()
                                     p.stop()
                                 }
+                                // 복귀(onForegroundResumed)가 한 번 켠다 — 층 미탐지 감시는 provider.stop() 이 거두고
+                                // start() 가 다시 건다(2026-10-16).
+                                engineAwaitingForeground = true
                                 uploads.flush()
                             }
                             liveStream.suspend() // 스트림은 언제나 끊는다
@@ -823,15 +863,22 @@ internal class SessionCoordinator(
         }
     }
 
+    /**
+     * 앱이 화면에 왔다 — 미뤄 둔 엔진을 **한 번만** 켜고 수신 점검을 다시 건다(2026-10-16 · iOS handleDidBecomeActive).
+     * 깃발을 먼저 내려 겹친 통지가 도는 엔진을 다시 건드리지 않게 한다. 내려가는 중(stop 이 flush 를 기다리는
+     * 동안)이면 켜지 않는다 — 끝난 세션에서 엔진이 다시 돌며 옛 방문 ID 로 존 이벤트를 보내게 된다.
+     */
     private fun onForegroundResumed() {
         appInForeground = true
         // 복귀는 새 기회다 — 내려가기 전의 재시도 횟수는 잊는다. 이 시작이 접히면 provider 가
         // onStoppedUnexpectedly 로 알려 오고, 거기서 다시 켜 보거나 세션을 닫는다.
         supervisor.resetAttempts()
         val active = runningAndNotStopping
-        if (active) {
+        if (active && engineAwaitingForeground) {
+            engineAwaitingForeground = false
             provider?.let(::restartKeepingPause)
-            startReceptionCheck() // 복귀 후 다시 잰다(SP-B8)
+            // 시작 안에서 이미 닫기로 했다 — 타이머를 걸지 않는다.
+            if (runningAndNotStopping) startReceptionCheck() // 복귀 후 다시 잰다(SP-B8)
         }
         // 정지 중이면 스트림을 둘지 말지는 그 정지(performStop)가 정한다.
         if (!LiveStreamController.streamWanted(floorSet = floorState != null, running = active)) return
