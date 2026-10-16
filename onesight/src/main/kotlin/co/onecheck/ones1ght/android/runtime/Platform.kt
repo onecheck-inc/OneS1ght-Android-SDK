@@ -42,4 +42,14 @@ internal class InMemoryKeyValueStore : KeyValueStore {
 internal interface AppLifecycle {
     fun observe(onBackground: () -> Unit, onForeground: () -> Unit)
     fun stopObserving()
+
+    /**
+     * 지금 앱이 화면에 떠 있는가(ProcessLifecycleOwner 가 STARTED 이상) — 통지가 아니라 **지금 값**이다.
+     *
+     * ⚠️ 2026-10-16: 코디네이터는 이 값을 몰라 「관찰 전엔 떠 있다」 고만 봤다. 그래서 서비스·리시버·WorkManager 처럼
+     *    화면 없이 깨어난 프로세스에서 begin() 하면 엔진이 배경에서 켜졌다(iOS #67 과 같은 구멍). 붙이는 순간의
+     *    catch-up 통지는 일부러 버리므로([AndroidAppLifecycle]) 지금 상태는 여기서만 읽을 수 있다.
+     *    기본값 true — 예전 동작(테스트의 가짜 생명주기 포함)을 그대로 둔다.
+     */
+    val isInForeground: Boolean get() = true
 }
