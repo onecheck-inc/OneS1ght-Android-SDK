@@ -7,7 +7,8 @@
 屋内位置インテリジェンス SDK です。アプリに組み込むと UWB（DL-TDoA）屋内測位により
 訪問・動線データを収集し、ゾーンの入場・退場・滞在イベントを端末上で直接受け取れます。
 サーバー契約と測位の構造(エンジンが BLE でフロアを見つけ、ゾーンも自ら判定)は iOS SDK と同一で、
-公開 API も(プラットフォームの制約による 2 点の例外を除き、[CHANGELOG](CHANGELOG.md) 参照)同じです。
+公開 API も(プラットフォームの制約による 2 点 — `Context`・`Activity` 引数 — と Android のみの `SdkError.BuildingNotSet` を
+除き、[CHANGELOG](CHANGELOG.md) 参照)同じです。
 
 ---
 
@@ -18,7 +19,7 @@
 | 測位 | **Android 17 (API 37) 以上** ・ UWB **DL-TDoA** 対応端末 ・ Bluetooth LE(フロア検出) |
 | 検証済み端末 | Google Pixel 10 Pro ・ Samsung Galaxy S25+ (SM-S936N, Android 17)。その他の機種は未検証です — 端末ごとに UWB チップの機能が異なるため、対象端末で測位できるか先に確認してください |
 | パッケージ導入 | **Android 8.0 (API 26) 以上**(`minSdk 26`)。Android 17 未満や UWB 非搭載端末でもアプリは正常に動作し、測位のみ無効になります(`OS_VERSION_TOO_LOW` / `E2001`) |
-| ビルド環境 | `compileSdk` / `targetSdk` 37、JVM target 17 |
+| ビルド環境 | アプリ: `compileSdk` 37 ・ JVM target **1.8 以上**(Java 8+)。SDK 自体は Java 17 でビルドしていますが、アプリが 17 に合わせる必要はありません |
 | 言語 | Java 8+ / Kotlin 1.9+ のアプリで利用可能 |
 
 SDK が実際に動作するには、キーと空間設定が先に用意されている必要があります。
@@ -59,8 +60,15 @@ dependencyResolutionManagement {
 ダイアログなしで `UNSUPPORTED`、`begin()` は `SdkError.OsVersionTooLow`(`E2001`)になります。初期化・空間取得・
 プロフィールなどそれ以外の機能は、すべての対応 OS で動作します。
 
-> 0.0.5 から更新する場合: 変更は不要です — Bluetooth オフは `E2003`(測位権限の拒否)ではなく `E2004` として記録されます
-> (`onDebugLog` で `E2003` によりオフを判定していた場合は `E2004` も確認してください — [CHANGELOG](CHANGELOG.md))。
+> 0.0.8 から更新する場合: 変更は不要です — 測位エンジンのみ更新されました(Galaxy S25+ の UWB セッション)。
+> 0.0.7 から更新する場合: API の変更はありません。SDK が含める Gson の R8 ルールは測位エンジンのパッケージに限定されました —
+> アプリ自身の Gson モデルがこのルールに頼っていた場合は、アプリに Gson ルールを直接置いてください(Gson 2.11+ は独自ルールを同梱)— [CHANGELOG](CHANGELOG.md)。
+> 0.0.6 から更新する場合: **Breaking** — `ApiClient` のコンストラクタ・`IdentityStore`(とキー・バリューストア)・`SdkDefaults`・
+> `MockPositioningProvider`・`ConfigChange.Companion` は非公開になり、`building(buildingId = …)` は `building(id = …)` です。
+> 名前が変わった API(`permissions` → `requestPermission` など)は警告を出すだけでそのまま動作します — [CHANGELOG](CHANGELOG.md)。
+> 0.0.5 から更新する場合: Bluetooth オフは `E2003`(測位権限の拒否)ではなく `E2004` として記録されます — `onDebugLog` で
+> `E2003` によりオフを判定していた場合は `E2004` も確認してください。`SdkErrorCode` を `else` なしで分岐する `when` は
+> `BLUETOOTH_OFF` の分岐を追加しないとコンパイルできません — [CHANGELOG](CHANGELOG.md)。
 > 0.0.4 から更新する場合: 変更は不要です — 0.0.5 は API の追加のみです(アプリが測位 provider を直接
 > 作成して状態を監視できるようになりました — [CHANGELOG](CHANGELOG.md))。
 > 0.0.3 から更新する場合: 変更は不要です — アプリの `minSdk` を 26 以上の値に戻して構いません。
@@ -111,7 +119,7 @@ OneS1ght.initialize(context, "ock_sdk_…", new Callback<Void>() {
 **想定されるログ**
 
 ```
-[I1001] Initialized — tenant=YOUR_TENANT
+[I1001] verify passed (tenant: YOUR_TENANT) — tenant=YOUR_TENANT
 ```
 
 ### 端末の対応可否を先に確認
@@ -121,13 +129,14 @@ when (OneS1ght.deviceAvailability) {
     DeviceAvailability.AVAILABLE            -> { }
     DeviceAvailability.OS_VERSION_TOO_LOW   -> showNotice("Android 17 以上が必要です")
     DeviceAvailability.DEVICE_NOT_SUPPORTED -> showNotice("この端末は UWB に対応していません")
+    else                                    -> showNotice("測位を利用できません")
 }
 ```
 
 throw せず、ネットワークにもアクセスせず、待つこともありません。**`initialize` の後に**読んで
 ください — UWB の確認には `initialize`(または `requestPermission(activity)`)が渡すアプリの Context が
-必要です。それより前に読むと判定できず `DEVICE_NOT_SUPPORTED` を返します(`onDebugLog` に
-WARN が残ります)。
+必要です。それより前に読むと、Android 17 以上ではチップを確認できず `DEVICE_NOT_SUPPORTED` を返します
+(`onDebugLog` に WARN が残ります)。Android 17 未満ではいつ読んでも `OS_VERSION_TOO_LOW` です。
 
 端末に UWB チップがあるかを確認します。チップはあっても DL-TDoA に対応しない稀な端末は、
 測位開始時に検出され `E2002` として記録されます。
@@ -144,6 +153,7 @@ when (OneS1ght.requestPermission(activity)) {
     PermissionStatus.AUTHORIZED  -> { /* 測位開始可能 */ }
     PermissionStatus.DENIED      -> showSettingsGuide()      // 再要求は不可 — 設定アプリへ誘導
     PermissionStatus.UNSUPPORTED -> showUnsupportedNotice()
+    else                         -> showUnsupportedNotice()
 }
 ```
 
@@ -266,8 +276,8 @@ OneS1ght.setFloorMap(floors[0], buildingId = buildings[0].id)
 
 ```kotlin
 // floors() は一覧を軽く保つため image が空です。
-// 描画するフロアのみ単体で再取得します — キャッシュから返るため追加リクエストは
-// 発生しません。
+// 描画するフロアのみ単体で再取得します。10 分以内に floor()・setFloorMap でこのフロアを取得し、
+// その後 PlanChanged がなければキャッシュから返り、そうでなければリクエストが 1 回発生します。
 val floor = OneS1ght.floor(buildingId, floorId)
 
 mapView.setBackground(
@@ -280,7 +290,7 @@ mapView.setBackground(
 **想定されるログ**
 
 ```
-[I3001] Floor set — building=B1 floor=9f3a1c2e locators=4 zones=3
+[I3001] Floor config loaded: 4 locators · 3 zones (floor 9f3a1c2e…) — building=B1 floor=9f3a1c2e locators=4 zones=3
 ```
 
 不足しているものがある場合はコードが代わりに出力されます。
@@ -379,7 +389,7 @@ session.isPaused
 
 ```
 [I4001] Positioning started — visitor=v-20260928-001
-[I4002] Positioning ended — visitor=v-20260928-001 points=240
+[I4002] Positioning stopped — visitor=v-20260928-001
 ```
 
 ---

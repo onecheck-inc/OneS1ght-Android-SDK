@@ -7,7 +7,8 @@
 실내 위치 인텔리전스 SDK 입니다. 앱에 추가하면 UWB(DL-TDoA) 실내 측위로 방문·동선
 데이터를 수집하고, 구역 진입·이탈·체류 이벤트를 기기에서 직접 받을 수 있습니다.
 서버 계약과 측위 구조(엔진이 BLE 로 층을 찾고 구역도 직접 판정)는 iOS SDK 와 같고, 공개 API 도
-(두 가지 플랫폼상 불가피한 차이를 빼면, [CHANGELOG](CHANGELOG.md) 참고) 동일합니다.
+(플랫폼상 불가피한 두 가지 — `Context`·`Activity` 인자 — 와 안드로이드에만 있는 `SdkError.BuildingNotSet` 을 빼면,
+[CHANGELOG](CHANGELOG.md) 참고) 동일합니다.
 
 ---
 
@@ -18,7 +19,7 @@
 | 측위 동작 | **Android 17 (API 37)+** · UWB **DL-TDoA** 지원 기기 · Bluetooth LE(층 탐지) |
 | 검증 기기 | Google Pixel 10 Pro · Samsung Galaxy S25+ (SM-S936N, Android 17). 그 밖의 기종은 검증 전입니다 — 기기마다 UWB 칩 기능이 달라, 대상 기기에서 측위가 되는지 먼저 확인하세요 |
 | 패키지 추가 | **Android 8.0 (API 26)+** (`minSdk 26`). Android 17 미만이거나 UWB 가 없는 기기에서도 앱은 정상 동작하고 측위만 비활성(`OS_VERSION_TOO_LOW` / `E2001`) |
-| 빌드 환경 | `compileSdk` / `targetSdk` 37, JVM target 17 |
+| 빌드 환경 | 앱: `compileSdk` 37 · JVM target **1.8 이상**(Java 8+). SDK 자체는 Java 17 로 빌드하지만 앱이 17 을 맞출 필요는 없습니다 |
 | 언어 | Java 8+ / Kotlin 1.9+ 앱에서 사용 가능 |
 
 SDK가 실제로 동작하려면 키와 공간 설정이 먼저 준비되어야 합니다.
@@ -58,8 +59,15 @@ dependencyResolutionManagement {
 `UNSUPPORTED`, `begin()` 이 `SdkError.OsVersionTooLow`(`E2001`)입니다. 초기화·공간 조회·프로필 등
 나머지는 모든 지원 OS 에서 동작합니다.
 
-> 0.0.5 에서 올라오나요? 고칠 것이 없습니다 — Bluetooth 꺼짐이 `E2003`(측위 권한 거부) 대신 `E2004` 로 남습니다
-> (`onDebugLog` 에서 `E2003` 으로 꺼짐을 판단했다면 `E2004` 도 보세요 — [CHANGELOG](CHANGELOG.md)).
+> 0.0.8 에서 올라오나요? 고칠 것이 없습니다 — 측위 엔진만 새 판입니다(Galaxy S25+ UWB 세션).
+> 0.0.7 에서 올라오나요? API 변경은 없습니다. SDK 가 싣는 Gson R8 규칙이 측위 엔진 패키지로 좁혀졌습니다 — 앱 자신의
+> Gson 모델이 그 규칙에 기대고 있었다면 앱에 Gson 규칙을 직접 두세요(Gson 2.11+ 는 자체 규칙을 싣습니다) — [CHANGELOG](CHANGELOG.md).
+> 0.0.6 에서 올라오나요? **Breaking** — `ApiClient` 생성자·`IdentityStore`(와 키-값 저장소)·`SdkDefaults`·
+> `MockPositioningProvider`·`ConfigChange.Companion` 이 공개에서 내려갔고, `building(buildingId = …)` 는 `building(id = …)` 입니다.
+> 이름이 바뀐 API(`permissions` → `requestPermission` 등)는 경고만 내고 그대로 동작합니다 — [CHANGELOG](CHANGELOG.md).
+> 0.0.5 에서 올라오나요? Bluetooth 꺼짐이 `E2003`(측위 권한 거부) 대신 `E2004` 로 남습니다 — `onDebugLog` 에서
+> `E2003` 으로 꺼짐을 판단했다면 `E2004` 도 보세요. `SdkErrorCode` 를 `else` 없이 가르는 `when` 은 `BLUETOOTH_OFF`
+> 가지를 더해야 컴파일됩니다 — [CHANGELOG](CHANGELOG.md).
 > 0.0.4 에서 올라오나요? 고칠 것이 없습니다 — 0.0.5 는 API 를 더하기만 했습니다(앱이 측위 provider 를 직접
 > 만들어 상태를 지켜볼 수 있게 됨 — [CHANGELOG](CHANGELOG.md)).
 > 0.0.3 에서 올라오나요? 고칠 것이 없습니다 — 앱 `minSdk` 를 다시 낮춰도 됩니다(26 이상).
@@ -110,7 +118,7 @@ OneS1ght.initialize(context, "ock_sdk_…", new Callback<Void>() {
 **예상 로그**
 
 ```
-[I1001] Initialized — tenant=YOUR_TENANT
+[I1001] verify passed (tenant: YOUR_TENANT) — tenant=YOUR_TENANT
 ```
 
 ### 기기 지원 여부 먼저 확인
@@ -120,13 +128,14 @@ when (OneS1ght.deviceAvailability) {
     DeviceAvailability.AVAILABLE            -> { }
     DeviceAvailability.OS_VERSION_TOO_LOW   -> showNotice("Android 17 이상이 필요합니다")
     DeviceAvailability.DEVICE_NOT_SUPPORTED -> showNotice("이 기기는 UWB 를 지원하지 않습니다")
+    else                                    -> showNotice("측위를 사용할 수 없습니다")
 }
 ```
 
 throw 하지 않고 네트워크도 타지 않으며 기다리지도 않습니다. **`initialize` 다음에** 읽으세요 —
 UWB 확인에 `initialize`(또는 `requestPermission(activity)`)가 넘겨주는 앱 Context 가 필요합니다.
-그 전에 읽으면 판단할 수 없어 `DEVICE_NOT_SUPPORTED` 를 돌려줍니다(`onDebugLog` 에 WARN 이
-남습니다).
+그 전에 읽으면 Android 17 이상에서는 칩을 확인할 수 없어 `DEVICE_NOT_SUPPORTED` 를 돌려줍니다(`onDebugLog` 에
+WARN 이 남습니다). Android 17 미만이면 언제 읽어도 `OS_VERSION_TOO_LOW` 입니다.
 
 기기에 UWB 칩이 있는지를 봅니다. 칩은 있지만 DL-TDoA 를 지원하지 않는 드문 기기는 측위를
 시작할 때 걸러지고 `E2002` 로 남습니다.
@@ -143,6 +152,7 @@ when (OneS1ght.requestPermission(activity)) {
     PermissionStatus.AUTHORIZED  -> { /* 측위 시작 가능 */ }
     PermissionStatus.DENIED      -> showSettingsGuide()      // 재요청 불가 — 설정 앱으로 안내
     PermissionStatus.UNSUPPORTED -> showUnsupportedNotice()
+    else                         -> showUnsupportedNotice()
 }
 ```
 
@@ -263,7 +273,8 @@ OneS1ght.setFloorMap(floors[0], buildingId = buildings[0].id)
 
 ```kotlin
 // floors() 는 목록을 가볍게 유지하려고 image 가 비어 있습니다.
-// 그릴 층 하나만 다시 조회합니다 — 캐시에서 나오므로 추가 요청이 없습니다.
+// 그릴 층 하나만 다시 조회합니다. 10분 안에 floor()·setFloorMap 으로 이 층을 받았고 그 뒤 PlanChanged 가
+// 없었다면 캐시에서 나오고, 아니면 요청이 한 번 나갑니다.
 val floor = OneS1ght.floor(buildingId, floorId)
 
 mapView.setBackground(
@@ -276,7 +287,7 @@ mapView.setBackground(
 **예상 로그**
 
 ```
-[I3001] Floor set — building=B1 floor=9f3a1c2e locators=4 zones=3
+[I3001] Floor config loaded: 4 locators · 3 zones (floor 9f3a1c2e…) — building=B1 floor=9f3a1c2e locators=4 zones=3
 ```
 
 빠진 것이 있으면 코드가 대신 나옵니다.
@@ -375,7 +386,7 @@ session.isPaused
 
 ```
 [I4001] Positioning started — visitor=v-20260928-001
-[I4002] Positioning ended — visitor=v-20260928-001 points=240
+[I4002] Positioning stopped — visitor=v-20260928-001
 ```
 
 ---

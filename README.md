@@ -7,8 +7,8 @@
 Indoor location intelligence SDK. Add it to your app to collect visit and movement data
 through UWB (DL-TDoA) indoor positioning, and receive zone enter / exit / dwell events
 on device. Same server contract, the same positioning structure (the engine finds the floor
-over BLE and judges zones itself) and (with two platform-forced exceptions, see
-[CHANGELOG](CHANGELOG.md)) the same public API as the iOS SDK.
+over BLE and judges zones itself) and (with two platform-forced exceptions — the `Context` and `Activity`
+arguments — plus the Android-only `SdkError.BuildingNotSet`, see [CHANGELOG](CHANGELOG.md)) the same public API as the iOS SDK.
 
 ---
 
@@ -19,7 +19,7 @@ over BLE and judges zones itself) and (with two platform-forced exceptions, see
 | Positioning | **Android 17 (API 37)+** · UWB **DL-TDoA** capable device · Bluetooth LE (floor detection) |
 | Tested devices | Google Pixel 10 Pro · Samsung Galaxy S25+ (SM-S936N, Android 17). Other models are untested — UWB chip features differ by device, so check positioning on your target devices first |
 | Package | **Android 8.0 (API 26)+** (`minSdk 26`). Below Android 17, or on devices without UWB, the app runs normally; only positioning stays inactive (`OS_VERSION_TOO_LOW` / `E2001`) |
-| Build | `compileSdk` / `targetSdk` 37, JVM target 17 |
+| Build | Your app: `compileSdk` 37 · JVM target **1.8+** (Java 8+). The SDK itself is compiled with Java 17 — your app does not need to target 17 |
 | Language | Works from Java 8+ / Kotlin 1.9+ apps |
 
 You also need keys and a configured space before the SDK does anything useful:
@@ -59,8 +59,15 @@ below that `deviceAvailability` is `OS_VERSION_TOO_LOW`, `requestPermission(acti
 without a prompt, and `begin()` throws `SdkError.OsVersionTooLow` (`E2001`). Everything else
 (initialize, spaces, profiles) works on every supported OS.
 
-> Upgrading from 0.0.5? Nothing to change — Bluetooth being off is now logged as `E2004` instead of `E2003`
-> (positioning permission denied). If you checked `E2003` in `onDebugLog` for that, check `E2004` too — see [CHANGELOG](CHANGELOG.md).
+> Upgrading from 0.0.8? Nothing to change — only the positioning engine was updated (UWB sessions on Galaxy S25+).
+> Upgrading from 0.0.7? No API change. The SDK's Gson R8 rule now covers only the positioning engine — if your app's
+> own Gson models relied on it, add your own Gson rules (Gson 2.11+ ships them) — see [CHANGELOG](CHANGELOG.md).
+> Upgrading from 0.0.6? **Breaking** — the `ApiClient` constructor, `IdentityStore` (and its key-value stores), `SdkDefaults`,
+> `MockPositioningProvider` and `ConfigChange.Companion` are now internal, and `building(buildingId = …)` is `building(id = …)`.
+> Renamed APIs (`permissions` → `requestPermission`, …) still work with a warning — see [CHANGELOG](CHANGELOG.md).
+> Upgrading from 0.0.5? Bluetooth being off is now logged as `E2004` instead of `E2003` (positioning permission denied) —
+> if you checked `E2003` in `onDebugLog` for that, check `E2004` too. A `when` over `SdkErrorCode` without `else` needs a
+> `BLUETOOTH_OFF` branch — see [CHANGELOG](CHANGELOG.md).
 > Upgrading from 0.0.4? Nothing to change — 0.0.5 only adds API (an app can now create the positioning
 > provider itself and observe its state; see [CHANGELOG](CHANGELOG.md)).
 > Upgrading from 0.0.3? Nothing to change — you may lower your app's `minSdk` back (26+).
@@ -111,7 +118,7 @@ step (Step 5) — only your app knows which floor to use.
 **Expected logs**
 
 ```
-[I1001] Initialized — tenant=YOUR_TENANT
+[I1001] verify passed (tenant: YOUR_TENANT) — tenant=YOUR_TENANT
 ```
 
 ### Check device support first
@@ -121,13 +128,14 @@ when (OneS1ght.deviceAvailability) {
     DeviceAvailability.AVAILABLE            -> { }
     DeviceAvailability.OS_VERSION_TOO_LOW   -> showNotice("Requires Android 17 or later")
     DeviceAvailability.DEVICE_NOT_SUPPORTED -> showNotice("This device does not support UWB")
+    else                                    -> showNotice("Positioning is not available")
 }
 ```
 
 This never throws, makes no network call and never waits. Read it **after `initialize`** —
 the UWB check needs the app context that `initialize` (or `requestPermission(activity)`) hands
-over. Read before that, it cannot tell and answers `DEVICE_NOT_SUPPORTED` (with a WARN in
-`onDebugLog`).
+over. Read before that on Android 17+, it cannot check the chip and answers `DEVICE_NOT_SUPPORTED`
+(with a WARN in `onDebugLog`); below Android 17 it answers `OS_VERSION_TOO_LOW` either way.
 
 It checks that the device has a UWB chip. The rare device that has the chip but not DL-TDoA
 support is caught when positioning starts, and logged as `E2002`.
@@ -144,6 +152,7 @@ when (OneS1ght.requestPermission(activity)) {
     PermissionStatus.AUTHORIZED  -> { /* ready to start positioning */ }
     PermissionStatus.DENIED      -> showSettingsGuide()      // no re-prompt — send to Settings
     PermissionStatus.UNSUPPORTED -> showUnsupportedNotice()
+    else                         -> showUnsupportedNotice()
 }
 ```
 
@@ -266,7 +275,8 @@ set, `E3008` is logged. Calling it again while running switches floors — the s
 
 ```kotlin
 // floors() returns floors with image == null to keep the list light.
-// Fetch the single floor you are drawing — it comes from cache, so no extra round trip.
+// Fetch the single floor you are drawing. If floor() or setFloorMap loaded this floor within the
+// last 10 minutes (and no PlanChanged arrived since), it comes from cache; otherwise it is one request.
 val floor = OneS1ght.floor(buildingId, floorId)
 
 mapView.setBackground(
@@ -279,7 +289,7 @@ mapView.setBackground(
 **Expected logs**
 
 ```
-[I3001] Floor set — building=B1 floor=9f3a1c2e locators=4 zones=3
+[I3001] Floor config loaded: 4 locators · 3 zones (floor 9f3a1c2e…) — building=B1 floor=9f3a1c2e locators=4 zones=3
 ```
 
 If something is missing you get a code instead:
@@ -378,7 +388,7 @@ re-establishes where you are.
 
 ```
 [I4001] Positioning started — visitor=v-20260928-001
-[I4002] Positioning ended — visitor=v-20260928-001 points=240
+[I4002] Positioning stopped — visitor=v-20260928-001
 ```
 
 ---
