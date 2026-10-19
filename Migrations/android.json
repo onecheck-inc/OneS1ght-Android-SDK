@@ -1,6 +1,6 @@
 {
   "platform": "android",
-  "currentVersion": "0.0.10",
+  "currentVersion": "0.0.11",
   "_readme": [
     "판올림마다 이 파일에 한 칸을 더한다. 비어 있으면 MCP 가 '변경 없음' 이라고 답할 근거가 없어",
     "에이전트가 추측으로 코드를 고치게 된다 — 그게 이 파일이 존재하는 이유다.",
@@ -269,6 +269,20 @@
           "file": "app/build.gradle.kts",
           "before": "implementation(\"com.ones1ght.sdk:android:0.0.9\")",
           "after": "implementation(\"com.ones1ght.sdk:android:0.0.10\")"
+        }
+      ]
+    },
+    {
+      "from": "0.0.10",
+      "to": "0.0.11",
+      "breaking": false,
+      "summary": "FloorSession.resume() 으로 측위를 재개할 때 엔진이 좌표를 못 내고 있으면(마지막 좌표 뒤 세션 오류, 또는 5초 넘게 좌표 없음) 엔진을 다시 켠다. 앱이 화면에 없을 때는 다시 켜지 않는다. 세션·방문 ID 는 그대로. iOS 0.2.5 와 같은 동작. 공개 API·전이 의존성 변경 없음.",
+      "action": "의존성 해석만 다시 하면 된다. 코드는 고칠 것이 없다.",
+      "changes": [
+        {
+          "file": "app/build.gradle.kts",
+          "before": "implementation(\"com.ones1ght.sdk:android:0.0.10\")",
+          "after": "implementation(\"com.ones1ght.sdk:android:0.0.11\")"
         }
       ]
     }
