@@ -950,6 +950,36 @@ internal class SessionCoordinator(
         if (keepPaused) p.pause()
     }
 
+    /**
+     * `FloorSession.resume()` — 일시정지를 풀고, 엔진이 죽어 있으면 한 번 다시 켠다(2026-10-19 · iOS 와 같은 규칙).
+     *
+     * ⚠️ 왜: 일시정지는 엔진을 그대로 둔다. 화면에 있는 동안 엔진의 UWB 세션이 죽으면(오류 5 · E4001 뒤 좌표 없음)
+     *    예전 재개는 일시정지 깃발만 내려 죽은 엔진이 그대로였다 — 앱이 일시정지 → 재개로 살려 보려 해도 측위가
+     *    돌아오지 않았다. 엔진 상태는 내장 provider 가 판정하고([UwbPositioningProvider.needsRestartOnResume]),
+     *    다시 켜는 것은 생명주기 재시작과 같은 길(stop → [restartKeepingPause])로 한다 — 세션·방문 ID 는 그대로다.
+     *
+     * 다시 켜지 않는 경우: 엔진이 살아 있다(예전과 같다) · 앱이 화면에 없다(엔진은 포그라운드 전용 — 미뤄 둔 엔진은
+     * 복귀가 켠다, engineAwaitingForeground) · 세션이 안 돌거나 내려가는 중이다 · 커스텀 provider 다(엔진을 모른다).
+     * 다시 켠 엔진은 새로 연 것으로 보므로 곧바로 다시 부르거나 겹쳐 불러도 두 번 켜지 않는다.
+     */
+    fun resumeActiveProvider() {
+        val p = provider ?: return
+        val restart = runningAndNotStopping &&
+            !engineAwaitingForeground &&
+            isAppActive() &&
+            (p as? UwbPositioningProvider)?.needsRestartOnResume() == true
+        // 일시정지는 어느 경우든 푼다 — 판정기 초기화도 provider 의 resume() 이 한다.
+        p.resume()
+        if (!restart) return
+        (p as UwbPositioningProvider).note(LogLevel.INFO, SdkLocalized.t("uwb.resumeRestart"))
+        // 사용자가 방금 재개했다 — 다시 켠 뒤 일시정지를 되살리지 않는다.
+        pauseToRestore = false
+        p.stop()
+        restartKeepingPause(p)
+        // 시작 안에서 이미 닫기로 했다 — 타이머를 걸지 않는다. 아니면 수신 점검을 다시 잰다(복귀와 같다, SP-B8).
+        if (runningAndNotStopping) startReceptionCheck()
+    }
+
     /** 좌표 fix — 앱 훅(onPosition) + 다운샘플 후 버퍼 적재, 임계를 넘는 순간 flush(실패 뒤엔 backoff). */
     override fun onPosition(provider: PositioningProvider, coordinates: Coordinates, floorId: String?, atMs: Long) {
         supervisor.resetAttempts() // 다시 살아났다 — 다음 고장은 처음부터 센다
