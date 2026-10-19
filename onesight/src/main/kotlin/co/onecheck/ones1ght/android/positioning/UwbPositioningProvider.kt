@@ -205,6 +205,22 @@ public class UwbPositioningProvider private constructor(
     /** 엔진 버전 안내는 한 번만. */
     private var announced = false
 
+    /**
+     * 마지막 좌표 이후 엔진이 세션 오류(5 · E4001)를 냈는가 — 재개(`SessionCoordinator.resumeActiveProvider`)가 엔진을
+     * 다시 켤지 보는 값이다(2026-10-19 · iOS 와 같은 규칙).
+     *
+     * 왜: 화면에 있는 동안 엔진의 UWB 세션이 죽으면 엔진은 오류 5 만 주고 좌표를 더 내지 않는다. 일시정지는 엔진을
+     * 그대로 두므로, 예전엔 일시정지 → 재개를 해도 죽은 엔진이 그대로라 측위가 돌아오지 않았다. 좌표가 한 번 나오면
+     * (엔진이 살아났다) 내리고, 엔진을 새로 열 때도 내린다.
+     */
+    private var sessionErrorSinceFix = false
+
+    /**
+     * 마지막 좌표 시각 — 아직 없으면 엔진을 연 시각(2026-10-19). 재개 시 이 값이 [RESUME_STALE_FIX_MS] 보다 오래면
+     * 엔진이 멈춘 것으로 본다. 일시정지 중에 온 좌표도 센다 — 버리는 것은 소비뿐이고 엔진은 살아 있다는 뜻이다.
+     */
+    private var lastFixOrOpenAtMs = 0L
+
     // MARK: - 관찰 상태
     //
     // 스레드·값 계약(감사 SP-C7): 모든 멤버는 메인 스레드에서 부르고, 훅도 메인 스레드에서 불린다. 훅 등록만은 아무
@@ -462,6 +478,9 @@ public class UwbPositioningProvider private constructor(
     /**
      * 일시정지 해제. 판정기를 초기화한다 — 멈춘 동안 들어온 영역 이벤트를 버렸으므로, 안에 있을 때
      * 멈추고 밖으로 걸어 나온 뒤 재개하면 판정기는 아직 "안에 있다" 고 믿는다.
+     *
+     * 죽은 엔진을 다시 켜는 것은 여기가 아니라 `FloorSession.resume()` 이 하는 일이다(2026-10-19) — 앱이 화면에
+     * 있는지·세션이 살아 있는지는 코어만 알고, 다시 켜는 길도 생명주기 재시작과 같아야 해서 코어가 맡는다.
      */
     @MainThread
     override fun resume() {
@@ -469,10 +488,25 @@ public class UwbPositioningProvider private constructor(
         publish()
     }
 
+    /**
+     * 재개 때 엔진을 다시 켜야 하는가(2026-10-19 · iOS 와 같은 규칙) — 측위가 돌고 있는데(내려가는 중 아님) 마지막
+     * 좌표 이후 세션 오류가 났거나, 좌표가 [RESUME_STALE_FIX_MS] 넘게 없다(아직 없으면 엔진을 연 뒤로 잰다).
+     *
+     * 판정만 한다 — 다시 켜는 것은 코어(SessionCoordinator.resumeActiveProvider)가 생명주기 재시작과 같은 길로 한다.
+     * 거기서 앱이 화면에 있는지·세션이 살아 있는지를 함께 본다.
+     */
+    internal fun needsRestartOnResume(now: Long = clock()): Boolean {
+        if (!machine.isRunning || machine.phase == Phase.IDLE || machine.phase == Phase.STOPPING) return false
+        return sessionErrorSinceFix || now - lastFixOrOpenAtMs > RESUME_STALE_FIX_MS
+    }
+
     // MARK: - 상태 기계 콜백
 
     /** 엔진 기동 — [EngineSession.open]. 결과는 콜백으로 온다(동기 실패는 [afterStartAttempt] 가 꺼낸다). */
     private fun launchEngine() {
+        // 새로 연 엔진은 깨끗하게 본다 — 앞 기동의 세션 오류·오래된 좌표 시각으로 곧바로 다시 켜지 않게(2026-10-19).
+        sessionErrorSinceFix = false
+        lastFixOrOpenAtMs = clock()
         session.open(
             onMissingLicense = { onEngineError?.onEngineError(HubError.LICENSE_MISSING.code, "license not set") },
             beforeStart = { floors.setDetected(null) },
@@ -598,6 +632,9 @@ public class UwbPositioningProvider private constructor(
         // 측위 중이 아니면(탐색만 하는 중, 정지 중 늦게 온 좌표) 버린다 — 화면에도, 서버에도 안 간다.
         if (!machine.isRunning) return
         producedFix = true
+        // 엔진이 살아 있다 — 일시정지 중의 좌표도 센다(재개 판정, 2026-10-19).
+        sessionErrorSinceFix = false
+        lastFixOrOpenAtMs = clock()
         // 일시정지 중에도 엔진은 좌표를 계속 준다. 소비하는 자리에서 버린다 — 엔진을 끄지 않는
         // 것이 일시정지의 요점이라(층·앵커 유지).
         if (!machine.acceptsPosition()) return
@@ -635,6 +672,8 @@ public class UwbPositioningProvider private constructor(
      */
     private fun handleError(code: Int, message: String) {
         session.lastHubError = code
+        // 세션 오류(5)는 엔진을 끄지 않은 채 좌표만 끊는다 — 재개가 엔진을 다시 켜야 할 표시로 남긴다(2026-10-19).
+        if (HubError.of(code) == HubError.SESSION_FAILED && machine.isRunning) sessionErrorSinceFix = true
         log(LogLevel.ERROR, SdkLocalized.t("uwb.error", code, message, describe(code)))
         onEngineError?.onEngineError(code, message)
         sdkCode(code, message)?.let { report(it, "engine=$code $message") }
@@ -745,6 +784,12 @@ public class UwbPositioningProvider private constructor(
 
         /** 층 미탐지 감시 시간 — iOS 와 같다. */
         internal const val FLOOR_DETECT_DELAY_MS: Long = 20_000L
+
+        /**
+         * 재개 때 이만큼 좌표가 없으면 엔진이 멈춘 것으로 보고 다시 켠다 — iOS 와 같은 값(5초, 2026-10-19).
+         * 엔진은 좌표를 초당 여러 번 내므로 5초 공백은 정상 측위에선 생기지 않는다.
+         */
+        internal const val RESUME_STALE_FIX_MS: Long = 5_000L
 
         /** 정지 요청 뒤 onStopped 를 기다리는 최대 시간 — [EngineSession.STOP_TIMEOUT_MS]. */
         internal const val STOP_TIMEOUT_MS: Long = EngineSession.STOP_TIMEOUT_MS

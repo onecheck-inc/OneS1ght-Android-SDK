@@ -167,10 +167,15 @@ public class FloorSession internal constructor() {
         OneS1ght.coordinatorRef?.activeProvider?.pause()
     }
 
-    /** 일시정지 해제. 메인 스레드에서 부른다. */
+    /**
+     * 일시정지 해제. 메인 스레드에서 부른다.
+     *
+     * 앱이 화면에 있고 측위 엔진이 멈춰 있으면(마지막 좌표 이후 세션 오류, 또는 5초 넘게 좌표 없음) 엔진을 한 번 다시
+     * 켠다 — 세션·방문 ID 는 그대로다. 엔진이 살아 있으면 예전처럼 일시정지만 푼다(2026-10-19 · iOS 와 같다).
+     */
     @MainThread
     public fun resume() {
-        OneS1ght.coordinatorRef?.activeProvider?.resume()
+        OneS1ght.coordinatorRef?.resumeActiveProvider()
     }
 
     /** 측위 종료 + 잔여 좌표 전송. 초기화·층 설정은 유지 → begin 재호출로 재개. */
