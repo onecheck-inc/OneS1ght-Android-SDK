@@ -2,7 +2,7 @@
 
 **English** | [한국어](README.ko.md) | [日本語](README.ja.md)
 
-📖 Documentation: https://docs.ones1ght.com/en/sdk/integration/android
+📖 Documentation: https://docs.ones1ght.com/en/developers/sdk/integration/android
 
 Indoor location intelligence SDK. Add it to your app to collect visit and movement data
 through UWB (DL-TDoA) indoor positioning, and receive zone enter / exit / dwell events
