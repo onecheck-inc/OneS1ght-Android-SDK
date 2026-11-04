@@ -385,6 +385,45 @@ class SessionCoordinatorTest {
         assertTrue(lines.toString(), lines.any { it.startsWith("[I4002]") })
     }
 
+    // 프로필이 바뀌면 앞 사람의 미전송 좌표는 다음 사람 이름으로 나가지 않는다.
+    @Test fun identifyChangeDropsPreviousProfilePositions() = runTest {
+        routeDefaults()
+        val c = makeStarted(flushThreshold = 100)
+        val lines = mutableListOf<String>()
+        c.onLog = { _, line -> lines.add(line) }
+        provider.simulatePosition(Coordinates(1.0, 2.0, 0.0), "F", BASE_MS)
+
+        c.identify("pf_next")
+
+        assertEquals(0, c.pendingCount)
+        assertTrue(lines.toString(), lines.any { it.startsWith("[E5006]") && it.endsWith("points=1") })
+        c.stop()
+        assertEquals(0, routes.count("/positioning/logs"))
+    }
+
+    // 프로필이 없는 동안의 좌표는 쌓지 않는다.
+    @Test fun identifyNilStopsRecordingPositions() = runTest {
+        routeDefaults()
+        val c = makeStarted(flushThreshold = 100)
+        c.identify(null)
+        provider.simulatePosition(Coordinates(1.0, 2.0, 0.0), "F", BASE_MS)
+
+        assertEquals(0, c.pendingCount)
+        c.stop()
+    }
+
+    // 같은 프로필을 다시 알려도 쌓인 좌표는 그대로다.
+    @Test fun identifySameProfileKeepsPositions() = runTest {
+        routeDefaults()
+        val c = makeStarted(flushThreshold = 100)
+        provider.simulatePosition(Coordinates(1.0, 2.0, 0.0), "F", BASE_MS)
+
+        c.identify("pf_8a3c")
+
+        assertEquals(1, c.pendingCount)
+        c.stop()
+    }
+
     // 60초 타이머 — 측위 중에만 돈다.
     @Test fun flushTimerSendsEvery60Seconds() = runTest {
         routeDefaults()

@@ -89,6 +89,7 @@ internal class UploadPipeline(
 
     /** 좌표 한 점. 다운샘플을 통과하면 쌓고, 임계에 닿으면(실패 뒤 대기 중이 아니면) 보낸다. */
     fun record(coordinates: Coordinates, floorId: String, atMs: Long) {
+        owner() ?: return // 주인 없는 좌표는 쌓지 않는다 — 다음 프로필에 붙는다
         // ⚠️ 서버 전송분만 솎는다. 존 판정(provider 내부)은 원속도 그대로.
         if (!shouldRecord(atMs)) return
         buffer.append(PositionPoint(floorId = floorId, coordinates = coordinates, capturedAt = Iso8601.format(atMs)))
