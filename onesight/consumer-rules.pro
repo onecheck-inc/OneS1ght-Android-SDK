@@ -42,6 +42,14 @@
 # 없으면 NOP 로거로 조용히 떨어진다(런타임에 NoClassDefFoundError 를 잡아 처리). R8 에게만 없다고 알린다.
 -dontwarn org.slf4j.impl.**
 
+# --- 엔진 로그 ------------------------------------------------------------------------------------
+# 엔진은 릴리스에서도 위치 콜백마다 좌표를 logcat(Log.d)에 찍고, 끄는 API 가 없다. 고객 앱이 minify 하면 이 호출만 없앤다.
+# 범위는 엔진의 로그 클래스 하나뿐이다 — android.util.Log 에 걸면 고객 앱 자신의 로그까지 지워진다.
+-assumenosideeffects class kr.geoplan.android.lib.ihub.internal.log.Log {
+    public static void ilog(java.lang.String, java.lang.String);
+    public static void ilogError(java.lang.String, java.lang.String);
+}
+
 # --- SDK 진입점 -------------------------------------------------------------------------------
 # 0.0.7 부터 조립·상태가 SdkWiring 으로 빠져 OneS1ght 가 얇아지자, 고객 앱 R8 이 정적 메서드를 앱 코드로 인라인하고
 # 클래스 자체를 지웠다(동작은 같다). 0.0.6 까지는 상태를 들고 있어 저절로 남았다 — 같은 모양을 규칙으로 고정한다.
