@@ -126,6 +126,13 @@ JAVA
     [[ -f "$APK" ]] || die "APK 없음"
     ok "R8 빌드 통과 — $(basename "$APK")"
 
+    step "R8 출력 dex 에서 엔진 좌표 로그 호출이 사라졌는지"
+    rm -rf "$MIN/dexlog"; mkdir -p "$MIN/dexlog"
+    unzip -q -o "$APK" 'classes*.dex' -d "$MIN/dexlog"
+    LOG_CALLS=$(for d in "$MIN"/dexlog/*.dex; do "$DEXDUMP" -d "$d" 2>/dev/null; done | grep -cE 'invoke-static.*ihub/internal/log/Log;\.ilog' || true)
+    [[ "$LOG_CALLS" == "0" ]] || die "엔진 로그 호출이 $LOG_CALLS 개 남았다 — consumer-rules.pro 의 -assumenosideeffects 확인"
+    ok "엔진 로그 호출 0개"
+
     step "R8 출력 dex 에서 엔진 응답 모델(Gson)·진입점이 원래 이름으로 남았는지"
     rm -rf "$MIN/dex" "$MIN/engine"; mkdir -p "$MIN/dex" "$MIN/engine"
     unzip -q -o "$APK" 'classes*.dex' -d "$MIN/dex"
