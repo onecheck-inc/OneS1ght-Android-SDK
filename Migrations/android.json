@@ -1,6 +1,6 @@
 {
   "platform": "android",
-  "currentVersion": "0.0.11",
+  "currentVersion": "0.0.12",
   "_readme": [
     "판올림마다 이 파일에 한 칸을 더한다. 비어 있으면 MCP 가 '변경 없음' 이라고 답할 근거가 없어",
     "에이전트가 추측으로 코드를 고치게 된다 — 그게 이 파일이 존재하는 이유다.",
@@ -283,6 +283,20 @@
           "file": "app/build.gradle.kts",
           "before": "implementation(\"com.ones1ght.sdk:android:0.0.10\")",
           "after": "implementation(\"com.ones1ght.sdk:android:0.0.11\")"
+        }
+      ]
+    },
+    {
+      "from": "0.0.11",
+      "to": "0.0.12",
+      "breaking": false,
+      "summary": "프로필이 바뀌면 앞 사용자의 미전송 좌표를 버리고, 프로필이 없는 동안에는 좌표를 쌓지 않는다. minify 한 앱에서는 측위 엔진의 좌표 로그가 logcat 에 나가지 않는다. 공개 API 변경 없음.",
+      "action": "의존성 버전만 올리면 된다. SDK 코드는 고칠 것이 없다.",
+      "changes": [
+        {
+          "file": "app/build.gradle.kts",
+          "before": "implementation(\"com.ones1ght.sdk:android:0.0.11\")",
+          "after": "implementation(\"com.ones1ght.sdk:android:0.0.12\")"
         }
       ]
     }
