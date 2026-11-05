@@ -325,8 +325,8 @@ class UwbProviderLogicTest {
         assertEquals(listOf(SdkErrorCode.ZONE_MAPPING_FAILED), delegate.codes())
     }
 
-    /** DWELL 은 앱 훅까지만 — 서버로 보내지 않는다. */
-    @Test fun dwellGoesOnlyToLocalHook() {
+    /** DWELL 은 앱 훅과 서버 양쪽으로 간다. */
+    @Test fun dwellGoesToHookAndServer() {
         tracking()
         hub.onAreaEvent(14, "정육 코너", "IN")
         flush()
@@ -334,7 +334,7 @@ class UwbProviderLogicTest {
         scheduler.advanceTimeBy(5_001)
         scheduler.runCurrent()
 
-        assertEquals(1, delegate.zones.size)
+        assertEquals(2, delegate.zones.size)
         assertEquals(1, zoneEvents.filterIsInstance<ZoneEvent.Dwell>().size)
     }
 
