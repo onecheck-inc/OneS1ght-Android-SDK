@@ -308,12 +308,12 @@ class SessionCoordinatorTest {
         c.stop()
     }
 
-    // DWELL 은 앱 콜백 전용 — 서버로 가지 않는다(사양서 §6).
-    @Test fun dwellNeverReachesServer() = runTest {
+    // DWELL 도 서버로 간다 — 콘솔의 체류 이벤트가 트리거로 내려오는 길이다.
+    @Test fun dwellReachesServer() = runTest {
         routeDefaults()
         val c = makeStarted()
         provider.simulateZone("Z1", ZoneEventStatus.DWELL, "F", BASE_MS)
-        never { routes.count("/events/zone") > 0 }
+        eventually { routes.count("/events/zone") == 1 }
         c.stop()
     }
 

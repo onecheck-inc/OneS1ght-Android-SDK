@@ -1001,8 +1001,6 @@ internal class SessionCoordinator(
 
     /** 존 판정 — 즉시 전송 (network 실패만 1회 재시도), triggers 는 호스트 콜백으로. DWELL 은 안 보낸다. */
     override fun onZone(provider: PositioningProvider, zoneId: String, status: ZoneEventStatus, floorId: String?, atMs: Long) {
-        // DWELL 은 앱 콜백 전용이다(사양서 §6) — 서버 계약은 IN/OUT 뿐.
-        if (status == ZoneEventStatus.DWELL) return
         val floor = floorId ?: floorState?.floorId ?: return
         val profileId = profileId ?: return
         val req = ReqZoneEvent(
